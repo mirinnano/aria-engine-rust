@@ -1,0 +1,221 @@
+# aria-version: 2.0
+; ギャラリー画面（スクリプト主導UI）
+
+*gallery_ui
+fx_reset()
+; 全面黒背景
+ui_rect 909999, 0, 0, 1280, 720
+ui sprite:909999, fill, "#000000"
+ui sprite:909999, fill_alpha, 255
+ui sprite:909999, z, 900000
+
+gallery_count %count
+let %page = 0
+
+*gallery_refresh
+csp 900500
+csp 900501
+csp 900502
+; 前ページのエントリスプライトをクリア
+for %i = 0 to 5
+    let %tmpid = 900510 + %i
+    csp %tmpid
+    let %tmpid = 900520 + %i
+    csp %tmpid
+next
+; ボタンスプライトもクリア
+csp 900594
+csp 900595
+csp 900596
+csp 900597
+csp 900598
+csp 900599
+
+; タイトル
+ui_text 900500, "GALLERY", 640, 50
+ui sprite:900500, font_size, 36
+ui sprite:900500, align, "center"
+ui sprite:900500, color, "#ffffff"
+ui sprite:900500, z, 900020
+
+; エントリ数表示
+ui_text 900501, "", 640, 100
+ui sprite:900501, font_size, 14
+ui sprite:900501, align, "center"
+ui sprite:900501, color, "#888888"
+ui sprite:900501, z, 900020
+
+let $pagestr = "NO ENTRIES"
+let %totalpages = 0
+if %count > 0
+    let %totalpages = %count + 5
+    div %totalpages, 6
+    let $pagestr = "PAGE " + (%page + 1) + " / " + %totalpages
+endif
+ui sprite:900501, text, $pagestr
+
+; 6個表示 (2列x3行)
+let %start = %page * 6
+let %end = %start + 6
+if %end > %count { let %end = %count }
+
+let %idx = %start
+let %slot = 0
+
+*gallery_loop_items
+if %idx >= %end { goto *gallery_draw_buttons }
+
+let %col = %slot % 2
+let %row = %slot / 2
+let %ix = 240 + %col * 400
+let %iy = 140 + %row * 190
+
+; 背景枠
+let %bgid = 900510 + %slot
+ui_rect %bgid, %ix, %iy, 380, 170
+ui sprite:%bgid, fill, "#101417"
+ui sprite:%bgid, fill_alpha, 204
+ui sprite:%bgid, border, 1, "#9aa18f"
+ui sprite:%bgid, border_alpha, 118
+ui sprite:%bgid, radius, 4
+ui sprite:%bgid, shadow, 0, 4, "#000000"
+ui sprite:%bgid, shadow_alpha, 132
+ui sprite:%bgid, hover_fill, "#252a2f"
+ui sprite:%bgid, hover_scale, 1.015
+ui sprite:%bgid, z, 900010
+
+; 情報取得
+gallery_info %idx, $gtitle, $gpath, %gunlocked
+
+let %txtid = 900520 + %slot
+if %gunlocked == 1
+    ui_text %txtid, $gtitle, %ix + 190, %iy + 75
+    ui sprite:%txtid, font_size, 16
+    ui sprite:%txtid, align, "center"
+    ui sprite:%txtid, color, "#e7e2d6"
+    ui sprite:%txtid, z, 900020
+    ; クリックでフルスクリーン
+    ui_button %bgid, 100 + %idx
+else
+    ui_text %txtid, "???", %ix + 190, %iy + 75
+    ui sprite:%txtid, font_size, 22
+    ui sprite:%txtid, align, "center"
+    ui sprite:%txtid, color, "#555555"
+    ui sprite:%txtid, z, 900020
+endif
+
+let %idx = %idx + 1
+let %slot = %slot + 1
+goto *gallery_loop_items
+
+*gallery_draw_buttons
+; PREV
+if %page > 0
+    ui_rect 900598, 260, 640, 140, 38
+    ui sprite:900598, fill, "#071923"
+    ui sprite:900598, fill_alpha, 204
+    ui sprite:900598, border, 1, "#7fcbd8"
+    ui sprite:900598, hover_fill, "#143b48"
+    ui sprite:900598, hover_scale, 1.012
+    ui sprite:900598, z, 900010
+    ui_text 900597, "PREV", 330, 632
+    ui sprite:900597, font_size, 18
+    ui sprite:900597, align, "center"
+    ui sprite:900597, color, "#eaf7f8"
+    ui sprite:900597, z, 900020
+    ui_button 900598, 97
+endif
+
+; NEXT
+if %end < %count
+    ui_rect 900596, 860, 640, 140, 38
+    ui sprite:900596, fill, "#071923"
+    ui sprite:900596, fill_alpha, 204
+    ui sprite:900596, border, 1, "#7fcbd8"
+    ui sprite:900596, hover_fill, "#143b48"
+    ui sprite:900596, hover_scale, 1.012
+    ui sprite:900596, z, 900010
+    ui_text 900595, "NEXT", 930, 632
+    ui sprite:900595, font_size, 18
+    ui sprite:900595, align, "center"
+    ui sprite:900595, color, "#eaf7f8"
+    ui sprite:900595, z, 900020
+    ui_button 900596, 96
+endif
+
+; BACK
+ui_rect 900599, 540, 700, 200, 42
+ui sprite:900599, fill, "#071923"
+ui sprite:900599, fill_alpha, 204
+ui sprite:900599, border, 1, "#7fcbd8"
+ui sprite:900599, hover_fill, "#143b48"
+ui sprite:900599, hover_scale, 1.012
+ui sprite:900599, z, 900010
+ui_text 900594, "BACK", 640, 692
+ui sprite:900594, font_size, 22
+ui sprite:900594, align, "center"
+ui sprite:900594, color, "#eaf7f8"
+ui sprite:900594, z, 900020
+ui_button 900599, 99
+
+if %page > 0 { ui_button 900598, 97 }
+if %end < %count { ui_button 900596, 96 }
+ui_button 900599, 99
+
+; エントリボタン再登録（forループ）
+for %i = 0 to 5
+    let %eidx = %start + %i
+    if %eidx >= %end { goto *gallery_skip_btn }
+    gallery_info %eidx, $gt, $gp, %gu
+    if %gu == 1 {
+        let %ebgid = 900510 + %i
+        ui_button %ebgid, 100 + %eidx
+    }
+    *gallery_skip_btn
+next
+
+print 1
+
+*gallery_wait
+btnwait %0
+
+if %0 == 99 { goto *gallery_back }
+if %0 == 96
+    let %page = %page + 1
+    goto *gallery_refresh
+endif
+if %0 == 97
+    let %page = %page - 1
+    goto *gallery_refresh
+endif
+if %0 >= 100
+    let %gidx = %0 - 100
+    gallery_info %gidx, $gtitle, $gpath, %gunlocked
+    if %gunlocked == 1
+        cls()
+        bg $gpath, 1
+        ; 待機（クリックで戻る）
+        btnwait %0
+        goto *gallery_refresh
+    endif
+endif
+goto *gallery_wait
+
+*gallery_back
+csp 900500
+csp 900501
+csp 900502
+for %i = 0 to 5
+    let %tmpid = 900510 + %i
+    csp %tmpid
+    let %tmpid = 900520 + %i
+    csp %tmpid
+next
+csp 900594
+csp 900595
+csp 900596
+csp 900597
+csp 900598
+csp 900599
+csp 909999
+return

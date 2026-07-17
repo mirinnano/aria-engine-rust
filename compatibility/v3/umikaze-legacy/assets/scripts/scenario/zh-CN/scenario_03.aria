@@ -1,0 +1,2 @@
+; zh-CN pending translation shim. Uses ja-JP source until approved localization is authored.
+include "../../scenario_03.aria"

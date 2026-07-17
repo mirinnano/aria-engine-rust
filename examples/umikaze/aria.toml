@@ -1,0 +1,14 @@
+schema = 3
+
+[game]
+id = "jp.example.umikaze"
+version = "3.1.0"
+title = "海風 - The Records of Autumn -"
+
+[runtime]
+entry = "scripts/main.aria"
+logical_width = 1280
+logical_height = 720
+asset_roots = ["assets"]
+fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
+save_namespace = "umikaze-v3"

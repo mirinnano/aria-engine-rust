@@ -1,0 +1,141 @@
+defsub talk
+	rmenu *system_menu
+	defaultspeed 30
+	textmode "adv"
+
+; チャプターデータの定義（スクリプト主導）
+*init_chapters
+	defchapter
+		chapter_id 1
+		chapter_title "第一章 はじまり"
+		chapter_desc "物語の始まり。新しい世界への第一歩。"
+		chapter_script "assets/scripts/main.aria"
+	endchapter
+
+	defchapter
+		chapter_id 2
+		chapter_title "第二章 展開"
+		chapter_desc "物語が大きく動き出す。運命の分岐点。"
+		chapter_script "assets/scripts/scenario_02.aria"
+		; 初期状態ではロック
+		set_flag "chapter2_unlocked", 0
+	endchapter
+
+	defchapter
+		chapter_id 3
+		chapter_title "第三章 決断"
+		chapter_desc "選択の時間が迫る。真実が明らかになる。"
+		chapter_script "assets/scripts/scenario_03.aria"
+		set_flag "chapter3_unlocked", 0
+	endchapter
+
+	return
+
+*title_start
+	; チャプターデータの初期化
+	gosub *init_chapters
+
+	bg "#1a1a2e", 2
+	textclear
+
+	; タイトルテキスト（基本プリミティブのみ）
+	lsp_text 100, "ARIA Engine", 640, 200
+	sp_fontsize 100, 64
+	sp_text_align 100, "center"
+	sp_color 100, "#ffffff"
+	sp_text_shadow 100, 3, 3, "#000000"
+
+	; 「はじめから」ボタン（基本プリミティブで構築）
+	lsp_rect 10, 440, 300, 400, 60
+	sp_fill 10, "#2a2a3e", 255
+	sp_round 10, 10
+	sp_border 10, "#4a4a6e", 2
+	sp_shadow 10, 4, 4, "#000000", 200
+	sp_hover_color 10, "#3a3a5e"
+	sp_hover_scale 10, 1.05
+
+	lsp_text 11, "はじめから", 640, 315
+	sp_fontsize 11, 24
+	sp_text_align 11, "center"
+	sp_color 11, "#ffffff"
+
+	; ボタンとして登録
+	spbtn 10, 1
+
+*title_loop
+	btnwait %0
+	if %0 == 1 goto *chapter_select
+	goto *title_loop
+
+*chapter_select
+	csp -1
+	bg "#0f0f1a", 2
+	textclear
+
+	; チャプタータイトル（基本プリミティブ）
+	lsp_text 200, "チャプター選択", 640, 80
+	sp_fontsize 200, 48
+	sp_text_align 200, "center"
+	sp_color 200, "#ffffff"
+	sp_text_shadow 200, 3, 3, "#000000"
+
+	; チャプターカードの動的生成
+	chapter_select
+
+	; 戻るボタン（基本プリミティブ）
+	lsp_rect 900, 540, 600, 400, 60
+	sp_fill 900, "#2a2a3e", 255
+	sp_round 900, 10
+	sp_border 900, "#4a4a6e", 2
+	sp_shadow 900, 4, 4, "#000000", 200
+	sp_hover_color 900, "#3a3a5e"
+	sp_hover_scale 900, 1.05
+
+	lsp_text 901, "タイトルに戻る", 640, 615
+	sp_fontsize 901, 24
+	sp_text_align 901, "center"
+	sp_color 901, "#ffffff"
+
+	spbtn 900, -1
+
+	btnwait %0
+	if %0 == -1 goto *title_start
+	if %0 > 0 goto *play_chapter
+	goto *chapter_select
+
+*play_chapter
+	; 選択されたチャプターを開始
+	var chapter_id = %0
+	chapter_progress chapter_id, 0
+	goto *start_game
+
+*start_game
+	csp -1
+	bg "#000055", 2
+	afade 10, 0, 500
+	wait 500
+	clr
+
+	ミオ「アニメーションも！\nUIのグラデーションや影も！」
+	主人公「それに、テキストも1文字ずつ流れるようになったね！」
+
+	textspeed 10
+	ミオ「テキストスピードを速くしてみたよ！\n右クリックでメニューが開くのも試してみてね！」
+	textspeed 50
+
+	caption "ARIA Engine - Phase 4"
+	textclear
+
+	システム「テスト完了しました。」
+	end
+
+*system_menu
+	textclear
+	システム「ここは右クリックで飛んでくるメニュー画面だよ。\nセーブやロードはここでカスタムUIを作って実装してね。」
+	return
+
+*talk
+	getparam $name, $text
+	textclear
+	${name}「${text}」\
+	return

@@ -1,0 +1,179 @@
+# aria-version: 2.0
+; 險ｭ螳夂判髱｢・医せ繧ｯ繝ｪ繝励ヨ荳ｻ蟆散I・・
+*settings_ui
+fx_reset()
+ui_rect 9999, 0, 0, 1280, 720
+ui sprite:9999, fill, "#08090a"
+ui sprite:9999, fill_alpha, 255
+ui sprite:9999, z, 900000
+
+getconfig %220, "bgmvol"
+getconfig %230, "sevol"
+getconfig %240, "textspeed"
+getconfig %250, "autowait"
+getconfig %260, "skipunread"
+getconfig %270, "clickcursor"
+getconfig %280, "fullscreen"
+
+loc_get $ui_config_title, "settings.title"
+loc_get $ui_config_system, "settings.system"
+loc_get $ui_bgm_volume, "settings.bgm"
+loc_get $ui_se_volume, "settings.se"
+loc_get $ui_text_speed, "settings.text_speed"
+loc_get $ui_auto_wait, "settings.auto_wait"
+loc_get $ui_skip_unread, "settings.skip_unread"
+loc_get $ui_click_cursor, "settings.click_cursor"
+loc_get $ui_fullscreen, "settings.fullscreen"
+loc_get $ui_saved_on_leave, "settings.saved_on_leave"
+loc_get $ui_back, "menu.return"
+
+ui_text 200, $ui_config_title, 640, 58
+ui sprite:200, font_size, 36
+ui sprite:200, align, "center"
+ui sprite:200, color, "#e7e2d6"
+ui sprite:200, text_shadow, 0, 3, "#000000"
+ui sprite:200, z, 900020
+
+ui_text 201, $ui_config_system, 640, 102
+ui sprite:201, font_size, 14
+ui sprite:201, align, "center"
+ui sprite:201, color, "#9aa18f"
+ui sprite:201, z, 900020
+
+ui_rect 202, 168, 126, 944, 430
+ui sprite:202, fill, "#101417"
+ui sprite:202, fill_alpha, 188
+ui sprite:202, border, 1, "#9aa18f"
+ui sprite:202, border_alpha, 118
+ui sprite:202, shadow, 0, 4, "#000000"
+ui sprite:202, shadow_alpha, 132
+ui sprite:202, z, 900005
+
+ui_text 210, $ui_bgm_volume, 230, 170
+ui sprite:210, font_size, 18
+ui sprite:210, color, "#e7e2d6"
+ui sprite:210, z, 900020
+ui_slider 220, 500, 172, 420, 0, 100, %220
+
+ui_text 211, $ui_se_volume, 230, 230
+ui sprite:211, font_size, 18
+ui sprite:211, color, "#e7e2d6"
+ui sprite:211, z, 900020
+ui_slider 230, 500, 232, 420, 0, 100, %230
+
+ui_text 212, $ui_text_speed, 230, 290
+ui sprite:212, font_size, 18
+ui sprite:212, color, "#e7e2d6"
+ui sprite:212, z, 900020
+ui_slider 240, 500, 292, 420, 0, 80, %240
+
+ui_text 213, $ui_auto_wait, 230, 350
+ui sprite:213, font_size, 18
+ui sprite:213, color, "#e7e2d6"
+ui sprite:213, z, 900020
+ui_slider 250, 500, 352, 420, 500, 5000, %250
+
+ui_checkbox 260, 230, 420, $ui_skip_unread, %260
+ui_checkbox 270, 500, 420, $ui_click_cursor, %270
+ui_checkbox 280, 770, 420, $ui_fullscreen, %280
+
+ui_text 214, $ui_saved_on_leave, 640, 500
+ui sprite:214, font_size, 14
+ui sprite:214, align, "center"
+ui sprite:214, color, "#9aa18f"
+ui sprite:214, z, 900020
+
+ui_rect 299, 540, 600, 200, 42
+ui sprite:299, fill, "#101417"
+ui sprite:299, fill_alpha, 204
+ui sprite:299, border, 1, "#9aa18f"
+ui sprite:299, border_alpha, 136
+ui sprite:299, shadow, 0, 4, "#000000"
+ui sprite:299, shadow_alpha, 132
+ui sprite:299, hover_fill, "#252a2f"
+ui sprite:299, hover_scale, 1.012
+ui sprite:299, z, 900010
+
+ui_text 298, $ui_back, 640, 612
+ui sprite:298, font_size, 22
+ui sprite:298, align, "center"
+ui sprite:298, color, "#e7e2d6"
+ui sprite:298, z, 900020
+
+btndef clear
+ui_button 220, 220
+ui_button 230, 230
+ui_button 240, 240
+ui_button 250, 250
+ui_button 260, 260
+ui_button 270, 270
+ui_button 280, 280
+ui_button 299, 290
+print 1
+
+*settings_loop
+btnwait %0
+
+if %0 == 290 
+    saveconfig
+    goto *settings_back
+endif
+
+if %0 == 220 
+    setconfig "bgmvol", %220
+    goto *settings_loop
+endif
+
+if %0 == 230 
+    setconfig "sevol", %230
+    goto *settings_loop
+endif
+
+if %0 == 240 
+    setconfig "textspeed", %240
+    goto *settings_loop
+endif
+
+if %0 == 250 
+    setconfig "autowait", %250
+    goto *settings_loop
+endif
+
+if %0 == 260 
+    setconfig "skipunread", %260
+    goto *settings_loop
+endif
+
+if %0 == 270 
+    setconfig "clickcursor", %270
+    goto *settings_loop
+endif
+
+if %0 == 280 
+    setconfig "fullscreen", %280
+    goto *settings_loop
+endif
+
+goto *settings_loop
+
+*settings_back
+csp 9999
+csp 200
+csp 201
+csp 202
+csp 210
+csp 211
+csp 212
+csp 213
+csp 214
+csp 220
+csp 230
+csp 240
+csp 250
+csp 260
+csp 270
+csp 280
+csp 298
+csp 299
+btndef clear
+return

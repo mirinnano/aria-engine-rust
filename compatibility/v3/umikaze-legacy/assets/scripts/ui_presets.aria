@@ -1,0 +1,60 @@
+# aria-version: 2.0
+; ARIA UI preset library v2
+; Engine presets remain available through ui_theme/ui_quality/ui_motion.
+; These helpers are optional building blocks for project-specific UI.
+
+func ui_preset_mono()
+    ui_theme "mono"
+    ui_quality "high"
+    ui_motion "smooth"
+    ui rmenu, align, "center"
+    ui rmenu, w, 360
+    ui save, columns, 2
+    ui cursor, size, 12
+    ui cursor, color, "#ffffff"
+endfunc
+
+func ui_preset_adv()
+    textmode "adv"
+    ui textbox, x, 40
+    ui textbox, y, 540
+    ui textbox, w, 1200
+    ui textbox, h, 160
+    ui textbox, padding, 32, 24
+    ui textbox, fill, "#000000"
+    ui textbox, fill_alpha, 80
+    ui textbox, text_color, "#ffffff"
+    ui textbox, font_size, 28
+    ui textbox, radius, 0
+    ui textbox, border, 1, "#ffffff"
+    ui textbox, border_alpha, 50
+    ui textbox, shadow, 0, 2, "#000000"
+    ui textbox, shadow_alpha, 60
+endfunc
+
+func ui_preset_nvl()
+    textmode "nvl"
+    ui textbox, x, 40
+    ui textbox, y, 20
+    ui textbox, w, 1200
+    ui textbox, h, 680
+    ui textbox, padding, 40, 32
+    ui textbox, fill, "#000000"
+    ui textbox, fill_alpha, 0
+    ui textbox, text_color, "#ffffff"
+    ui textbox, font_size, 34
+    ui textbox, radius, 0
+    ui textbox, border, 0
+    ui textbox, shadow, 0, 0, "#000000"
+    ui textbox, shadow_alpha, 0
+endfunc
+
+func ui_button_mono(id: int, x: int, y: int, w: int, h: int, result: int)
+    ui_rect id, x, y, w, h
+    ui sprite:id, fill, "#000000"
+    ui sprite:id, fill_alpha, 0
+    ui sprite:id, border, 1, "#ffffff"
+    ui sprite:id, border_alpha, 120
+    ui sprite:id, hover_fill, "#151515"
+    ui_button id, result
+endfunc

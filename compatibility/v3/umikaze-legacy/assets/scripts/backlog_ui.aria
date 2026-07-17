@@ -1,0 +1,174 @@
+# aria-version: 2.0
+; バックログ画面（スクリプト主導UI）
+
+*backlog_ui
+; 全面黒背景（既存スプライトを保護）
+ui_rect 909999, 0, 0, 1280, 720
+ui sprite:909999, fill, "#000000"
+ui sprite:909999, fill_alpha, 255
+ui sprite:909999, z, 900000
+
+backlog_count %bcount
+let %bpage = 0
+let %bperpage = 12
+
+*backlog_refresh
+csp 900600
+csp 900601
+for %i = 0 to 11
+    let %tmpid = 900610 + %i
+    csp %tmpid
+    let %tmpid = 900630 + %i
+    csp %tmpid
+next
+csp 900690
+csp 900691
+csp 900692
+csp 900693
+csp 900694
+csp 900695
+
+; タイトル
+ui_text 900600, "BACKLOG", 640, 40
+ui sprite:900600, font_size, 32
+ui sprite:900600, align, "center"
+ui sprite:900600, color, "#ffffff"
+ui sprite:900600, z, 900020
+
+; ページ情報
+let %btotalpages = (%bcount + %bperpage - 1) / %bperpage
+if %btotalpages < 1 { let %btotalpages = 1 }
+ui_text 900601, "", 640, 80
+ui sprite:900601, font_size, 14
+ui sprite:900601, align, "center"
+ui sprite:900601, color, "#888888"
+ui sprite:900601, z, 900020
+let %bpagestr = "PAGE " + (%bpage + 1) + " / " + %btotalpages
+ui sprite:900601, text, %bpagestr
+
+; エントリ表示
+let %bstart = %bcount - ((%bpage + 1) * %bperpage)
+if %bstart < 0 { let %bstart = 0 }
+let %bend = %bcount - (%bpage * %bperpage)
+if %bend > %bcount { let %bend = %bcount }
+
+let %bidx = %bend - 1
+let %bline = 0
+
+*backlog_loop_items
+if %bidx < %bstart { goto *backlog_draw_buttons }
+if %bline >= %bperpage { goto *backlog_draw_buttons }
+
+let %by = 110 + %bline * 42
+let %numid = 900610 + %bline
+let %txtid = 900630 + %bline
+
+let %bnum = %bidx + State.TextHistoryStartNumber
+let %bnumstr = %bnum
+if %bnum < 10 { let %bnumstr = "00" + %bnum }
+else if %bnum < 100 { let %bnumstr = "0" + %bnum }
+
+backlog_entry %bidx, $btext
+
+; 行番号
+ui_text %numid, %bnumstr, 80, %by
+ui sprite:%numid, font_size, 14
+ui sprite:%numid, color, "#666666"
+ui sprite:%numid, z, 900020
+
+; テキスト（幅指定で自動折り返し）
+ui_text %txtid, $btext, 140, %by, 1120
+ui sprite:%txtid, font_size, 17
+ui sprite:%txtid, color, "#cccccc"
+ui sprite:%txtid, z, 900020
+
+let %bidx = %bidx - 1
+let %bline = %bline + 1
+goto *backlog_loop_items
+
+*backlog_draw_buttons
+; PREV（古い履歴へ）
+if %bpage < %btotalpages - 1 {
+    ui_rect 900690, 260, 640, 140, 38
+    ui sprite:900690, fill, "#071923"
+    ui sprite:900690, fill_alpha, 204
+    ui sprite:900690, border, 1, "#7fcbd8"
+    ui sprite:900690, hover_fill, "#143b48"
+    ui sprite:900690, hover_scale, 1.012
+    ui sprite:900690, z, 900010
+    ui_text 900691, "OLDER", 330, 632
+    ui sprite:900691, font_size, 18
+    ui sprite:900691, align, "center"
+    ui sprite:900691, color, "#eaf7f8"
+    ui sprite:900691, z, 900020
+    ui_button 900690, 97
+}
+
+; NEXT（新しい履歴へ）
+if %bpage > 0 {
+    ui_rect 900692, 860, 640, 140, 38
+    ui sprite:900692, fill, "#071923"
+    ui sprite:900692, fill_alpha, 204
+    ui sprite:900692, border, 1, "#7fcbd8"
+    ui sprite:900692, hover_fill, "#143b48"
+    ui sprite:900692, hover_scale, 1.012
+    ui sprite:900692, z, 900010
+    ui_text 900693, "NEWER", 930, 632
+    ui sprite:900693, font_size, 18
+    ui sprite:900693, align, "center"
+    ui sprite:900693, color, "#eaf7f8"
+    ui sprite:900693, z, 900020
+    ui_button 900692, 96
+}
+
+; BACK
+ui_rect 900694, 540, 700, 200, 42
+ui sprite:900694, fill, "#071923"
+ui sprite:900694, fill_alpha, 204
+ui sprite:900694, border, 1, "#7fcbd8"
+ui sprite:900694, hover_fill, "#143b48"
+ui sprite:900694, hover_scale, 1.012
+ui sprite:900694, z, 900010
+ui_text 900695, "BACK", 640, 692
+ui sprite:900695, font_size, 22
+ui sprite:900695, align, "center"
+ui sprite:900695, color, "#eaf7f8"
+ui sprite:900695, z, 900020
+ui_button 900694, 99
+
+if %bpage < %btotalpages - 1 { ui_button 900690, 97 }
+if %bpage > 0 { ui_button 900692, 96 }
+ui_button 900694, 99
+print 1
+
+*backlog_wait
+btnwait %0
+
+if %0 == 99 { goto *backlog_back }
+if %0 == 96 {
+    let %bpage = %bpage - 1
+    goto *backlog_refresh
+}
+if %0 == 97 {
+    let %bpage = %bpage + 1
+    goto *backlog_refresh
+}
+goto *backlog_wait
+
+*backlog_back
+csp 900600
+csp 900601
+for %i = 0 to 11
+    let %tmpid = 900610 + %i
+    csp %tmpid
+    let %tmpid = 900630 + %i
+    csp %tmpid
+next
+csp 900690
+csp 900691
+csp 900692
+csp 900693
+csp 900694
+csp 900695
+csp 909999
+return

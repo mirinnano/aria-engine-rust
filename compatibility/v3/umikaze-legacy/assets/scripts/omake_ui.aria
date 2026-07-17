@@ -1,0 +1,191 @@
+# aria-version: 2.0
+; おまけサブメニュー（EXTRA）
+
+*omake_ui
+fx_reset()
+ui_rect 909999, 0, 0, 1280, 720
+ui sprite:909999, fill, "#08090a"
+ui sprite:909999, fill_alpha, 255
+ui sprite:909999, z, 900000
+
+let %_read_rate, ${state.GetReadRate()}
+let %_cg_rate, ${state.GetCgUnlockRate(10)}
+
+loc_get $ui_extra_title, "extra.title"
+loc_get $ui_extra_subtitle, "extra.subtitle"
+loc_get $ui_read_rate, "extra.read_rate"
+loc_get $ui_cg_unlock, "extra.cg_unlock"
+loc_get $ui_build, "extra.build"
+loc_get $ui_cg_gallery, "extra.cg_gallery"
+loc_get $ui_recollection_preparing, "extra.recollection_preparing"
+loc_get $ui_music_room_preparing, "extra.music_room_preparing"
+loc_get $ui_back, "menu.return"
+
+ui_text 900700, $ui_extra_title, 640, 58
+ui sprite:900700, font_size, 36
+ui sprite:900700, align, "center"
+ui sprite:900700, color, "#e7e2d6"
+ui sprite:900700, text_shadow, 0, 3, "#000000"
+ui sprite:900700, z, 900020
+
+ui_text 900701, $ui_extra_subtitle, 640, 102
+ui sprite:900701, font_size, 14
+ui sprite:900701, align, "center"
+ui sprite:900701, color, "#9aa18f"
+ui sprite:900701, z, 900020
+
+ui_rect 900702, 160, 130, 960, 88
+ui sprite:900702, fill, "#101417"
+ui sprite:900702, fill_alpha, 168
+ui sprite:900702, border, 1, "#9aa18f"
+ui sprite:900702, border_alpha, 98
+ui sprite:900702, shadow, 0, 4, "#000000"
+ui sprite:900702, shadow_alpha, 118
+ui sprite:900702, z, 900005
+
+ui_text 900720, $ui_read_rate, 360, 156
+ui sprite:900720, font_size, 14
+ui sprite:900720, align, "center"
+ui sprite:900720, color, "#9aa18f"
+ui sprite:900720, z, 900020
+ui_text 900721, "${%_read_rate}%", 360, 184
+ui sprite:900721, font_size, 24
+ui sprite:900721, align, "center"
+ui sprite:900721, color, "#e7e2d6"
+ui sprite:900721, z, 900020
+
+ui_text 900722, $ui_cg_unlock, 640, 156
+ui sprite:900722, font_size, 14
+ui sprite:900722, align, "center"
+ui sprite:900722, color, "#9aa18f"
+ui sprite:900722, z, 900020
+ui_text 900723, "${%_cg_rate}%", 640, 184
+ui sprite:900723, font_size, 24
+ui sprite:900723, align, "center"
+ui sprite:900723, color, "#e7e2d6"
+ui sprite:900723, z, 900020
+
+ui_text 900724, $ui_build, 920, 156
+ui sprite:900724, font_size, 14
+ui sprite:900724, align, "center"
+ui sprite:900724, color, "#9aa18f"
+ui sprite:900724, z, 900020
+ui_text 900725, "DBG", 920, 184
+ui sprite:900725, font_size, 24
+ui sprite:900725, align, "center"
+ui sprite:900725, color, "#e7e2d6"
+ui sprite:900725, z, 900020
+
+ui_rect 900710, 420, 270, 440, 48
+ui sprite:900710, fill, "#101417"
+ui sprite:900710, fill_alpha, 204
+ui sprite:900710, border, 1, "#9aa18f"
+ui sprite:900710, border_alpha, 136
+ui sprite:900710, shadow, 0, 4, "#000000"
+ui sprite:900710, shadow_alpha, 132
+ui sprite:900710, hover_fill, "#252a2f"
+ui sprite:900710, hover_scale, 1.012
+ui sprite:900710, z, 900010
+ui_text 900711, $ui_cg_gallery, 640, 286
+ui sprite:900711, font_size, 22
+ui sprite:900711, align, "center"
+ui sprite:900711, color, "#e7e2d6"
+ui sprite:900711, z, 900020
+
+ui_rect 900712, 420, 342, 440, 44
+ui sprite:900712, fill, "#0c0f11"
+ui sprite:900712, fill_alpha, 158
+ui sprite:900712, border, 1, "#3a3f3b"
+ui sprite:900712, border_alpha, 94
+ui sprite:900712, z, 900010
+ui_text 900713, $ui_recollection_preparing, 640, 356
+ui sprite:900713, font_size, 18
+ui sprite:900713, align, "center"
+ui sprite:900713, color, "#757a72"
+ui sprite:900713, z, 900020
+
+ui_rect 900714, 420, 406, 440, 44
+ui sprite:900714, fill, "#0c0f11"
+ui sprite:900714, fill_alpha, 158
+ui sprite:900714, border, 1, "#3a3f3b"
+ui sprite:900714, border_alpha, 94
+ui sprite:900714, z, 900010
+ui_text 900715, $ui_music_room_preparing, 640, 420
+ui sprite:900715, font_size, 18
+ui sprite:900715, align, "center"
+ui sprite:900715, color, "#757a72"
+ui sprite:900715, z, 900020
+
+ui_rect 900719, 540, 572, 200, 42
+ui sprite:900719, fill, "#101417"
+ui sprite:900719, fill_alpha, 204
+ui sprite:900719, border, 1, "#9aa18f"
+ui sprite:900719, border_alpha, 136
+ui sprite:900719, shadow, 0, 4, "#000000"
+ui sprite:900719, shadow_alpha, 132
+ui sprite:900719, hover_fill, "#252a2f"
+ui sprite:900719, hover_scale, 1.012
+ui sprite:900719, z, 900010
+ui_text 900718, $ui_back, 640, 584
+ui sprite:900718, font_size, 22
+ui sprite:900718, align, "center"
+ui sprite:900718, color, "#e7e2d6"
+ui sprite:900718, z, 900020
+
+btndef clear
+ui_button 900710, 1
+ui_button 900719, 9
+print 1
+
+*omake_loop
+btnwait %0
+if %0 == 1
+    gosub *gallery_ui
+    goto *omake_refresh
+endif
+if %0 == 9 { goto *omake_back }
+goto *omake_loop
+
+*omake_refresh
+; Explicitly clear the sprites instead of csp -1
+csp 909999
+csp 900700
+csp 900701
+csp 900702
+csp 900720
+csp 900721
+csp 900722
+csp 900723
+csp 900724
+csp 900725
+csp 900710
+csp 900711
+csp 900712
+csp 900713
+csp 900714
+csp 900715
+csp 900719
+csp 900718
+goto *omake_ui
+
+*omake_back
+csp 909999
+csp 900700
+csp 900701
+csp 900702
+csp 900720
+csp 900721
+csp 900722
+csp 900723
+csp 900724
+csp 900725
+csp 900710
+csp 900711
+csp 900712
+csp 900713
+csp 900714
+csp 900715
+csp 900719
+csp 900718
+btndef clear
+return

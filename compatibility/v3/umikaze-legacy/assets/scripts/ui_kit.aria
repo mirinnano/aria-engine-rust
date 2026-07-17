@@ -1,0 +1,69 @@
+; Aria UI Kit (Core Mode)
+; compat_mode off を前提とした、描画命令ベースの最小UIヘルパー
+
+; -----------------------------------------------------------
+; yes/no ダイアログ
+; 呼び出し:
+;   gosub *ui_yesno, "本当に終了しますか？", 7100
+; 戻り値:
+;   %0 = 1 (Yes), %0 = 0 (No), %0 = -1 (cancel/timeout)
+; -----------------------------------------------------------
+*ui_yesno
+getparam $0, %950
+if %950 <= 0 mov %0, -1 : mesbox "ui_yesno: base sprite id (>0) が必要です。","ui_kit" : return
+mov %951, %950 : add %951, 1
+mov %952, %950 : add %952, 10
+mov %953, %950 : add %953, 11
+mov %954, %950 : add %954, 20
+mov %955, %950 : add %955, 21
+
+; 背景パネル
+lsp_rect %950, 180, 190, 920, 220
+sp_fill %950, "#0b1220", 235
+sp_round %950, 12
+sp_border %950, "#ffffff", 1
+
+; メッセージテキスト
+lsp_text %951, $0, 220, 240
+sp_fontsize %951, 30
+sp_color %951, "#f8fafc"
+
+; Yes ボタン
+lsp_rect %952, 300, 330, 280, 64
+sp_fill %952, "#1e293b", 240
+sp_round %952, 10
+sp_border %952, "#ffffff", 1
+sp_hover_color %952, "#334155"
+lsp_text %953, "Yes", 300, 346
+sp_fontsize %953, 28
+sp_color %953, "#f8fafc"
+sp_text_align %953, "center"
+sp_text_valign %953, "center"
+btn %952
+spbtn %952, 1
+
+; No ボタン
+lsp_rect %954, 700, 330, 280, 64
+sp_fill %954, "#1e293b", 240
+sp_round %954, 10
+sp_border %954, "#ffffff", 1
+sp_hover_color %954, "#334155"
+lsp_text %955, "No", 700, 346
+sp_fontsize %955, 28
+sp_color %955, "#f8fafc"
+sp_text_align %955, "center"
+sp_text_valign %955, "center"
+btn %954
+spbtn %954, 0
+
+print 1
+btnwait %0
+
+csp %950
+csp %951
+csp %952
+csp %953
+csp %954
+csp %955
+print 1
+return

@@ -1,0 +1,159 @@
+# aria-version: 2.0
+; ロード画面（スクリプト主導UI）
+
+*load_ui
+; 全面黒背景（既存スプライトを保護）
+ui_rect 900000, 0, 0, 1280, 720
+ui sprite:900000, fill, "#000000"
+ui sprite:900000, fill_alpha, 255
+ui sprite:900000, z, 900000
+
+; タイトル
+ui_text 400, "LOAD", 640, 50
+ui sprite:400, font_size, 36
+ui sprite:400, align, "center"
+ui sprite:400, color, "#ffffff"
+
+; 10スロット (2列x5行)
+for %slot = 0 to 9
+    let %col = %slot % 2
+    let %row = %slot / 2
+    let %sx = 200 + %col * 440
+    let %sy = 120 + %row * 110
+
+    ; 枠
+    let %bgid = 410 + %slot
+    ui_rect %bgid, %sx, %sy, 420, 95
+    ui sprite:%bgid, fill, "#101417"
+    ui sprite:%bgid, fill_alpha, 204
+    ui sprite:%bgid, border, 1, "#9aa18f"
+    ui sprite:%bgid, border_alpha, 118
+    ui sprite:%bgid, radius, 4
+    ui sprite:%bgid, shadow, 0, 4, "#000000"
+    ui sprite:%bgid, shadow_alpha, 132
+    ui sprite:%bgid, hover_fill, "#252a2f"
+    ui sprite:%bgid, hover_scale, 1.015
+    ui sprite:%bgid, z, 900010
+
+    saveinfo %slot, $spreview, $sdate, %sexists
+
+    ; スロット番号
+    let %numid = 430 + %slot
+    let %numstr = "SLOT " + (%slot + 1)
+    ui_text %numid, %numstr, %sx + 14, %sy + 10
+    ui sprite:%numid, font_size, 16
+    ui sprite:%numid, color, "#e7e2d6"
+    ui sprite:%numid, z, 900020
+
+    ; 状態/日時
+    let %infoid = 450 + %slot
+    if %sexists == 1 {
+        ui_text %infoid, $sdate, %sx + 14, %sy + 34
+        ui sprite:%infoid, font_size, 13
+        ui sprite:%infoid, color, "#9aa18f"
+        ui sprite:%infoid, z, 900020
+
+        let %previd = 470 + %slot
+        if $spreview != "" {
+            ui_text %previd, $spreview, %sx + 14, %sy + 54
+        } else {
+            ui_text %previd, "----", %sx + 14, %sy + 54
+        }
+        ui sprite:%previd, font_size, 14
+        ui sprite:%previd, color, "#b8a46f"
+        ui sprite:%previd, z, 900020
+
+        ; ロード可能なスロットのみボタン有効
+        ui_button %bgid, %slot
+    } else {
+        ui_text %infoid, "NO DATA", %sx + 14, %sy + 34
+        ui sprite:%infoid, font_size, 13
+        ui sprite:%infoid, color, "#555555"
+        ui sprite:%infoid, z, 900020
+    }
+next
+
+; BACK
+ui_rect 499, 540, 700, 200, 42
+ui sprite:499, fill, "#071923"
+ui sprite:499, fill_alpha, 204
+ui sprite:499, border, 1, "#7fcbd8"
+ui sprite:499, hover_fill, "#143b48"
+ui sprite:499, hover_scale, 1.012
+ui sprite:499, shadow, 0, 4, "#000000"
+ui sprite:499, shadow_alpha, 132
+ui sprite:499, z, 900010
+ui_text 498, "BACK", 640, 692
+ui sprite:498, font_size, 22
+ui sprite:498, align, "center"
+ui sprite:498, color, "#eaf7f8"
+ui sprite:498, z, 900020
+ui_button 499, 99
+
+for %slot = 0 to 9
+    saveinfo %slot, $spreview, $sdate, %sexists
+    if %sexists == 1 {
+        let %bgid = 410 + %slot
+        ui_button %bgid, %slot
+    }
+next
+ui_button 499, 99
+print 1
+
+*load_wait
+btnwait %0
+
+if %0 == 99 {
+    goto *load_back
+}
+if %0 >= 0 && %0 <= 9 {
+    saveinfo %0, $spreview, $sdate, %sexists
+    load %0
+    ; ロード完了フィードバック
+    let %fbid = 490
+    ui_text %fbid, "LOADED", 640, 300
+    ui sprite:%fbid, font_size, 32
+    ui sprite:%fbid, align, "center"
+    ui sprite:%fbid, color, "#ffffff"
+    ui sprite:%fbid, z, 900100
+
+    let %fbid2 = 491
+    ui_text %fbid2, $sdate, 640, 350
+    ui sprite:%fbid2, font_size, 16
+    ui sprite:%fbid2, align, "center"
+    ui sprite:%fbid2, color, "#aaaaaa"
+    ui sprite:%fbid2, z, 900100
+
+    if $spreview != "" {
+        let %fbid3 = 492
+        ui_text %fbid3, $spreview, 640, 390
+        ui sprite:%fbid3, font_size, 18
+        ui sprite:%fbid3, align, "center"
+        ui sprite:%fbid3, color, "#cccccc"
+        ui sprite:%fbid3, z, 900100
+    }
+    print 1
+    wait 600
+    csp %fbid
+    csp %fbid2
+    csp %fbid3
+    goto *load_back
+}
+goto *load_wait
+
+*load_back
+csp 400
+for %slot = 0 to 9
+    let %bgid = 410 + %slot
+    csp %bgid
+    let %numid = 430 + %slot
+    csp %numid
+    let %infoid = 450 + %slot
+    csp %infoid
+    let %previd = 470 + %slot
+    csp %previd
+next
+csp 498
+csp 499
+csp 900000
+return

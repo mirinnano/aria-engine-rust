@@ -1,0 +1,24 @@
+window 1280, 720, "海風 -The Records of Autumn-"
+compat_mode on
+font "assets/fonts/NotoSansJP-Regular.ttf"
+font_atlas_size 256
+font_filter "bilinear"
+script "assets/scripts/main.aria"
+debug off
+
+textbox 0, 560, 1280, 160
+fontsize 32
+textcolor "#ffffff"
+textbox_color "#0b0d10", 80
+textbox_style 0, 0, "#000000", 0, 30, 22, 0, 0, "#000000", 0
+choice_style 640, 54, 12, 26, "#11161a", 232, "#e7e2d6", 6, "#9aa18f", 1, 118, "#252a2f", 22
+
+; ============================================================
+; UX Quick Wins (2026-06-01): 必要に応じて以下の opcodes を有効化
+;   詳細は docs/reference/opcodes/textbox_align.md と
+;         docs/reference/ui/button-feel.md を参照
+;
+; textbox_align middle  ; ADV テキストを画面中央に (既定: bottom = 下端)
+; ui_theme "soft"       ; ButtonFeel (ボタン押下感) を soft テーマに変更
+;                       ;   (classic/soft/glass/mono で ButtonFeel 設定あり)
+; ============================================================

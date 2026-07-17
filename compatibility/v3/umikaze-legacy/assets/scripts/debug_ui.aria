@@ -1,0 +1,64 @@
+# aria-version: 2.0
+; デバッグ・診断スクリプト
+
+; ===========================================================
+; btnwait の結果をポップアップ表示
+; ===========================================================
+func dbg_btnwait(label: string)
+    btnwait %0
+    mesbox "[" + label + "] btnwait result: %0=" + %0, "DBG"
+endfunc
+
+; ===========================================================
+; 指定スプライトの基本情報をポップアップ表示
+; ===========================================================
+func dbg_sprite(id: int)
+    ; sprite内部情報はスクリプトから直接読めないので、
+    ; 代わりに存在確認用の簡易チェック
+    textclear
+    text "[DBG] sprite id=" + id
+    @
+endfunc
+
+; ===========================================================
+; タイトル画面用デバッグラッパー
+; ===========================================================
+func dbg_title_loop()
+    *dbg_title_loop
+    btnwait %0
+    textclear
+    text "[DBG] btnwait result = " + %0
+    @
+    
+    if %0 == 1 { text "→ START selected" \ }
+    if %0 == 2 { text "→ LOAD selected" \ }
+    if %0 == 3 { text "→ CONFIG selected" \ }
+    if %0 == 4 { text "→ EXTRA selected" \ }
+    if %0 == 5 { text "→ EXIT selected" \ }
+    if %0 < 1 || %0 > 5 { text "→ UNKNOWN result: " + %0 \ }
+    
+    wait 500
+    goto *dbg_title_loop
+endfunc
+
+; ===========================================================
+; 全ボタン登録確認（btndef後に呼び出し）
+; ===========================================================
+func dbg_dump_buttons()
+    ; btndef の内容は内部データなので、スクリプトから直接読めない。
+    ; 代わりに、知っているIDを手動で羅列して確認用ボタンを再登録する。
+    textclear
+    text "[DBG] Known title buttons: 30→1, 31→2, 32→3, 33→4, 34→5"
+    @
+endfunc
+
+; ===========================================================
+; シナリオ冒頭にモード未設定警告
+; ===========================================================
+func dbg_check_mode(scenario: string)
+    ; textmode が設定されていない場合、前回のモードが残っている。
+    ; 明示的に nvl/adv を呼ぶことを促す。
+    textclear
+    text "[DBG] " + scenario + " started. Ensure nvl() or adv() is called before text."
+    @
+endfunc

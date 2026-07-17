@@ -11,6 +11,9 @@ cargo run --locked -p aria-cli -- check examples/v3-minimal --release
 cargo run --locked -p aria-cli -- run examples/v3-minimal --headless
 cargo run --locked -p aria-cli -- build examples/v3-minimal \
   --target linux-x64 --profile dev --out dist/linux-x64
+
+# Run the real umikaze opening with its original art assets
+cargo run --locked -p aria-cli -- run examples/umikaze
 ```
 
 Release packaging uses an explicit signed or protected PAK profile:
@@ -54,3 +57,7 @@ fonts, target Player wrappers, migration diagnostics, and PAK integrity.
 - [PAK4 and license contract](docs/spec/pak4.md)
 - [Native-first architecture](docs/architecture/v3-native-first.md)
 - [V1/V2 migration](docs/development/v3-migration.md)
+
+The original umikaze authoring files are preserved unchanged in
+[`compatibility/v3/umikaze-legacy`](compatibility/v3/umikaze-legacy). The
+checked-in executable V3 opening is the migration boundary for that source.

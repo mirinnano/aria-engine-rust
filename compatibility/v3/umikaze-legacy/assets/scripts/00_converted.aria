@@ -1,0 +1,448 @@
+; converted from NScripter 00.txt by Codex
+compat_mode on
+ui_theme "clean"
+
+*define
+; -----------------------------------------------------------
+; 基本設定
+; -----------------------------------------------------------
+caption "海風 -The Records of Autumn-"
+; [ns-unsupported] versionstr "海風 -The Records of Autumn-","ぽんこつソフトvol.1"
+; [ns-unsupported] rmenu "セーブ",save,"ロード",load,"回想",lookback,"スキップ",skip,"リセット",reset,"終了",end
+
+; [ns-unsupported] humanz 100
+; [ns-unsupported] windowback
+; [ns-unsupported] usewheel
+; [ns-unsupported] textgosub *text_lb
+
+; [ns-unsupported] globalon
+; [ns-unsupported] kidokumode 1
+; [ns-unsupported] effectskip 1
+; [ns-unsupported] nsa
+; [ns-unsupported] mode_ext
+defaultspeed 65
+; [ns-unsupported] mode_wave_demo
+
+; [ns-unsupported] defvoicevol 100
+; [ns-unsupported] defsevol 60
+; [ns-unsupported] defmp3vol 50
+
+; --- 変数定義 ---
+numalias bgm_vol, 100
+numalias se_vol, 101
+numalias msg_speed, 102
+
+; 各シナリオ進行フラグ
+numalias flg_prologue, 300
+numalias flg_day1, 301
+numalias flg_day2, 302
+numalias flg_day3, 303
+numalias flg_day4, 304
+numalias flg_day5, 305
+numalias flg_day6, 306
+numalias flg_day7, 307
+numalias flg_day8, 308
+numalias flg_day9, 309
+numalias flg_day10, 310
+numalias flg_day11, 311
+numalias flg_day12, 312
+numalias flg_day13, 313
+numalias flg_day14, 314
+
+; [ns-unsupported] killmenu 7
+; [ns-unsupported] killmenu 2
+
+; [ns-unsupported] menusetwindow 24, 24, 2, 4, 0, 1, "#000000"
+
+effect 2, 10, 1000
+effect 3, 10, 500
+
+defsub adv
+defsub nvl
+defsub thought
+defsub cls
+defsub talk
+defsub scenechange
+defsub quake
+defsub playbgm
+defsub playse
+defsub fadein
+defsub fadeout
+defsub envloop
+defsub stopenv
+defsub fadebgm
+defsub playmp3
+defsub fademp3
+
+; [ns-unsupported] game
+goto *start
+
+; ===========================================================
+; テキストクリック待ち（サンドイッチレイヤー対応版）
+; ===========================================================
+*text_lb
+; [ns-unsupported] getcursorpos %900, %901
+; Aria core にはカーソル位置取得がないため、クリック待ちカーソルは固定配置
+mov %900, 610
+mov %901, 452
+; 文字に被らないように少しズラす
+add %900, 2
+add %901, 2
+
+btndef clear
+
+*tbloop
+; ーーー【カーソル表示状態】ーーー
+lsp_text 250, "v", %900, %901 : sp_fontsize 250, 16 : sp_color 250, "#FFFFFF"
+print 1
+btntime 500
+textbtnwait %0
+
+if %0 == 0 goto *text_end
+if %0 == -3 goto *text_end
+if %0 == -1 gosub *rclk : goto *tbloop
+if %0 == -2 systemcall lookback : goto *tbloop
+if %0 != -5 goto *tbloop
+
+; ーーー【カーソル非表示状態】ーーー
+csp 250
+print 1
+btntime 500
+textbtnwait %0
+
+if %0 == 0 goto *text_end
+if %0 == -3 goto *text_end
+if %0 == -1 gosub *rclk : goto *tbloop_off
+if %0 == -2 systemcall lookback : goto *tbloop_off
+goto *tbloop
+
+*tbloop_off
+goto *tbloop
+
+*text_end
+; 次へ進むときにカーソルを消す
+csp 250
+print 1
+; [ns-unsupported] texec 
+saveon
+return
+; ===========================================================
+; 右クリック時のメニュー呼び出し
+; ===========================================================
+*rclk
+systemcall rmenu
+return
+; ===========================================================
+; 画面クリア
+; ===========================================================
+*cls
+textclear
+csp 100 ; 背景用スプライト等を消去
+return
+
+; --- ADVモード（フォント20） ---
+*adv
+textclear
+
+; 上部黒帯のスプライト番号を997から「251」に変更
+lsp 251, ":c;>640,60,#000000", 0, 0
+csp 252 ; （念のため）
+print 1
+
+setwindow 32, 390, 28, 4, 20, 20, 0, 4, %msg_speed, 0, 1, "#000000", 0, 380, 639, 479 
+return
+
+
+; --- NVLモード（フォント24に拡大） ---
+*nvl
+textclear
+
+; スプライト番号を修正
+csp 251
+csp 252
+print 1
+
+setwindow 40, 40, 23, 16, 24, 24, 0, 4, %msg_speed, 0, 1, "#000000", 0, 0, 639, 479 
+return
+
+
+; --- 心の声モード（フォント24に拡大） ---
+*thought
+textclear
+
+; スプライト番号を修正
+csp 251
+csp 252
+print 1
+
+setwindow 100, 140, 18, 7, 24, 24, 0, 4, %msg_speed, 0, 1, "#000000", 80, 120, 560, 340
+return
+
+*envloop
+getparam $0 : dwaveloop 1, $0 : return
+*stopenv
+dwavestop 1 : return
+*fadebgm
+getparam %1 : bgmfade %1 : return
+*fadeout
+getparam %1 : bg "#000000", %1 : return
+*fadein
+getparam $0, %1 : bg $0, %1 : return
+
+*talk
+getparam $0,$1
+textclear
+textcolor "#88CCFF"
+【${0}】
+textcolor "#FFFFFF"
+${1}\
+return
+
+*scenechange
+getparam $0,%1:bg "#000000", %1:bg $0, %1:return
+*quake
+quakex 5, 500:return
+*playbgm
+getparam $0 : bgm $0 : return
+*playse
+getparam $0 : dwave 0, $0 : return
+*playmp3
+getparam $0 : mp3loop $0 : return
+*fademp3
+getparam %1 : mp3fadeout %1 : return
+
+
+; ===========================================================
+; タイトル画面
+; ===========================================================
+*start
+if %bgm_vol == 0 mov %bgm_vol, 80
+if %se_vol == 0 mov %se_vol, 100
+if %msg_speed == 0 mov %msg_speed, 20
+
+bgmvol %bgm_vol : mp3vol %bgm_vol : sevol %se_vol
+
+cls
+csp -1
+erasetextwindow 0
+bg "bg/bg_title.bmp", 2
+
+; タイトルロゴ
+lsp_text 1, "海風", 60, 60 : sp_fontsize 1, 48 : sp_color 1, "#FFFFFF"
+lsp_text 2, "- The Records of Autumn -", 65, 120 : sp_fontsize 2, 14 : sp_color 2, "#CCCCCC"
+lsp_text 3, "Ver 1.0", 610, 460 : sp_fontsize 3, 12 : sp_color 3, "#999999"
+
+; メニューボタン
+lsp_text 10, "Game Start", 420, 240 : sp_fontsize 10, 22 : sp_color 10, "#FFFFFF"
+lsp_text 11, "Load Game", 420, 290 : sp_fontsize 11, 22 : sp_color 11, "#FFFFFF"
+lsp_text 12, "Settings", 420, 340 : sp_fontsize 12, 22 : sp_color 12, "#FFFFFF"
+lsp_text 13, "Exit Game", 420, 390 : sp_fontsize 13, 22 : sp_color 13, "#FFFFFF"
+
+btndef clear
+spbtn 10, 1 : spbtn 11, 2 : spbtn 12, 3 : spbtn 13, 4
+print 2
+
+*title_loop
+btnwait %0
+if %0 == 1 goto *chapter_select  ; シナリオ選択画面へ
+if %0 == 2 goto *load_menu
+if %0 == 3 goto *settings_menu
+if %0 == 4 goto *game_end
+if %0 == -1 goto *title_loop
+goto *title_loop
+
+*game_end
+yesnobox %1, "ゲームを終了しますか？", "確認"
+if %1 == 1 end
+goto *title_loop
+
+*load_menu
+systemcall load
+goto *start
+
+
+; ===========================================================
+; シナリオ選択画面
+; ===========================================================
+*chapter_select
+cls
+csp -1
+erasetextwindow 0
+bg "#000000", 2
+
+lsp_text 1, "Scenario Select", 40, 40 : sp_fontsize 1, 32 : sp_color 1, "#FFFFFF"
+lsp_text 2, "【Debug: 全解放】", 420, 50 : sp_fontsize 2, 18 : sp_color 2, "#FFFFFF"
+
+; 見出し
+lsp_text 10, "-- 1st Week --", 60, 110 : sp_fontsize 10, 16 : sp_color 10, "#AAAAAA"
+lsp_text 11, "-- 2nd Week --", 260, 110 : sp_fontsize 11, 16 : sp_color 11, "#AAAAAA"
+
+; プロローグ
+if %flg_prologue == 1 lsp_text 100, "prologue", 60, 140 : sp_fontsize 100, 20 : sp_color 100, "#FFFFFF"
+
+; 前半
+if %flg_day1 == 1 lsp_text 101, "Day 1", 60, 180 : sp_fontsize 101, 20 : sp_color 101, "#FFFFFF"
+if %flg_day2 == 1 lsp_text 102, "Day 2", 60, 220 : sp_fontsize 102, 20 : sp_color 102, "#FFFFFF"
+if %flg_day3 == 1 lsp_text 103, "Day 3", 60, 260 : sp_fontsize 103, 20 : sp_color 103, "#FFFFFF"
+if %flg_day4 == 1 lsp_text 104, "Day 4", 60, 300 : sp_fontsize 104, 20 : sp_color 104, "#FFFFFF"
+if %flg_day5 == 1 lsp_text 105, "Day 5", 60, 340 : sp_fontsize 105, 20 : sp_color 105, "#FFFFFF"
+if %flg_day6 == 1 lsp_text 106, "Day 6", 60, 380 : sp_fontsize 106, 20 : sp_color 106, "#FFFFFF"
+if %flg_day7 == 1 lsp_text 107, "Day 7", 60, 420 : sp_fontsize 107, 20 : sp_color 107, "#FFFFFF"
+
+; 後半
+if %flg_day8 == 1  lsp_text 108, "Day 8", 260, 140 : sp_fontsize 108, 20 : sp_color 108, "#FFFFFF"
+if %flg_day9 == 1  lsp_text 109, "Day 9", 260, 180 : sp_fontsize 109, 20 : sp_color 109, "#FFFFFF"
+if %flg_day10 == 1 lsp_text 110, "Day 10", 260, 220 : sp_fontsize 110, 20 : sp_color 110, "#FFFFFF"
+if %flg_day11 == 1 lsp_text 111, "Day 11", 260, 260 : sp_fontsize 111, 20 : sp_color 111, "#FFFFFF"
+if %flg_day12 == 1 lsp_text 112, "Day 12", 260, 300 : sp_fontsize 112, 20 : sp_color 112, "#FFFFFF"
+if %flg_day13 == 1 lsp_text 113, "Day 13", 260, 340 : sp_fontsize 113, 20 : sp_color 113, "#FFFFFF"
+if %flg_day14 == 1 lsp_text 114, "Day 14", 260, 380 : sp_fontsize 114, 20 : sp_color 114, "#FFFFFF"
+
+lsp_text 200, "Back to Title", 400, 440 : sp_fontsize 200, 22 : sp_color 200, "#FFFFFF"
+print 2
+
+*chapter_loop
+btndef clear
+spbtn 2, 50
+if %flg_prologue == 1 spbtn 100, 100
+if %flg_day1 == 1 spbtn 101, 101
+if %flg_day2 == 1 spbtn 102, 102
+if %flg_day3 == 1 spbtn 103, 103
+if %flg_day4 == 1 spbtn 104, 104
+if %flg_day5 == 1 spbtn 105, 105
+if %flg_day6 == 1 spbtn 106, 106
+if %flg_day7 == 1 spbtn 107, 107
+if %flg_day8 == 1 spbtn 108, 108
+if %flg_day9 == 1 spbtn 109, 109
+if %flg_day10 == 1 spbtn 110, 110
+if %flg_day11 == 1 spbtn 111, 111
+if %flg_day12 == 1 spbtn 112, 112
+if %flg_day13 == 1 spbtn 113, 113
+if %flg_day14 == 1 spbtn 114, 114
+spbtn 200, 99
+btnwait %0
+
+if %0 == 99 goto *start
+if %0 == -1 goto *start
+if %0 == 50 gosub *debug_unlock : goto *chapter_select
+
+; シナリオ開始前にスプライトを消去
+if %0 >= 100 && %0 <= 114 csp -1
+
+if %0 == 100 goto *init
+if %0 == 101 goto *day1
+if %0 == 102 goto *day2
+if %0 == 103 goto *day3
+if %0 == 104 goto *day4
+if %0 == 105 goto *day5
+if %0 == 106 goto *day6
+if %0 == 107 goto *day7
+if %0 == 108 goto *day8
+if %0 == 109 goto *day9
+if %0 == 110 goto *day10
+if %0 == 111 goto *day11
+if %0 == 112 goto *day12
+if %0 == 113 goto *day13
+if %0 == 114 goto *day14
+
+if %0 >= 107 && %0 <= 114 mesbox "このシナリオはまだ実装されていません。","通知" : goto *chapter_select
+
+goto *chapter_loop
+
+*debug_unlock
+mov %flg_prologue, 1 : mov %flg_day1, 1 : mov %flg_day2, 1 : mov %flg_day3, 1 : mov %flg_day4, 1 : mov %flg_day5, 1 : mov %flg_day6, 1 : mov %flg_day7, 1
+mov %flg_day8, 1 : mov %flg_day9, 1 : mov %flg_day10, 1 : mov %flg_day11, 1 : mov %flg_day12, 1 : mov %flg_day13, 1 : mov %flg_day14, 1
+return
+
+; ===========================================================
+; 設定画面
+; ===========================================================
+*settings_menu
+cls : csp -1 : bg "bg/bg_title.bmp", 2
+lsp_text 1, "Settings", 40, 40 : sp_fontsize 1, 32 : sp_color 1, "#FFFFFF"
+lsp_text 10, "GM/MP3 Volume", 60, 140 : sp_fontsize 10, 20 : sp_color 10, "#FFFFFF"
+lsp_text 11, "0%", 200, 140 : sp_fontsize 11, 18 : sp_color 11, "#FFFFFF"
+lsp_text 12, "50%", 300, 140 : sp_fontsize 12, 18 : sp_color 12, "#FFFFFF"
+lsp_text 13, "100%", 400, 140 : sp_fontsize 13, 18 : sp_color 13, "#FFFFFF"
+lsp_text 20, "Text Speed", 60, 220 : sp_fontsize 20, 20 : sp_color 20, "#FFFFFF"
+lsp_text 21, "Slow", 200, 220 : sp_fontsize 21, 18 : sp_color 21, "#FFFFFF"
+lsp_text 22, "Normal", 320, 220 : sp_fontsize 22, 18 : sp_color 22, "#FFFFFF"
+lsp_text 23, "Fast", 460, 220 : sp_fontsize 23, 18 : sp_color 23, "#FFFFFF"
+lsp_text 30, "Back to Title", 400, 400 : sp_fontsize 30, 22 : sp_color 30, "#FFFFFF"
+btndef clear
+spbtn 11, 11 : spbtn 12, 12 : spbtn 13, 13 : spbtn 21, 21 : spbtn 22, 22 : spbtn 23, 23 : spbtn 30, 99
+print 2
+*settings_loop
+btnwait %0
+if %0 == 11 mov %bgm_vol, 0   : bgmvol %bgm_vol : mp3vol %bgm_vol
+if %0 == 12 mov %bgm_vol, 50  : bgmvol %bgm_vol : mp3vol %bgm_vol
+if %0 == 13 mov %bgm_vol, 100 : bgmvol %bgm_vol : mp3vol %bgm_vol
+if %0 == 21 mov %msg_speed, 40
+if %0 == 22 mov %msg_speed, 20
+if %0 == 23 mov %msg_speed, 0
+if %0 == 99 goto *start
+if %0 == -1 goto *start
+goto *settings_loop
+
+; ===========================================================
+; 未移植シナリオのスタブ（ラベル未定義エラー回避）
+; ===========================================================
+*init
+include "assets/scripts/scenario_01.aria"
+goto *scenario_01
+
+*day1
+include "assets/scripts/scenario_02.aria"
+goto *scenario_02
+
+*day2
+include "assets/scripts/scenario_03.aria"
+goto *scenario_03
+
+*day3
+include "assets/scripts/scenario_04.aria"
+goto *scenario_04
+
+*day4
+include "assets/scripts/scenario_05.aria"
+goto *scenario_05
+
+*day5
+include "assets/scripts/scenario_06.aria"
+goto *scenario_06
+
+*day6
+mesbox "day6 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day7
+mesbox "day7 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day8
+mesbox "day8 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day9
+mesbox "day9 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day10
+mesbox "day10 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day11
+mesbox "day11 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day12
+mesbox "day12 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day13
+mesbox "day13 はまだAriaへ未移植です。","通知"
+goto *chapter_select
+
+*day14
+mesbox "day14 はまだAriaへ未移植です。","通知"
+goto *chapter_select
