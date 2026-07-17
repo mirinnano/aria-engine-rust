@@ -64,17 +64,22 @@ impl ImageResolver for NativeAssetStore {
 }
 
 fn is_svg(logical_path: &str, bytes: &[u8]) -> bool {
-    logical_path
-        .rsplit_once('.')
-        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("svg"))
-        || bytes
+    match logical_path.rsplit_once('.') {
+        Some((_, extension)) if extension.eq_ignore_ascii_case("svg") => true,
+        // Some PNGs carry textual metadata or thumbnails that happen to
+        // contain the bytes `<svg`. Once a concrete raster extension is
+        // present, the extension is authoritative and content sniffing must
+        // not route that image through the SVG decoder.
+        Some(_) => false,
+        None => bytes
             .iter()
             .copied()
             .skip_while(u8::is_ascii_whitespace)
             .take(512)
             .collect::<Vec<_>>()
             .windows(4)
-            .any(|window| window.eq_ignore_ascii_case(b"<svg"))
+            .any(|window| window.eq_ignore_ascii_case(b"<svg")),
+    }
 }
 
 fn decode_raster(bytes: &[u8]) -> Result<RasterImage, String> {
@@ -155,5 +160,6 @@ mod tests {
         assert!(is_svg("art/scene.svg", b"not actually XML"));
         assert!(is_svg("art/scene.dat", b" \n<svg viewBox=\"0 0 1 1\"/>"));
         assert!(!is_svg("art/scene.png", b"\x89PNG\r\n"));
+        assert!(!is_svg("art/scene.png", b"\x89PNG\r\nmetadata<svg"));
     }
 }
