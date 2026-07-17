@@ -1,0 +1,14 @@
+schema = 3
+
+[game]
+id = "jp.example.aria-v3-player-smoke"
+version = "1.0.0"
+title = "Aria V3 Native Player Smoke"
+
+[runtime]
+entry = "scripts/main.aria"
+logical_width = 640
+logical_height = 360
+asset_roots = ["assets"]
+fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
+save_namespace = "aria-v3-player-smoke"

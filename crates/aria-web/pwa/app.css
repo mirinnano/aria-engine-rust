@@ -1,0 +1,74 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, "Noto Sans JP", sans-serif;
+  background: #05080c;
+  color: #f4f6f8;
+}
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#player {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+#player {
+  display: grid;
+  place-items: center;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#aria-canvas {
+  width: 100%;
+  height: 100%;
+  outline: none;
+  touch-action: none;
+}
+
+#aria-canvas:focus-visible {
+  outline: 3px solid #8dc8ff;
+  outline-offset: -3px;
+}
+
+#aria-status,
+#aria-update {
+  position: fixed;
+  z-index: 10;
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  min-height: 44px;
+  margin: 0;
+  padding: 0.7rem 1rem;
+  border-radius: 0.5rem;
+  background: rgb(5 8 12 / 88%);
+}
+
+#aria-update {
+  left: auto;
+  right: max(1rem, env(safe-area-inset-right));
+  border: 2px solid #8dc8ff;
+  color: inherit;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  #aria-status,
+  #aria-update {
+    background: #000;
+    border: 2px solid #fff;
+  }
+}

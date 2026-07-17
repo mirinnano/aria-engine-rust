@@ -1,0 +1,8 @@
+aria 3.1;
+entry start;
+
+scene start {
+  background asset("#07131f");
+  wait 1ms;
+  end;
+}

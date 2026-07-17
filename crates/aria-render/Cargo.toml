@@ -1,0 +1,26 @@
+[package]
+name = "aria-render"
+description = "Shared V3 rendering, text, and UI adapter primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aria-core.workspace = true
+bytemuck = { workspace = true, optional = true }
+cosmic-text = { workspace = true, optional = true, default-features = false, features = ["std", "swash"] }
+glyphon = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+taffy.workspace = true
+thiserror.workspace = true
+unicode-script = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true, default-features = false, features = ["std", "wgsl"] }
+
+[features]
+default = []
+text-layout = ["dep:cosmic-text"]
+gpu = ["text-layout", "dep:bytemuck", "dep:glyphon", "dep:unicode-script", "dep:wgpu"]
+native-gpu = ["gpu", "wgpu/dx12", "wgpu/metal", "wgpu/vulkan", "wgpu/gles"]
+web-gpu = ["gpu", "wgpu/webgpu", "wgpu/webgl"]

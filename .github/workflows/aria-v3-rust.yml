@@ -1,0 +1,207 @@
+name: Aria V3 Rust
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "vendor/**"
+      - "deny.toml"
+      - "crates/**"
+      - "compatibility/v3/**"
+      - "examples/v3-minimal/**"
+      - "examples/v3-player-smoke/**"
+      - "scripts/build-v3-web.*"
+      - "scripts/v3-web-smoke.mjs"
+      - "scripts/v3-web-save-smoke.mjs"
+      - ".github/workflows/aria-v3-rust.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "vendor/**"
+      - "deny.toml"
+      - "crates/**"
+      - "compatibility/v3/**"
+      - "examples/v3-minimal/**"
+      - "examples/v3-player-smoke/**"
+      - "scripts/build-v3-web.*"
+      - "scripts/v3-web-smoke.mjs"
+      - "scripts/v3-web-save-smoke.mjs"
+      - ".github/workflows/aria-v3-rust.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # Non-secret fixture key for CI's signed-package smoke tests. Production
+  # release jobs must inject their real publisher key through a secret.
+  ARIA_PAK_SIGNING_KEY: publisher:0707070707070707070707070707070707070707070707070707070707070707
+
+jobs:
+  quality:
+    name: Core, formats, and deterministic replay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev xvfb mesa-vulkan-drivers
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test workspace and architecture boundary
+        run: cargo test --workspace --locked
+      - name: Check release-compatible example project
+        run: cargo run --locked -p aria-cli -- check examples/v3-minimal --release
+
+  native:
+    name: Native ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-${{ matrix.os }}
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev xvfb mesa-vulkan-drivers
+      - name: Compile Winit/wgpu/Kira/AccessKit adapter
+        run: cargo check -p aria-native --features desktop --locked
+      - name: Test native adapter
+        run: cargo test -p aria-native --features desktop --locked --lib
+      - name: Build matching host package
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Windows) target="windows-x64" ;;
+            macOS) target="macos-universal" ;;
+            Linux) target="linux-x64" ;;
+          esac
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # A universal Mach-O must be assembled from both Apple slices; the
+            # macOS matrix job only proves the portable data artifact here.
+            cargo run --locked -p aria-cli -- build examples/v3-minimal --target "$target" --out "target/package-$target"
+          else
+            cargo run --locked --release -p aria-cli -- build examples/v3-minimal --target "$target" --profile signed --release --out "target/package-$target"
+          fi
+          test -f "target/package-$target/game.ariac"
+          test -f "target/package-$target/game.ariapak"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            test ! -f "target/package-$target/aria-player"
+          else
+            if [ "${{ runner.os }}" = "Windows" ]; then player="aria-player.exe"; else player="aria-player"; fi
+            test -f "target/package-$target/$player"
+            (cd "target/package-$target" && "./$player" --headless > first-frame.json)
+            grep -q '"frame_number"' "target/package-$target/first-frame.json"
+          fi
+      - name: Render a packaged Native Player frame under Xvfb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo run --locked --release -p aria-cli -- build examples/v3-player-smoke --target linux-x64 --profile signed --release --out target/native-player-smoke
+          timeout 30s xvfb-run -a target/native-player-smoke/aria-player
+      - name: Upload native release package
+        if: runner.os != 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria-native-${{ matrix.os }}
+          path: target/package-*/**
+
+  wasm-chromium:
+    name: WASM Chromium offline shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - name: Check the full workspace for wasm portability
+        run: cargo check --workspace --target wasm32-unknown-unknown --locked
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Build runnable PWA
+        run: ./scripts/build-v3-web.sh examples/v3-minimal target/v3-web
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Chromium smoke dependency
+        run: |
+          npm install --no-save playwright@1.61.1
+          npx playwright install --with-deps chromium
+      - name: Exercise WASM runtime in Chromium
+        run: |
+          python3 -m http.server 4173 --directory target/v3-web >/tmp/aria-v3-http.log 2>&1 &
+          node scripts/v3-web-smoke.mjs http://127.0.0.1:4173/
+          node scripts/v3-web-save-smoke.mjs http://127.0.0.1:4173/
+      - name: Upload PWA
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria-v3-web
+          path: target/v3-web/**
+
+  macos-universal:
+    name: macOS universal Native Player
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal
+      - name: Build both Apple slices
+        run: |
+          cargo build --locked --release -p aria-cli --target aarch64-apple-darwin
+          cargo build --locked --release -p aria-cli --target x86_64-apple-darwin
+          mkdir -p target/macos-universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/aria \
+            target/x86_64-apple-darwin/release/aria \
+            -output target/macos-universal/aria-player
+          file target/macos-universal/aria-player
+      - name: Build and launch universal package
+        run: |
+          ARIA_PLAYER_BINARY="$PWD/target/macos-universal/aria-player" \
+            cargo run --locked --release -p aria-cli -- build \
+            examples/v3-player-smoke --target macos-universal --profile signed --release \
+            --out target/package-macos-universal
+          file target/package-macos-universal/aria-player
+          timeout 30s target/package-macos-universal/aria-player
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aria-native-macos-universal
+          path: target/package-macos-universal/**
+
+  supply-chain:
+    name: Audit dependencies and licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

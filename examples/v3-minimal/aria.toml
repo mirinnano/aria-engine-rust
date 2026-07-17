@@ -1,0 +1,14 @@
+schema = 3
+
+[game]
+id = "jp.example.aria-v3-minimal"
+version = "1.0.0"
+title = "Aria V3 縦切り"
+
+[runtime]
+entry = "scripts/main.aria"
+logical_width = 1280
+logical_height = 720
+asset_roots = ["assets"]
+fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
+save_namespace = "aria-v3-minimal"

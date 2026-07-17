@@ -1,0 +1,77 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aria-core",
+    "crates/aria-protection",
+    "crates/aria-render",
+    "crates/aria-native",
+    "crates/aria-web",
+    "crates/aria-cli",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/mirinnano/aria-engine-rust"
+
+[workspace.dependencies]
+aria-core = { path = "crates/aria-core", version = "1.0.0" }
+aria-protection = { path = "crates/aria-protection", version = "1.0.0" }
+aria-render = { path = "crates/aria-render", version = "1.0.0" }
+aria-native = { path = "crates/aria-native", version = "1.0.0" }
+aria-web = { path = "crates/aria-web", version = "1.0.0" }
+
+aes = "=0.8.4"
+chacha20poly1305 = "=0.10.1"
+accesskit = "=0.24.1"
+accesskit_winit = { version = "=0.33.2", default-features = false, features = ["accesskit_unix", "async-io", "rwh_06"] }
+anyhow = "=1.0.103"
+atomic-write-file = "=0.3.0"
+# Use BLAKE3's Rust SIMD backend instead of target-specific C/assembler. This
+# keeps Windows MSVC/GNU cross-checks reproducible on non-Windows hosts while
+# retaining SIMD acceleration where the target supports it.
+blake3 = { version = "=1.8.5", features = ["pure"] }
+bytemuck = { version = "=1.24.0", features = ["derive"] }
+cbc = "=0.1.2"
+clap = "=4.6.2"
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["std", "swash"] }
+flate2 = "=1.1.8"
+ed25519-dalek = "=2.2.0"
+fontdb = "=0.23.0"
+gilrs = "=0.11.2"
+getrandom = "=0.3.4"
+glyphon = "=0.12.0"
+hex = "=0.4.3"
+image = { version = "=0.25.8", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "tga", "webp"] }
+kira = "=0.12.2"
+pollster = "=0.4.0"
+resvg = { version = "=0.47.0", default-features = false }
+serde = "=1.0.228"
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+taffy = "=0.12.2"
+tempfile = "=3.27.0"
+thiserror = "=2.0.18"
+toml = "=1.1.3"
+unicode-segmentation = "=1.12.0"
+unicode-normalization = "=0.1.25"
+unicode-script = "=0.5.8"
+walkdir = "=2.5.0"
+wasm-bindgen = "=0.2.126"
+web-sys = "=0.3.103"
+wgpu = { version = "=30.0.0", default-features = false, features = ["std", "wgsl"] }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+# The currently published wayland-scanner release still pins quick-xml 0.39,
+# which has a build-time XML parser advisory. Keep the small proc-macro crate
+# vendored until its upstream quick-xml 0.41 change is released; the patch is
+# limited to the dependency and the corresponding XML entity method.
+[patch.crates-io]
+wayland-scanner = { path = "vendor/wayland-scanner" }

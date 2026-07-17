@@ -1,0 +1,28 @@
+[package]
+name = "aria-web"
+description = "Web/PWA adapter for Aria V3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aria-core.workspace = true
+aria-protection.workspace = true
+aria-render.workspace = true
+hex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["console"] }
+
+[features]
+default = []
+web-gpu = ["aria-render/web-gpu"]

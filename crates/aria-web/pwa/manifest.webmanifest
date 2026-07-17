@@ -1,0 +1,10 @@
+{
+  "name": "Aria V3 Player",
+  "short_name": "Aria V3",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#05080c",
+  "theme_color": "#05080c",
+  "orientation": "any"
+}

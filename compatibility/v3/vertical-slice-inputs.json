@@ -1,0 +1,47 @@
+{
+  "name": "japanese-adv-choice-save",
+  "inputs": [
+    {
+      "sequence": 1,
+      "delta_ms": 16,
+      "pressed": [],
+      "held": [],
+      "pointer": null
+    },
+    {
+      "sequence": 2,
+      "delta_ms": 400,
+      "pressed": ["advance"],
+      "held": [],
+      "pointer": null
+    },
+    {
+      "sequence": 3,
+      "delta_ms": 16,
+      "pressed": ["advance"],
+      "held": [],
+      "pointer": null
+    },
+    {
+      "sequence": 4,
+      "delta_ms": 16,
+      "pressed": ["confirm"],
+      "held": [],
+      "pointer": null
+    },
+    {
+      "sequence": 5,
+      "delta_ms": 500,
+      "pressed": ["advance"],
+      "held": [],
+      "pointer": null
+    },
+    {
+      "sequence": 6,
+      "delta_ms": 16,
+      "pressed": ["advance"],
+      "held": [],
+      "pointer": null
+    }
+  ]
+}

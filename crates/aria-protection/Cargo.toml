@@ -1,0 +1,28 @@
+[package]
+name = "aria-protection"
+description = "Native/Web adapter contract for Aria PAK4 profiles and offline leases"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aria-core.workspace = true
+blake3.workspace = true
+chacha20poly1305.workspace = true
+ed25519-dalek.workspace = true
+flate2.workspace = true
+hex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# ed25519-dalek's transitive rand_core uses getrandom 0.2; enable its browser
+# implementation for the Web adapter even though the package writer itself
+# does not obtain runtime randomness.
+getrandom = { version = "=0.2.17", features = ["js"] }

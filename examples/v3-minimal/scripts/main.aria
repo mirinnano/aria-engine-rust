@@ -1,0 +1,33 @@
+aria 3.1;
+module example.minimal;
+entry start;
+
+scene start {
+  background asset("#07131f") with fade(240ms);
+  show mio = image(asset("assets/mio.svg")) at (760px, 86px) z 20;
+  say ミオ: "潮風の音、聞こえる？";
+  await advance;
+  choice {
+    "海辺へ行く" => shore;
+    "ここで待つ" => stay;
+  }
+}
+
+scene shore {
+  background asset("assets/sea.svg") with wipe(420ms);
+  save 1;
+  say ミオ: "それじゃあ、一緒に行こう。";
+  await advance;
+  jump finish;
+}
+
+scene stay {
+  background asset("#111820") with fade(300ms);
+  say ミオ: "うん。もう少し、ここにいよう。";
+  await advance;
+  end;
+}
+
+scene finish {
+  end;
+}
