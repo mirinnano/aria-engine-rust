@@ -20,6 +20,7 @@ on:
       - "scripts/v3-web-smoke.mjs"
       - "scripts/v3-web-save-smoke.mjs"
       - ".github/workflows/aria-v3-rust.yml"
+      - ".github/workflows/aria-web-pages.yml"
   pull_request:
     paths:
       - "Cargo.toml"
@@ -38,6 +39,7 @@ on:
       - "scripts/v3-web-smoke.mjs"
       - "scripts/v3-web-save-smoke.mjs"
       - ".github/workflows/aria-v3-rust.yml"
+      - ".github/workflows/aria-web-pages.yml"
   workflow_dispatch:
 
 permissions:
