@@ -78,6 +78,8 @@ jobs:
         run: python3 scripts/classify-v3-legacy-tests.py --check
       - name: Check release-compatible example project
         run: cargo run --locked -p aria-cli -- check examples/v3-minimal --release
+      - name: Check native-player release smoke project
+        run: cargo run --locked -p aria-cli -- check examples/v3-player-smoke --release
       - name: Check V3.2 umikaze UI sample
         run: cargo run --locked -p aria-cli -- check examples/umikaze --release
 

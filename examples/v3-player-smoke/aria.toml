@@ -1,4 +1,4 @@
-schema = 3
+schema = 4
 
 [game]
 id = "jp.example.aria-v3-player-smoke"
@@ -12,3 +12,9 @@ logical_height = 360
 asset_roots = ["assets"]
 fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
 save_namespace = "aria-v3-player-smoke"
+
+[presentation]
+# A release project always names its owned presentation, even when this smoke
+# project is primarily exercised through the native player.  This keeps the
+# manifest valid for every release target and catches schema drift early.
+frontend = "ui"
