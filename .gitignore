@@ -163,8 +163,22 @@ src/AriaEngine/aria_error_ai.*
 !src/AriaEngine/assets/bg/ui_save_load_ocean.png
 !src/AriaEngine/assets/bg/ui_chapter_select_ocean.png
 !tests/visual-regression/baseline/*.png
+!examples/umikaze/assets/**/*.png
+!examples/umikaze/ui/src-tauri/icons/32x32.png
+!examples/umikaze/ui/src-tauri/icons/128x128.png
+!examples/umikaze/ui/src-tauri/icons/128x128@2x.png
+!examples/umikaze/ui/src-tauri/icons/umikaze-app-icon-v1.png
 *.jpg
 *.jpeg
+
+# Project-owned React/Tauri source is tracked; its install, build, and test
+# products are not.
+**/node_modules/
+**/dist/
+**/test-results/
+**/playwright-report/
+**/src-tauri/target/
+__pycache__/
 
 # Keys and certificates
 *.pfx

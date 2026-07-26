@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 
 const url = process.argv[2] || "http://127.0.0.1:4173/";
+const verificationKey = process.env.ARIA_WEB_TEST_VERIFICATION_KEY;
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
@@ -8,6 +9,16 @@ page.on("pageerror", (error) => errors.push(String(error)));
 page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
 });
+if (verificationKey) {
+  await page.addInitScript((key) => {
+    globalThis.ariaPakKeyProvider = async () => ({
+      verification_key_id: "publisher",
+      verification_key_hex: key,
+      encryption_key_id: "",
+      encryption_key_hex: "",
+    });
+  }, verificationKey);
+}
 
 await page.goto(url, { waitUntil: "networkidle" });
 await page.waitForFunction(() => Number.isInteger(globalThis.__ariaRenderedFrame), null, {
@@ -41,6 +52,7 @@ const result = await page.evaluate(async () => {
   );
   const secondPayload = secondRuntime.save_envelope_json(2n);
   await store.put(bundle.save_namespace, 7, secondPayload);
+  const latestBeforeCorruption = await store.latest(bundle.save_namespace, 7);
   const beforeCorruption = await store.generations(bundle.save_namespace, 7);
 
   const newest = beforeCorruption[0];
@@ -83,6 +95,7 @@ const result = await page.evaluate(async () => {
   });
   return {
     generationCount: beforeCorruption.length,
+    latestGeneration: latestBeforeCorruption?.generation ?? null,
     skipped,
     recoveredGeneration,
   };
@@ -94,6 +107,7 @@ if (errors.length) {
 }
 if (
   result.generationCount !== 2 ||
+  result.latestGeneration !== 2 ||
   result.skipped !== 1 ||
   result.recoveredGeneration !== 1
 ) {

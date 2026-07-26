@@ -1,0 +1,16 @@
+aria;
+module umikaze.demo_main;
+entry start;
+
+// A demo is a separate import closure, not a runtime flag hidden inside the
+// full game. Later manuscript modules are therefore absent from its ARIAC.
+use "scenario/demo.aria";
+
+scene start {
+  locale "ja-JP";
+  text_speed 28;
+  background asset("#264450") with fade(240ms);
+  persistent flag "umikaze_demo_setup_complete" = true;
+  screen title;
+  choice { "体験版をはじめる" => chapter_select_ja; }
+}

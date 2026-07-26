@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use aria_core::pak::PakArchive;
+use aria_core::pak::{PakArchive, PakError};
 use aria_native::{
     AssetProvider, NativeAssetStore, NativePlayerConfig, default_save_root, run_desktop,
 };
@@ -56,32 +56,44 @@ pub fn run_project(path: &Path) -> Result<u8> {
         RuntimeAssetSource::ProjectRoot { assets } => {
             Box::new(DirectoryAssetProvider::new(project.root.clone(), assets)?)
         }
-        RuntimeAssetSource::Package { profile } => {
-            let archive_path = project.root.join("game.ariapak");
-            let bytes = fs::read(&archive_path)
-                .with_context(|| format!("cannot read {}", archive_path.display()))?;
-            match profile {
-                crate::build::BuildProfile::Dev => Box::new(PakAssetProvider {
-                    kind: PakAssetProviderKind::Core(PakArchive::open(&bytes)?),
-                }),
-                crate::build::BuildProfile::Signed | crate::build::BuildProfile::Protected => {
-                    let keys = crate::build::resolve_pak_keys(profile, None, None)?;
-                    let mut provider = aria_protection::StaticPakKeyProvider::new();
-                    if let Some(key) = keys.signing.as_ref() {
-                        provider = provider.with_signing_key(key);
-                    }
-                    if let Some(key) = keys.encryption.as_ref() {
-                        provider = provider.with_encryption_key(key);
-                    }
-                    Box::new(PakAssetProvider {
-                        kind: PakAssetProviderKind::Protected(Box::new(PakPackage::open(
-                            &bytes,
-                            Some(&provider),
-                        )?)),
+        RuntimeAssetSource::Package { profile, packs } => match profile {
+            crate::build::BuildProfile::Dev => {
+                let archives = packs
+                    .iter()
+                    .map(|pack| {
+                        let path = project.root.join(&pack.file);
+                        let bytes = fs::read(&path)
+                            .with_context(|| format!("cannot read {}", path.display()))?;
+                        PakArchive::open(&bytes).map_err(anyhow::Error::from)
                     })
-                }
+                    .collect::<Result<Vec<_>>>()?;
+                Box::new(PakAssetProvider {
+                    kind: PakAssetProviderKind::Core(archives),
+                })
             }
-        }
+            crate::build::BuildProfile::Signed | crate::build::BuildProfile::Protected => {
+                let keys = crate::build::resolve_pak_keys(profile, None, None)?;
+                let mut provider = aria_protection::StaticPakKeyProvider::new();
+                if let Some(key) = keys.signing.as_ref() {
+                    provider = provider.with_signing_key(key);
+                }
+                if let Some(key) = keys.encryption.as_ref() {
+                    provider = provider.with_encryption_key(key);
+                }
+                let packages = packs
+                    .iter()
+                    .map(|pack| {
+                        let path = project.root.join(&pack.file);
+                        let bytes = fs::read(&path)
+                            .with_context(|| format!("cannot read {}", path.display()))?;
+                        PakPackage::open(&bytes, Some(&provider)).map_err(anyhow::Error::from)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Box::new(PakAssetProvider {
+                    kind: PakAssetProviderKind::Protected(packages),
+                })
+            }
+        },
     };
     run_desktop(NativePlayerConfig {
         title,
@@ -89,6 +101,7 @@ pub fn run_project(path: &Path) -> Result<u8> {
         logical_size: project.logical_size,
         save_root: default_save_root(),
         save_namespace: project.save_namespace,
+        legacy_save_namespaces: project.legacy_save_namespaces,
         font_assets: project.font_assets,
         assets: NativeAssetStore::new(assets),
     })?;
@@ -96,10 +109,24 @@ pub fn run_project(path: &Path) -> Result<u8> {
 }
 
 fn packaged_player_root() -> PathBuf {
-    std::env::current_exe()
+    let executable_dir = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_owned))
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| PathBuf::from("."));
+    // Native macOS apps keep the executable in Contents/MacOS and the Aria
+    // bundle in Contents/Resources. Other targets continue to use the
+    // executable's directory exactly as before.
+    if executable_dir
+        .file_name()
+        .is_some_and(|name| name == "MacOS")
+        && let Some(contents) = executable_dir.parent()
+    {
+        let resources = contents.join("Resources");
+        if resources.is_dir() {
+            return resources;
+        }
+    }
+    executable_dir
 }
 
 #[derive(Debug)]
@@ -154,19 +181,43 @@ struct PakAssetProvider {
 
 #[derive(Debug)]
 enum PakAssetProviderKind {
-    Core(PakArchive),
-    Protected(Box<PakPackage>),
+    Core(Vec<PakArchive>),
+    Protected(Vec<PakPackage>),
 }
 
 impl AssetProvider for PakAssetProvider {
     fn read_asset(&mut self, logical_path: &str) -> Result<Vec<u8>, String> {
         match &self.kind {
-            PakAssetProviderKind::Core(archive) => archive
-                .read(logical_path)
-                .map_err(|error| error.to_string()),
-            PakAssetProviderKind::Protected(package) => package
-                .read(logical_path)
-                .map_err(|error| error.to_string()),
+            PakAssetProviderKind::Core(archives) => {
+                let mut last_error = None;
+                for archive in archives {
+                    match archive.read(logical_path) {
+                        Ok(bytes) => return Ok(bytes),
+                        Err(error @ PakError::MissingAsset(_)) => last_error = Some(error),
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                Err(last_error
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| format!("missing asset '{logical_path}'")))
+            }
+            PakAssetProviderKind::Protected(packages) => {
+                let mut last_error = None;
+                for package in packages {
+                    match package.read(logical_path) {
+                        Ok(bytes) => return Ok(bytes),
+                        Err(
+                            error @ aria_protection::ProtectionError::Inner(PakError::MissingAsset(
+                                _,
+                            )),
+                        ) => last_error = Some(error),
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                Err(last_error
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| format!("missing asset '{logical_path}'")))
+            }
         }
     }
 }

@@ -1,0 +1,177 @@
+aria;
+module umikaze.scenario.ja.chapter_11;
+
+state mut interlude_chapter_11_seen: Bool = false;
+state mut interlude_chapter_11_turn_seen: Bool = false;
+
+// Source: 14_day14.md
+scene novel_chapter_11 {
+  locale "ja-JP";
+  persistent flag "canonical_chapter_11_seen" = true;
+  unlock chapter "canonical_chapter_11" progress 1;
+  background asset("#6d6b57") with fade(260ms);
+  screen interlude;
+  clear dialogue;
+  narrate "旅の終わりは、風景を静かにする。";
+  if interlude_chapter_11_seen {
+    wait 220ms;
+  } else {
+    interlude_chapter_11_seen = true;
+    wait 1200ms;
+  }
+  screen day_card;
+  choice {
+    "DAY 14\n十月・海辺\n旅の終わりが近づくほど、風景は静かになる。" => novel_chapter_11_story;
+  }
+}
+
+scene novel_chapter_11_story {
+  screen dialogue;
+  background asset("#6d6b57") with fade(360ms);
+  wait 220ms;
+  narrate "陽を見上げる。";
+  await advance;
+  narrate "空は茜色に染まり、海から吹きつける風が、髪をなびかせる。";
+  await advance;
+  narrate "ミオを自転車から降ろし、灯台の壁にもたれさせる。";
+  await advance;
+  narrate "足元に転がっていた石を掴み、錆びた留め金へ何度も打ち付ける。";
+  await advance;
+  narrate "鈍い金属音が、辺りに響く。";
+  await advance;
+  narrate "ミオは壁にもたれたまま、こちらを見ている。";
+  await advance;
+  narrate "叩くたびに錆の粉が落ち、留め金が少しずつ浮いていく。";
+  await advance;
+  narrate "最後のネジが抜け、留め金が扉から剥がれた。";
+  await advance;
+  narrate "南京錠の付いた鎖が、重い音を立てて地面へ落ちる。";
+  effect shake "#07141c" amount 3.8 over 170ms;
+  await advance;
+  narrate "鎖を足元へどけ、扉を開ける。";
+  await advance;
+  narrate "ミオの腕を肩へ回し、その身体を背負った。";
+  await advance;
+  narrate "螺旋階段を登り始める。";
+  await advance;
+  narrate "ギシギシと音を立てる階段。";
+  await advance;
+  narrate "気にしている余裕はなかった。ただ登った。";
+  await advance;
+  narrate "背中のミオは、怖いほど冷たかった。それに、驚くほど軽かった。";
+  await advance;
+  narrate "「なあ」";
+  await advance;
+  narrate "「……」";
+  await advance;
+  narrate "返事はない。";
+  await advance;
+  narrate "けれど、俺の肩を掴む手が、微かに動いた。";
+  await advance;
+  narrate "螺旋階段は、いつまでも続くように思えた。けれど、ふいに視界が開けた。";
+  await advance;
+  narrate "そこには人が一人やっと通れる扉があった。";
+  await advance;
+  narrate "その扉を押した。";
+  await advance;
+  narrate "目に光が射す。";
+  await advance;
+  effect tint "#ead5a8" amount 24 over 300ms;
+  wait 300ms;
+  narrate "太陽は相変わらずの茜色で輝いていた。";
+  await advance;
+  narrate "しゃがみ、ミオを下ろす。";
+  await advance;
+  narrate "倒れたように、けれど彼女は陽を見上げている。";
+  await advance;
+  narrate "目はかろうじて開いていて、けれど身体は、もうほとんど重りにすぎなかった。";
+  await advance;
+  narrate "「……ねぇ」";
+  await advance;
+  narrate "「なんだ」";
+  await advance;
+  narrate "「ついたの」";
+  await advance;
+  narrate "「ああ」";
+  await advance;
+  narrate "「やっとだね」";
+  await advance;
+  narrate "ミオは相変わらず、空を見上げていた。";
+  await advance;
+  narrate "どこまでも続く水平線を、俺は眺めていた。";
+  await advance;
+  narrate "海は何度も波を寄せ、引く。";
+  await advance;
+  narrate "微かに脈が触れた。ひとつ遅れて、また触れた。";
+  await advance;
+  narrate "「……なに」";
+  await advance;
+  narrate "ミオは目線を俺に向ける。";
+  await advance;
+  narrate "「生きてるんだな」";
+  await advance;
+  narrate "「...うん」";
+  await advance;
+  narrate "ミオはよろめきながら立ち上がり、足を引きずって柵の縁へと向かった。";
+  await advance;
+  narrate "ミオの後ろでは、同じように波打ち、同じように輝く太陽があった。";
+  await advance;
+  narrate "「...もう終わりなんだよ」";
+  await advance;
+  clear dialogue;
+  screen interlude;
+  clear dialogue;
+  narrate "俺は、何を終わらせるのか、まだ知らなかった。";
+  if interlude_chapter_11_turn_seen {
+    wait 220ms;
+  } else {
+    interlude_chapter_11_turn_seen = true;
+    wait 1200ms;
+  }
+  screen dialogue;
+  wait 480ms;
+  narrate "「何が」";
+  await advance;
+  narrate "「私たちの、旅」";
+  await advance;
+  narrate "ミオは柵に手をかけたまま、海を見ていた。";
+  await advance;
+  narrate "風に煽られて、髪が頬に張り付く。";
+  await advance;
+  narrate "「...そんなの、勝手に決めるなよ」";
+  await advance;
+  narrate "「決めたかったんだよ」";
+  await advance;
+  narrate "「何を」";
+  await advance;
+  narrate "「最後ぐらい」";
+  await advance;
+  narrate "ミオは少しだけ振り返った。";
+  await advance;
+  narrate "目は俺を見ているようで、どこか遠くを見ているのかもしれない。";
+  await advance;
+  narrate "「...」";
+  await advance;
+  narrate "「だから、ここまで来た」";
+  await advance;
+  narrate "波の音がした。";
+  await advance;
+  narrate "寄せて、引いて、また寄せる。";
+  await advance;
+  narrate "「君も、わかってたでしょ」";
+  await advance;
+  narrate "「さあな」";
+  await advance;
+  narrate "ミオは小さく息を吐く。";
+  await advance;
+  narrate "「そっか」";
+  await advance;
+  narrate "それきり、ミオはまた海を見た。";
+  await advance;
+  clear dialogue;
+  background asset("#17253b") with fade(520ms);
+  wait 520ms;
+  chapter "canonical_chapter_11" progress 100;
+  clear dialogue;
+  jump chapter_select_ja;
+}

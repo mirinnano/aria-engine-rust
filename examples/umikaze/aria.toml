@@ -1,14 +1,42 @@
-schema = 3
+schema = 4
 
 [game]
 id = "jp.example.umikaze"
-version = "3.1.0"
-title = "海風 - The Records of Autumn -"
+version = "3.2.0"
+title = "海風 — The Records of Autumn"
 
 [runtime]
 entry = "scripts/main.aria"
 logical_width = 1280
 logical_height = 720
 asset_roots = ["assets"]
-fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
-save_namespace = "umikaze-v3"
+# These remain as source/reference material, but the React presentation does
+# not read them. Keep the shipping pak limited to the two role fonts instead
+# of paying startup memory for unused decorative rasters and typefaces.
+asset_excludes = [
+  "assets/bg/title-seaside.png",
+  "assets/fonts/ShipporiMincho-Regular.ttf",
+  "assets/ui/chapter-ornament.png",
+  "assets/ui/paper-grain.png",
+  "assets/ui/sea-fog-overlay.png",
+  "assets/ui/sea-mist-overlay.png",
+  "assets/ui/wave-divider.png",
+]
+fonts = [
+  "assets/fonts/NotoSansJP-Regular.ttf",
+  "assets/fonts/MPLUS1Code-wght.ttf",
+]
+# Pack roles keep the first reader font on the hot path while the record-only
+# monospace face can be mounted later by native/Web adapters when it is needed.
+asset_pack_roles = {
+  "assets/fonts/NotoSansJP-Regular.ttf" = "hot",
+  "assets/fonts/MPLUS1Code-wght.ttf" = "cold",
+}
+# This manuscript revision intentionally invalidates earlier routes and
+# checkpoints. Only this exact predecessor is purged; other Aria games and
+# namespaces are never touched.
+save_namespace = "umikaze-v4"
+legacy_save_namespaces = ["umikaze-v3"]
+
+[presentation]
+frontend = "ui"

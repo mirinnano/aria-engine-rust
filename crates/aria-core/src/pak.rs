@@ -37,8 +37,6 @@ use crate::compiler::{normalize_logical_path, portable_path_key};
 pub const PAK_MAGIC: [u8; 8] = *b"ARIAPAK4";
 /// Current ARIAPAK format major version.
 pub const PAK_FORMAT: u16 = 4;
-/// Compatibility name for callers that previously used this constant.
-pub const PAK_FORMAT_VERSION: u16 = PAK_FORMAT;
 /// A single uncompressed chunk never exceeds 256 KiB.
 pub const PAK_CHUNK_MAX_RAW_SIZE: usize = 256 * 1024;
 
@@ -282,8 +280,8 @@ impl PakArchive {
     /// Decompression and raw checksums are verified lazily by [`Self::read`].
     pub fn open(bytes: &[u8]) -> Result<Self, PakError> {
         // The adapter-owned PAK4 envelope has a distinct magic and can carry
-        // a plaintext `dev` pack. Core may unwrap that profile for legacy
-        // asset providers, but it deliberately refuses signed/protected
+        // a plaintext `dev` pack. Core may unwrap that profile for data-only
+        // providers, but it deliberately refuses signed/protected
         // material; those profiles are authenticated by Native/Web adapters.
         if bytes.starts_with(b"ARIAPK4P") {
             return open_dev_package(bytes);

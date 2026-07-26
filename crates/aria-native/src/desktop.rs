@@ -1,7 +1,8 @@
 //! Winit event translation kept outside `aria-core`.
 
+use aria_core::UiViewport;
 use aria_render::ViewportTransform;
-use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::input::{InputNormalizer, RawControl, RawInputEvent};
@@ -12,19 +13,22 @@ use crate::input::{InputNormalizer, RawControl, RawInputEvent};
 pub struct WinitInputAdapter {
     normalizer: InputNormalizer,
     viewport: ViewportTransform,
+    ui_viewport: UiViewport,
 }
 
 impl WinitInputAdapter {
     #[must_use]
-    pub fn new(viewport: ViewportTransform) -> Self {
+    pub fn new(viewport: ViewportTransform, ui_viewport: UiViewport) -> Self {
         Self {
             normalizer: InputNormalizer::default(),
             viewport,
+            ui_viewport,
         }
     }
 
-    pub fn set_viewport(&mut self, viewport: ViewportTransform) {
+    pub fn set_viewport(&mut self, viewport: ViewportTransform, ui_viewport: UiViewport) {
         self.viewport = viewport;
+        self.ui_viewport = ui_viewport;
     }
 
     pub fn push_window_event(&mut self, event: &WindowEvent) {
@@ -47,6 +51,13 @@ impl WinitInputAdapter {
             } => self
                 .normalizer
                 .push(button_event(*state, RawControl::MousePrimary)),
+            WindowEvent::MouseWheel { delta, .. } => {
+                let delta_y = match delta {
+                    MouseScrollDelta::LineDelta(_, lines) => *lines * 48.0,
+                    MouseScrollDelta::PixelDelta(position) => position.y as f32,
+                };
+                self.normalizer.push(RawInputEvent::Scroll { delta_y });
+            }
             WindowEvent::Touch(touch) => {
                 self.push_pointer(touch.location.x as f32, touch.location.y as f32);
                 match touch.phase {
@@ -75,37 +86,14 @@ impl WinitInputAdapter {
 
     #[must_use]
     pub fn snapshot(&mut self, sequence: u64, delta_ms: u32) -> aria_core::InputSnapshot {
-        self.normalizer.snapshot(sequence, delta_ms)
+        self.normalizer
+            .snapshot_with_viewport(sequence, delta_ms, self.ui_viewport)
     }
 
     /// Clears held controls after an OS focus transition. This keeps Skip and
     /// pointer presses from becoming platform-dependent stuck inputs.
     pub fn reset_after_focus_loss(&mut self) {
         self.normalizer.reset_after_focus_loss();
-    }
-
-    /// Routes a semantic click from an accessibility client through the same
-    /// pointer path used by mouse and touch input. Keeping this here avoids
-    /// teaching the Core about AccessKit or a platform-specific node ID.
-    pub fn accessibility_click(&mut self, logical_x: f32, logical_y: f32) {
-        self.normalizer.push(RawInputEvent::PointerMoved {
-            x: logical_x,
-            y: logical_y,
-        });
-        self.normalizer.push(RawInputEvent::Press {
-            control: RawControl::MousePrimary,
-        });
-        self.normalizer.push(RawInputEvent::Release {
-            control: RawControl::MousePrimary,
-        });
-    }
-
-    /// Updates hover/focus selection from an accessibility focus request.
-    pub fn accessibility_hover(&mut self, logical_x: f32, logical_y: f32) {
-        self.normalizer.push(RawInputEvent::PointerMoved {
-            x: logical_x,
-            y: logical_y,
-        });
     }
 
     fn push_pointer(&mut self, physical_x: f32, physical_y: f32) {
@@ -132,14 +120,20 @@ fn keyboard_control(code: KeyCode) -> Option<RawControl> {
         KeyCode::Escape => RawControl::KeyEscape,
         KeyCode::ContextMenu => RawControl::KeyMenu,
         KeyCode::ControlLeft | KeyCode::ControlRight => RawControl::KeyControl,
+        KeyCode::F5 => RawControl::KeyF5,
+        KeyCode::F9 => RawControl::KeyF9,
+        KeyCode::KeyA => RawControl::KeyA,
+        KeyCode::KeyS => RawControl::KeyS,
+        KeyCode::KeyB => RawControl::KeyB,
+        KeyCode::KeyH => RawControl::KeyH,
         _ => return None,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use aria_core::InputAction;
     use aria_core::protocol::{LogicalSize, Rect};
+    use aria_core::{InputAction, UiInsets};
     use aria_render::SafeAreaInsets;
     use winit::dpi::PhysicalPosition;
     use winit::event::DeviceId;
@@ -147,16 +141,24 @@ mod tests {
     use super::*;
 
     fn adapter() -> WinitInputAdapter {
-        WinitInputAdapter::new(ViewportTransform::fit(
-            LogicalSize {
-                width: 1280,
-                height: 720,
+        WinitInputAdapter::new(
+            ViewportTransform::fit(
+                LogicalSize {
+                    width: 1280,
+                    height: 720,
+                },
+                1920,
+                1080,
+                1.0,
+                SafeAreaInsets::default(),
+            ),
+            UiViewport {
+                width: 1920,
+                height: 1080,
+                scale_factor: 1.0,
+                safe_area: UiInsets::default(),
             },
-            1920,
-            1080,
-            1.0,
-            SafeAreaInsets::default(),
-        ))
+        )
     }
 
     #[test]
@@ -191,30 +193,28 @@ mod tests {
     #[test]
     fn viewport_can_be_replaced_after_dpi_or_resize() {
         let mut adapter = adapter();
-        adapter.set_viewport(ViewportTransform {
-            scale: 2.0,
-            offset_x: 10.0,
-            offset_y: 20.0,
-            logical_safe_area: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1280.0,
-                height: 720.0,
+        adapter.set_viewport(
+            ViewportTransform {
+                scale: 2.0,
+                offset_x: 10.0,
+                offset_y: 20.0,
+                logical_safe_area: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1280.0,
+                    height: 720.0,
+                },
+                minimum_target_size: 44.0,
             },
-            minimum_target_size: 44.0,
-        });
+            UiViewport {
+                width: 2560,
+                height: 1440,
+                scale_factor: 2.0,
+                safe_area: UiInsets::default(),
+            },
+        );
         adapter.push_pointer(210.0, 220.0);
         let pointer = adapter.snapshot(1, 16).pointer.unwrap();
         assert_eq!((pointer.x, pointer.y), (100.0, 100.0));
-    }
-
-    #[test]
-    fn accessibility_click_uses_the_same_pointer_snapshot_as_mouse_input() {
-        let mut adapter = adapter();
-        adapter.accessibility_click(480.0, 240.0);
-        let pointer = adapter.snapshot(1, 16).pointer.unwrap();
-        assert_eq!((pointer.x, pointer.y), (480.0, 240.0));
-        assert!(pointer.primary_pressed);
-        assert!(!pointer.primary_held);
     }
 }

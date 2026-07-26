@@ -1,0 +1,18 @@
+{
+  "name": "海風 — The Records of Autumn",
+  "short_name": "海風",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#09141d",
+  "theme_color": "#09141d",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

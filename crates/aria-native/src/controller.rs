@@ -212,6 +212,7 @@ fn button_control(button: Button) -> Option<RawControl> {
     Some(match button {
         Button::South => RawControl::GamepadSouth,
         Button::East => RawControl::GamepadEast,
+        Button::North => RawControl::GamepadNorth,
         Button::Start => RawControl::GamepadStart,
         Button::DPadUp => RawControl::GamepadDpadUp,
         Button::DPadDown => RawControl::GamepadDpadDown,
@@ -277,6 +278,10 @@ mod tests {
         );
         assert_eq!(button_control(Button::East), Some(RawControl::GamepadEast));
         assert_eq!(
+            button_control(Button::North),
+            Some(RawControl::GamepadNorth)
+        );
+        assert_eq!(
             button_control(Button::Start),
             Some(RawControl::GamepadStart)
         );
@@ -284,7 +289,6 @@ mod tests {
             button_control(Button::RightTrigger),
             Some(RawControl::GamepadRightShoulder)
         );
-        assert_eq!(button_control(Button::North), None);
     }
 
     #[test]

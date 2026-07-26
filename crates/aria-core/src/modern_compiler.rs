@@ -1,9 +1,6 @@
-//! Semantic analysis and lowering for the structured Aria 3.1 language.
-//!
-//! This is deliberately separate from the alpha 3.0 line-command compiler.
-//! The two front ends may coexist during migration, but both lower into the
-//! same deterministic Core protocol and neither touches files, clocks, or
-//! platform APIs.
+//! Semantic analysis and lowering for the single, ownership-aware Aria
+//! language. Source has no compatibility mode or language-version switch:
+//! every project is parsed, checked, and lowered by this front end.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,8 +11,8 @@ use crate::bytecode::{
 use crate::compiler::{CompileOutput, normalize_logical_path, resolve_logical_path};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 use crate::modern::{
-    AssetRef, AudioBus, BinaryOperator, Expression, ExpressionKind, Literal, ModernLanguageVersion,
-    ModernModule, ModernType, ShowContent, Statement, StatementKind, TransitionKind, UnaryOperator,
+    AssetRef, AudioBus, BinaryOperator, Expression, ExpressionKind, Literal, ModernModule,
+    ModernType, NodeAccess, ShowContent, Statement, StatementKind, TransitionKind, UnaryOperator,
     Value, parse,
 };
 
@@ -46,6 +43,7 @@ pub(crate) fn compile_modern(
         references: Vec::new(),
         generated_label: 0,
         generated_storage: 0,
+        generated_resource: 0,
     };
     compiler.collect_module(&entry, true);
     compiler.lower()
@@ -61,6 +59,7 @@ struct SceneSource {
 
 #[derive(Debug, Clone)]
 struct StateSource {
+    mutable: bool,
     name: String,
     ty: ModernType,
     value: Literal,
@@ -72,6 +71,27 @@ struct Binding {
     ty: ModernType,
     mutable: bool,
     operand: Operand,
+    resource: Option<ResourceBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResourceBinding {
+    id: String,
+    drop_order: u64,
+    ownership: ResourceOwnership,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResourceOwnership {
+    /// The lexical binding owns the resource and must release it exactly once.
+    Owned,
+    /// `drop` or an ownership transfer consumed this binding.
+    Moved,
+    /// An alias owns no resource and can only use the permissions granted by
+    /// the enclosing `borrow` block.
+    Borrowed { mutable: bool },
+    /// The owner is unavailable until its borrow scope is closed.
+    Loaned { mutable: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -82,9 +102,8 @@ struct LabelReference {
     span: SourceSpan,
 }
 
-/// A structured scene never falls through into the next declaration. This is
-/// deliberately stricter than the V1/V2 label model: a scene's final control
-/// transfer is part of its author-facing contract.
+/// A structured scene never falls through into the next declaration. A
+/// scene's final control transfer is part of its author-facing contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SceneExit {
     End,
@@ -127,6 +146,7 @@ struct ModernCompiler {
     references: Vec<LabelReference>,
     generated_label: u64,
     generated_storage: u64,
+    generated_resource: u64,
 }
 
 impl ModernCompiler {
@@ -160,22 +180,12 @@ impl ModernCompiler {
         let Some(module) = parsed.module else {
             self.error(
                 DiagnosticCode::UnsupportedLanguageVersion,
-                "Aria 3.1 source must begin with 'aria 3.1;'",
+                "Aria source must begin with 'aria;'",
                 Some(SourceSpan::line(path, 1, 1)),
             );
             self.active_imports.pop();
             return;
         };
-        if module.language_version != ModernLanguageVersion::V3_1 {
-            self.error(
-                DiagnosticCode::UnsupportedLanguageVersion,
-                format!(
-                    "Aria 3.1 compiler accepts only 'aria 3.1;', found '{}.{}'",
-                    module.language_version.major, module.language_version.minor
-                ),
-                Some(module.span.clone()),
-            );
-        }
         if is_entry {
             match &module.entry {
                 Some(entry) => {
@@ -222,6 +232,7 @@ impl ModernCompiler {
 
     fn lower(mut self) -> CompileOutput {
         self.collect_declarations();
+        self.reject_visual_ui_declarations();
         self.lower_states();
 
         let entry_scene = self.entry_scene.clone();
@@ -273,6 +284,7 @@ impl ModernCompiler {
                     );
                 } else {
                     self.state_declarations.push(StateSource {
+                        mutable: state.mutable,
                         name: state.name,
                         ty: state.ty,
                         value: state.value,
@@ -311,11 +323,34 @@ impl ModernCompiler {
         self.validate_scene_control_flow();
     }
 
-    /// Ensures that lowering cannot accidentally create legacy label
-    /// fallthrough or recursive calls with static local storage. The VM has a
-    /// call stack, but Aria 3.1 deliberately does not expose recursive scenes
-    /// until it has activation-local bindings; rejecting a cycle is safer and
-    /// deterministic on every Player.
+    fn reject_visual_ui_declarations(&mut self) {
+        for path in self.source_order.clone() {
+            let declarations = self
+                .modules
+                .get(&path)
+                .map(|module| {
+                    module
+                        .retired_ui_syntax
+                        .iter()
+                        .map(|declaration| declaration.span.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for span in declarations {
+                self.error(
+                    DiagnosticCode::DeprecatedUiSyntax,
+                    "visual UI declarations are retired; move layout and styling to the project's React presentation package",
+                    Some(span),
+                );
+            }
+        }
+    }
+
+    /// Ensures that lowering cannot accidentally create label fallthrough or
+    /// recursive calls with static local storage. The VM has a call stack, but
+    /// Aria does not expose recursive scenes until it has activation-local
+    /// bindings; rejecting a cycle is safer and deterministic on every
+    /// Player.
     fn validate_scene_control_flow(&mut self) {
         let scenes = self.scenes.clone();
         let mut contracts = BTreeMap::<String, BTreeSet<SceneExit>>::new();
@@ -401,7 +436,7 @@ impl ModernCompiler {
             self.error(
                 DiagnosticCode::InvalidControlFlow,
                 format!(
-                    "recursive scene calls are not supported in Aria 3.1: {}",
+                    "recursive scene calls are not supported: {}",
                     cycle.join(" -> ")
                 ),
                 None,
@@ -445,7 +480,13 @@ impl ModernCompiler {
             ..
         } = &statement.kind
         else {
-            return None;
+            return match &statement.kind {
+                // A borrow block is lexical syntax, not a control-flow
+                // boundary. A terminal transfer inside it also terminates the
+                // containing scene path.
+                StatementKind::Borrow { body, .. } => self.block_exit_contract(body),
+                _ => None,
+            };
         };
         if else_branch.is_empty() {
             // An omitted else branch can always continue when the condition
@@ -483,8 +524,9 @@ impl ModernCompiler {
             let operand = self.fresh_storage("state", &state.name, state.ty);
             let binding = Binding {
                 ty: state.ty,
-                mutable: true,
+                mutable: state.mutable,
                 operand: operand.clone(),
+                resource: None,
             };
             self.state_bindings.insert(state.name, binding);
             let value = self.literal_operand(&state.value);
@@ -550,7 +592,7 @@ impl ModernCompiler {
                     if transition.kind == TransitionKind::Mask {
                         self.error(
                             DiagnosticCode::InvalidOperand,
-                            "mask transitions are not available in Aria 3.1 yet; use fade or wipe",
+                            "mask transitions are not available yet; use fade or wipe",
                             Some(transition.span.clone()),
                         );
                         return;
@@ -571,93 +613,46 @@ impl ModernCompiler {
                     );
                 }
             }
-            StatementKind::Show { id, content, z } => match content {
-                ShowContent::Image { asset, position } => {
-                    let Some(asset) = self.asset_operand(asset) else {
-                        return;
-                    };
-                    let id = Operand::Constant(self.intern_string(id));
-                    self.emit(
-                        ByteOp::SpriteImage,
-                        vec![
-                            id,
-                            asset,
-                            Operand::Integer(i64::from(position.x_px)),
-                            Operand::Integer(i64::from(position.y_px)),
-                            Operand::Integer(i64::from(*z)),
-                            Operand::Integer(255),
-                        ],
-                        &statement.span,
-                    );
-                }
-                ShowContent::Rect { bounds, color } => {
-                    if !valid_color(color) {
-                        self.error(
-                            DiagnosticCode::InvalidOperand,
-                            "rect color must use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA",
-                            Some(statement.span.clone()),
-                        );
-                        return;
-                    }
-                    let id = Operand::Constant(self.intern_string(id));
-                    let color = Operand::Constant(self.intern_string(color));
-                    self.emit(
-                        ByteOp::SpriteRect,
-                        vec![
-                            id,
-                            Operand::Integer(i64::from(bounds.x_px)),
-                            Operand::Integer(i64::from(bounds.y_px)),
-                            Operand::Integer(i64::from(bounds.width_px)),
-                            Operand::Integer(i64::from(bounds.height_px)),
-                            color,
-                            Operand::Integer(i64::from(*z)),
-                        ],
-                        &statement.span,
-                    );
-                }
-                ShowContent::Text {
-                    text,
-                    position,
-                    size_px,
-                } => {
-                    if *size_px <= 0 {
-                        self.error(
-                            DiagnosticCode::InvalidOperand,
-                            "text size must be greater than zero",
-                            Some(statement.span.clone()),
-                        );
-                        return;
-                    }
-                    let id = Operand::Constant(self.intern_string(id));
-                    let text = Operand::Constant(self.intern_string(text));
-                    self.emit(
-                        ByteOp::SpriteText,
-                        vec![
-                            id,
-                            text,
-                            Operand::Integer(i64::from(position.x_px)),
-                            Operand::Integer(i64::from(position.y_px)),
-                            Operand::Integer(i64::from(*size_px)),
-                            Operand::Integer(i64::from(*z)),
-                        ],
-                        &statement.span,
-                    );
-                }
-            },
-            StatementKind::Hide { id } => {
-                let id = Operand::Constant(self.intern_string(id));
+            StatementKind::Spawn {
+                mutable,
+                name,
+                content,
+                z,
+            } => self.lower_spawn(*mutable, name, content, *z, statement, scopes, scene),
+            StatementKind::Hide { node } => {
+                let Some(id) = self.node_mut_borrow(node, scopes) else {
+                    return;
+                };
+                let id = Operand::Constant(self.intern_string(&id));
                 self.emit(
                     ByteOp::SpriteVisibility,
                     vec![id, Operand::Boolean(false)],
                     &statement.span,
                 );
             }
-            StatementKind::Remove { id } => {
-                let id = Operand::Constant(self.intern_string(id));
+            StatementKind::Reveal { node } => {
+                let Some(id) = self.node_mut_borrow(node, scopes) else {
+                    return;
+                };
+                let id = Operand::Constant(self.intern_string(&id));
+                self.emit(
+                    ByteOp::SpriteVisibility,
+                    vec![id, Operand::Boolean(true)],
+                    &statement.span,
+                );
+            }
+            StatementKind::Drop { name } => {
+                let Some(id) = self.consume_owned_node(name, scopes, &statement.span) else {
+                    return;
+                };
+                let id = Operand::Constant(self.intern_string(&id));
                 self.emit(ByteOp::SpriteRemove, vec![id], &statement.span);
             }
-            StatementKind::Move { id, position } => {
-                let id = Operand::Constant(self.intern_string(id));
+            StatementKind::Move { node, position } => {
+                let Some(id) = self.node_mut_borrow(node, scopes) else {
+                    return;
+                };
+                let id = Operand::Constant(self.intern_string(&id));
                 self.emit(
                     ByteOp::SpriteMove,
                     vec![
@@ -687,6 +682,16 @@ impl ModernCompiler {
                     self.error(
                         DiagnosticCode::InvalidOperand,
                         format!("cannot assign to immutable 'let' variable '{name}'"),
+                        Some(statement.span.clone()),
+                    );
+                    return;
+                }
+                if binding.resource.is_some() {
+                    self.error(
+                        DiagnosticCode::InvalidOwnership,
+                        format!(
+                            "cannot assign a Node binding '{name}'; move it into a new 'let' binding or drop it"
+                        ),
                         Some(statement.span.clone()),
                     );
                     return;
@@ -744,8 +749,18 @@ impl ModernCompiler {
             } => {
                 let false_label = self.fresh_label("if_false");
                 let end_label = self.fresh_label("if_end");
+                // Compile both paths against the same incoming ownership
+                // state. Sharing `scopes` here would incorrectly make a
+                // consume in the first emitted branch affect the other
+                // branch, despite those paths being mutually exclusive at
+                // runtime.
+                let before = scopes.clone();
+                let mut then_scopes = before.clone();
+                let mut else_scopes = before.clone();
+                let then_continues = !block_definitely_exits(then_branch);
+                let else_continues = else_branch.is_empty() || !block_definitely_exits(else_branch);
                 self.emit_jump_if_false(condition, &false_label, scopes);
-                self.with_scope(scopes, |compiler, scopes| {
+                self.with_scope(&mut then_scopes, &statement.span, |compiler, scopes| {
                     compiler.lower_block(source, then_branch, scopes, scene);
                 });
                 if else_branch.is_empty() {
@@ -758,23 +773,64 @@ impl ModernCompiler {
                         &statement.span,
                     );
                     self.define_label(&false_label, &statement.span);
-                    self.with_scope(scopes, |compiler, scopes| {
+                    self.with_scope(&mut else_scopes, &statement.span, |compiler, scopes| {
                         compiler.lower_block(source, else_branch, scopes, scene);
                     });
                     self.define_label(&end_label, &statement.span);
                 }
+
+                *scopes = match (then_continues, else_continues) {
+                    (true, true) => self.merge_continuing_ownership(
+                        &before,
+                        &then_scopes,
+                        &else_scopes,
+                        &statement.span,
+                        "conditional",
+                    ),
+                    (true, false) => then_scopes,
+                    (false, true) => else_scopes,
+                    // Neither path reaches the continuation. The control-flow
+                    // validator reports following statements as unreachable;
+                    // retaining the incoming model avoids cascading ownership
+                    // diagnostics while it does so.
+                    (false, false) => before,
+                };
             }
             StatementKind::While { condition, body } => {
                 let start_label = self.fresh_label("while_start");
                 let end_label = self.fresh_label("while_end");
+                // A loop may execute zero times, so a resource that is still
+                // reachable after it must have exactly the same ownership
+                // state before and after every continuing iteration.
+                let before = scopes.clone();
+                let mut body_scopes = before.clone();
+                let body_continues = !block_definitely_exits(body);
                 self.define_label(&start_label, &statement.span);
                 self.emit_jump_if_false(condition, &end_label, scopes);
-                self.with_scope(scopes, |compiler, scopes| {
+                self.with_scope(&mut body_scopes, &statement.span, |compiler, scopes| {
                     compiler.lower_block(source, body, scopes, scene);
                 });
                 self.emit_label_reference(ByteOp::Jump, Vec::new(), &start_label, &statement.span);
                 self.define_label(&end_label, &statement.span);
+                if body_continues {
+                    let _ = self.merge_continuing_ownership(
+                        &before,
+                        &body_scopes,
+                        &before,
+                        &statement.span,
+                        "loop",
+                    );
+                }
+                *scopes = before;
             }
+            StatementKind::Borrow {
+                mutable,
+                owner,
+                alias,
+                body,
+            } => self.lower_borrow(
+                *mutable, owner, alias, body, statement, scopes, scene, source,
+            ),
             StatementKind::Choice { options } => {
                 if options.is_empty() {
                     self.error(
@@ -796,9 +852,11 @@ impl ModernCompiler {
                         span: option.span.clone(),
                     });
                 }
+                self.cleanup_all_scopes(scopes, &statement.span);
                 self.emit(ByteOp::PresentChoice, operands, &statement.span);
             }
             StatementKind::Jump { scene } => {
+                self.cleanup_all_scopes(scopes, &statement.span);
                 self.emit_label_reference(
                     ByteOp::Jump,
                     Vec::new(),
@@ -814,7 +872,10 @@ impl ModernCompiler {
                     &statement.span,
                 );
             }
-            StatementKind::Return => self.emit(ByteOp::Return, Vec::new(), &statement.span),
+            StatementKind::Return => {
+                self.cleanup_all_scopes(scopes, &statement.span);
+                self.emit(ByteOp::Return, Vec::new(), &statement.span);
+            }
             StatementKind::Play {
                 bus,
                 asset,
@@ -884,7 +945,162 @@ impl ModernCompiler {
                 vec![Operand::Integer(i64::from(*slot))],
                 &statement.span,
             ),
-            StatementKind::End => self.emit(ByteOp::End, Vec::new(), &statement.span),
+            StatementKind::SetFlag {
+                name,
+                value,
+                persistent,
+            } => {
+                let op = if *persistent {
+                    ByteOp::SetPersistentFlag
+                } else {
+                    ByteOp::SetFlag
+                };
+                let name = Operand::Constant(self.intern_string(name));
+                self.emit(op, vec![name, Operand::Boolean(*value)], &statement.span);
+            }
+            StatementKind::SetTextSpeed { speed_ms } => self.emit(
+                ByteOp::SetTextSpeed,
+                vec![Operand::Integer(i64::from(*speed_ms))],
+                &statement.span,
+            ),
+            StatementKind::SetAuto { enabled } => self.emit(
+                ByteOp::SetAutoMode,
+                vec![Operand::Boolean(*enabled)],
+                &statement.span,
+            ),
+            StatementKind::SetSkip { mode } => {
+                let mode = Operand::Constant(self.intern_string(mode));
+                self.emit(ByteOp::SetSkipMode, vec![mode], &statement.span);
+            }
+            StatementKind::SetLocale { locale } => {
+                let locale = Operand::Constant(self.intern_string(locale));
+                self.emit(ByteOp::SetLocale, vec![locale], &statement.span);
+            }
+            StatementKind::SetTheme { theme } => {
+                let _ = theme;
+                self.error(
+                    DiagnosticCode::DeprecatedUiSyntax,
+                    "'theme' is retired; define visual tokens in the project's React presentation package",
+                    Some(statement.span.clone()),
+                );
+            }
+            StatementKind::SetTextBox {
+                bounds,
+                color,
+                opacity,
+                mode,
+            } => {
+                let _ = (bounds, color, opacity, mode);
+                self.error(
+                    DiagnosticCode::DeprecatedUiSyntax,
+                    "'textbox' is retired; render dialogue in the project's React presentation package",
+                    Some(statement.span.clone()),
+                );
+            }
+            StatementKind::Tween {
+                node,
+                property,
+                value,
+                duration_ms,
+                easing,
+            } => {
+                let Some(id) = self.node_mut_borrow(node, scopes) else {
+                    return;
+                };
+                let id = Operand::Constant(self.intern_string(&id));
+                let property = Operand::Constant(self.intern_string(property));
+                let easing = Operand::Constant(self.intern_string(easing));
+                self.emit(
+                    ByteOp::TweenSprite,
+                    vec![
+                        id,
+                        property,
+                        Operand::Float(*value as f32),
+                        Operand::Integer(i64::from(*duration_ms)),
+                        easing,
+                    ],
+                    &statement.span,
+                );
+            }
+            StatementKind::Effect {
+                kind,
+                color,
+                amount,
+                duration_ms,
+                axis,
+            } => {
+                if !valid_color(color) {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        "effect color must use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA",
+                        Some(statement.span.clone()),
+                    );
+                } else {
+                    let kind = Operand::Constant(self.intern_string(kind));
+                    let color = Operand::Constant(self.intern_string(color));
+                    let axis = Operand::Constant(self.intern_string(axis));
+                    self.emit(
+                        ByteOp::ScreenEffect,
+                        vec![
+                            kind,
+                            color,
+                            Operand::Float(*amount as f32),
+                            Operand::Integer(i64::from(*duration_ms)),
+                            axis,
+                        ],
+                        &statement.span,
+                    );
+                }
+            }
+            StatementKind::UnlockChapter { id, progress } => {
+                let id = Operand::Constant(self.intern_string(id));
+                self.emit(
+                    ByteOp::UnlockChapter,
+                    vec![id, Operand::Integer(i64::from(*progress))],
+                    &statement.span,
+                );
+            }
+            StatementKind::SetChapterProgress { id, progress } => {
+                let id = Operand::Constant(self.intern_string(id));
+                self.emit(
+                    ByteOp::SetChapterProgress,
+                    vec![id, Operand::Integer(i64::from(*progress))],
+                    &statement.span,
+                );
+            }
+            StatementKind::UnlockCg { id } => {
+                let id = Operand::Constant(self.intern_string(id));
+                self.emit(ByteOp::UnlockCg, vec![id], &statement.span);
+            }
+            StatementKind::Preload { asset } => {
+                if let Some(asset) = self.asset_operand(asset) {
+                    self.emit(ByteOp::PreloadAsset, vec![asset], &statement.span);
+                }
+            }
+            StatementKind::OpenMenu { kind } => {
+                let _ = kind;
+                self.error(
+                    DiagnosticCode::DeprecatedUiSyntax,
+                    "'open'/'menu' is retired; use 'screen <name>;'.",
+                    Some(statement.span.clone()),
+                );
+            }
+            StatementKind::OpenScreen { screen } => {
+                if !is_presentation_route(screen) {
+                    self.error(
+                        DiagnosticCode::InvalidUiBinding,
+                        format!("screen '{screen}' is not a standard presentation route"),
+                        Some(statement.span.clone()),
+                    );
+                    return;
+                }
+                let screen = Operand::Constant(self.intern_string(screen));
+                self.emit(ByteOp::OpenScreen, vec![screen], &statement.span);
+            }
+            StatementKind::End => {
+                self.cleanup_all_scopes(scopes, &statement.span);
+                self.emit(ByteOp::End, Vec::new(), &statement.span);
+            }
         }
     }
 
@@ -894,20 +1110,13 @@ impl ModernCompiler {
         value: &Value,
         mutable: bool,
         name: &str,
-        ty: ModernType,
+        declared_ty: Option<ModernType>,
         statement: &Statement,
         scopes: &mut [BTreeMap<String, Binding>],
         scene: &str,
     ) {
-        let Some(scope) = scopes.last() else {
-            self.error(
-                DiagnosticCode::InvalidControlFlow,
-                "internal compiler scope underflow",
-                Some(statement.span.clone()),
-            );
-            return;
-        };
-        if scope.contains_key(name) {
+        let duplicate = scopes.last().is_none_or(|scope| scope.contains_key(name));
+        if duplicate {
             self.error(
                 DiagnosticCode::InvalidOperand,
                 format!("duplicate variable '{name}' in this scope"),
@@ -915,9 +1124,50 @@ impl ModernCompiler {
             );
             return;
         }
+
+        // Moving a Node is the only way a resource can change owners. It
+        // generates no VM copy: the destination receives the exact same
+        // deterministic scene-resource id and the source becomes moved.
+        if let Value::Identifier { name: source, .. } = value
+            && resolve_binding(scopes, source).is_some_and(|binding| binding.ty == ModernType::Node)
+        {
+            if declared_ty.is_some_and(|ty| ty != ModernType::Node) {
+                self.error(
+                    DiagnosticCode::InvalidOwnership,
+                    format!("cannot move Node '{source}' into {name:?}"),
+                    Some(statement.span.clone()),
+                );
+                return;
+            }
+            let Some(resource) = self.take_owned_node(source, scopes, &statement.span) else {
+                return;
+            };
+            if let Some(scope) = scopes.last_mut() {
+                scope.insert(
+                    name.to_owned(),
+                    Binding {
+                        ty: ModernType::Node,
+                        mutable,
+                        operand: Operand::None,
+                        resource: Some(resource),
+                    },
+                );
+            }
+            return;
+        }
+
         let Some((value, value_ty)) = self.value_operand(value, scopes) else {
             return;
         };
+        let ty = declared_ty.unwrap_or(value_ty);
+        if ty == ModernType::Node {
+            self.error(
+                DiagnosticCode::InvalidOwnership,
+                "a Node can only be created by 'let name = show …' or moved from another Node binding",
+                Some(statement.span.clone()),
+            );
+            return;
+        }
         if value_ty != ty {
             self.error(
                 DiagnosticCode::InvalidOperand,
@@ -939,19 +1189,488 @@ impl ModernCompiler {
                     ty,
                     mutable,
                     operand,
+                    resource: None,
                 },
             );
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_spawn(
+        &mut self,
+        mutable: bool,
+        name: &str,
+        content: &ShowContent,
+        z: i32,
+        statement: &Statement,
+        scopes: &mut [BTreeMap<String, Binding>],
+        scene: &str,
+    ) {
+        if scopes.last().is_none_or(|scope| scope.contains_key(name)) {
+            self.error(
+                DiagnosticCode::InvalidOperand,
+                format!("duplicate variable '{name}' in this scope"),
+                Some(statement.span.clone()),
+            );
+            return;
+        }
+        let resource = self.fresh_resource(scene, name);
+        let id = Operand::Constant(self.intern_string(&resource.id));
+        match content {
+            ShowContent::Image { asset, position } => {
+                let Some(asset) = self.asset_operand(asset) else {
+                    return;
+                };
+                self.emit(
+                    ByteOp::SpriteImage,
+                    vec![
+                        id,
+                        asset,
+                        Operand::Integer(i64::from(position.x_px)),
+                        Operand::Integer(i64::from(position.y_px)),
+                        Operand::Integer(i64::from(z)),
+                        Operand::Integer(255),
+                    ],
+                    &statement.span,
+                );
+            }
+            ShowContent::Rect { bounds, color } => {
+                if !valid_color(color) {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        "rect color must use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA",
+                        Some(statement.span.clone()),
+                    );
+                    return;
+                }
+                let color = Operand::Constant(self.intern_string(color));
+                self.emit(
+                    ByteOp::SpriteRect,
+                    vec![
+                        id,
+                        Operand::Integer(i64::from(bounds.x_px)),
+                        Operand::Integer(i64::from(bounds.y_px)),
+                        Operand::Integer(i64::from(bounds.width_px)),
+                        Operand::Integer(i64::from(bounds.height_px)),
+                        color,
+                        Operand::Integer(i64::from(z)),
+                    ],
+                    &statement.span,
+                );
+            }
+            ShowContent::Text {
+                text,
+                position,
+                size_px,
+            } => {
+                if *size_px <= 0 {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        "text size must be greater than zero",
+                        Some(statement.span.clone()),
+                    );
+                    return;
+                }
+                let text = Operand::Constant(self.intern_string(text));
+                self.emit(
+                    ByteOp::SpriteText,
+                    vec![
+                        id,
+                        text,
+                        Operand::Integer(i64::from(position.x_px)),
+                        Operand::Integer(i64::from(position.y_px)),
+                        Operand::Integer(i64::from(*size_px)),
+                        Operand::Integer(i64::from(z)),
+                    ],
+                    &statement.span,
+                );
+            }
+        }
+        if let Some(scope) = scopes.last_mut() {
+            scope.insert(
+                name.to_owned(),
+                Binding {
+                    ty: ModernType::Node,
+                    mutable,
+                    operand: Operand::None,
+                    resource: Some(resource),
+                },
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_borrow(
+        &mut self,
+        mutable: bool,
+        owner: &str,
+        alias: &str,
+        body: &[Statement],
+        statement: &Statement,
+        scopes: &mut Vec<BTreeMap<String, Binding>>,
+        scene: &str,
+        source: &str,
+    ) {
+        let resource = match self.loan_owned_node(owner, mutable, scopes, &statement.span) {
+            Some(resource) => resource,
+            None => return,
+        };
+        scopes.push(BTreeMap::from([(
+            alias.to_owned(),
+            Binding {
+                ty: ModernType::Node,
+                mutable,
+                operand: Operand::None,
+                resource: Some(ResourceBinding {
+                    id: resource.id,
+                    drop_order: resource.drop_order,
+                    ownership: ResourceOwnership::Borrowed { mutable },
+                }),
+            },
+        )]));
+        self.lower_block(source, body, scopes, scene);
+        if let Some(mut borrow_scope) = scopes.pop() {
+            // Borrow aliases themselves never own a resource, but the borrow
+            // block is still a lexical scope and may contain freshly-owned
+            // nodes. Drop those before making the owner available again.
+            self.cleanup_scope(&mut borrow_scope, &statement.span);
+        }
+        self.restore_loan(owner, scopes);
+    }
+
+    /// Merges the ownership state of paths that both reach the same program
+    /// point. Scalars use shared VM storage and do not need dataflow merging;
+    /// Node ownership is affine and must agree exactly. When it does not, the
+    /// source would otherwise have a path-dependent lifetime, so report one
+    /// focused error and preserve the incoming model to avoid error cascades.
+    fn merge_continuing_ownership(
+        &mut self,
+        before: &[BTreeMap<String, Binding>],
+        left: &[BTreeMap<String, Binding>],
+        right: &[BTreeMap<String, Binding>],
+        span: &SourceSpan,
+        construct: &str,
+    ) -> Vec<BTreeMap<String, Binding>> {
+        let mut merged = before.to_vec();
+        for (scope_index, before_scope) in before.iter().enumerate() {
+            let Some(left_scope) = left.get(scope_index) else {
+                continue;
+            };
+            let Some(right_scope) = right.get(scope_index) else {
+                continue;
+            };
+            let Some(merged_scope) = merged.get_mut(scope_index) else {
+                continue;
+            };
+            for (name, before_binding) in before_scope {
+                if before_binding.ty != ModernType::Node {
+                    continue;
+                }
+                let Some(left_ownership) = left_scope
+                    .get(name)
+                    .and_then(|binding| binding.resource.as_ref())
+                    .map(|resource| resource.ownership.clone())
+                else {
+                    continue;
+                };
+                let Some(right_ownership) = right_scope
+                    .get(name)
+                    .and_then(|binding| binding.resource.as_ref())
+                    .map(|resource| resource.ownership.clone())
+                else {
+                    continue;
+                };
+                if left_ownership != right_ownership {
+                    self.error(
+                        DiagnosticCode::InvalidOwnership,
+                        format!(
+                            "{construct} ownership of Node '{name}' differs across continuing paths; move or drop it consistently"
+                        ),
+                        Some(span.clone()),
+                    );
+                    continue;
+                }
+                if let Some(resource) = merged_scope
+                    .get_mut(name)
+                    .and_then(|binding| binding.resource.as_mut())
+                {
+                    resource.ownership = left_ownership;
+                }
+            }
+        }
+        merged
+    }
+
     fn with_scope(
         &mut self,
         scopes: &mut Vec<BTreeMap<String, Binding>>,
+        span: &SourceSpan,
         action: impl FnOnce(&mut Self, &mut Vec<BTreeMap<String, Binding>>),
     ) {
         scopes.push(BTreeMap::new());
         action(self, scopes);
-        let _ = scopes.pop();
+        if let Some(mut scope) = scopes.pop() {
+            self.cleanup_scope(&mut scope, span);
+        }
+    }
+
+    fn fresh_resource(&mut self, scene: &str, name: &str) -> ResourceBinding {
+        let order = self.generated_resource;
+        self.generated_resource = self.generated_resource.saturating_add(1);
+        ResourceBinding {
+            id: format!("aria:{scene}:{name}:{order}"),
+            drop_order: order,
+            ownership: ResourceOwnership::Owned,
+        }
+    }
+
+    fn node_mut_borrow(
+        &mut self,
+        access: &NodeAccess,
+        scopes: &[BTreeMap<String, Binding>],
+    ) -> Option<String> {
+        if !access.mutable {
+            self.error(
+                DiagnosticCode::InvalidBorrow,
+                "scene mutation requires '&mut node'",
+                Some(access.span.clone()),
+            );
+            return None;
+        }
+        let Some(binding) = resolve_binding(scopes, &access.name) else {
+            self.error(
+                DiagnosticCode::InvalidOwnership,
+                format!("unknown Node binding '{}'", access.name),
+                Some(access.span.clone()),
+            );
+            return None;
+        };
+        if binding.ty != ModernType::Node {
+            self.error(
+                DiagnosticCode::InvalidBorrow,
+                format!("'{}' is not a Node", access.name),
+                Some(access.span.clone()),
+            );
+            return None;
+        }
+        let Some(resource) = binding.resource else {
+            self.error(
+                DiagnosticCode::InvalidOwnership,
+                format!("Node binding '{}' has no resource", access.name),
+                Some(access.span.clone()),
+            );
+            return None;
+        };
+        match resource.ownership {
+            ResourceOwnership::Owned if binding.mutable => Some(resource.id),
+            ResourceOwnership::Owned => {
+                self.error(
+                    DiagnosticCode::InvalidBorrow,
+                    format!(
+                        "cannot mutably borrow immutable Node binding '{}'",
+                        access.name
+                    ),
+                    Some(access.span.clone()),
+                );
+                None
+            }
+            ResourceOwnership::Borrowed { mutable: true } => Some(resource.id),
+            ResourceOwnership::Borrowed { mutable: false } => {
+                self.error(
+                    DiagnosticCode::InvalidBorrow,
+                    format!("borrow alias '{}' is immutable", access.name),
+                    Some(access.span.clone()),
+                );
+                None
+            }
+            ResourceOwnership::Loaned { .. } => {
+                self.error(
+                    DiagnosticCode::BorrowConflict,
+                    format!("Node '{}' is borrowed for this scope", access.name),
+                    Some(access.span.clone()),
+                );
+                None
+            }
+            ResourceOwnership::Moved => {
+                self.error(
+                    DiagnosticCode::UseAfterMove,
+                    format!("use of moved Node '{}'", access.name),
+                    Some(access.span.clone()),
+                );
+                None
+            }
+        }
+    }
+
+    fn take_owned_node(
+        &mut self,
+        name: &str,
+        scopes: &mut [BTreeMap<String, Binding>],
+        span: &SourceSpan,
+    ) -> Option<ResourceBinding> {
+        let outcome = {
+            let Some(binding) = resolve_binding_mut(scopes, name) else {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidOwnership,
+                    format!("unknown Node binding '{name}'"),
+                    span,
+                );
+            };
+            if binding.ty != ModernType::Node {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidOwnership,
+                    format!("'{name}' is not a Node"),
+                    span,
+                );
+            }
+            let Some(resource) = binding.resource.as_mut() else {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidOwnership,
+                    format!("Node binding '{name}' has no resource"),
+                    span,
+                );
+            };
+            match resource.ownership {
+                ResourceOwnership::Owned => {
+                    resource.ownership = ResourceOwnership::Moved;
+                    Some(ResourceBinding {
+                        id: resource.id.clone(),
+                        drop_order: resource.drop_order,
+                        ownership: ResourceOwnership::Owned,
+                    })
+                }
+                ResourceOwnership::Moved => None,
+                ResourceOwnership::Borrowed { .. } => None,
+                ResourceOwnership::Loaned { .. } => None,
+            }
+        };
+        if let Some(resource) = outcome {
+            return Some(resource);
+        }
+        let code = resolve_binding(scopes, name)
+            .and_then(|binding| binding.resource)
+            .map(|resource| match resource.ownership {
+                ResourceOwnership::Moved => DiagnosticCode::UseAfterMove,
+                ResourceOwnership::Borrowed { .. } | ResourceOwnership::Loaned { .. } => {
+                    DiagnosticCode::BorrowConflict
+                }
+                ResourceOwnership::Owned => DiagnosticCode::InvalidOwnership,
+            })
+            .unwrap_or(DiagnosticCode::InvalidOwnership);
+        self.ownership_error(code, format!("cannot consume Node '{name}'"), span)
+    }
+
+    fn consume_owned_node(
+        &mut self,
+        name: &str,
+        scopes: &mut [BTreeMap<String, Binding>],
+        span: &SourceSpan,
+    ) -> Option<String> {
+        self.take_owned_node(name, scopes, span)
+            .map(|resource| resource.id)
+    }
+
+    fn loan_owned_node(
+        &mut self,
+        name: &str,
+        mutable: bool,
+        scopes: &mut [BTreeMap<String, Binding>],
+        span: &SourceSpan,
+    ) -> Option<ResourceBinding> {
+        let outcome = {
+            let Some(binding) = resolve_binding_mut(scopes, name) else {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidOwnership,
+                    format!("unknown Node binding '{name}'"),
+                    span,
+                );
+            };
+            if binding.ty != ModernType::Node {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidBorrow,
+                    format!("'{name}' is not a Node"),
+                    span,
+                );
+            }
+            if mutable && !binding.mutable {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidBorrow,
+                    format!("cannot mutably borrow immutable Node binding '{name}'"),
+                    span,
+                );
+            }
+            let Some(resource) = binding.resource.as_mut() else {
+                return self.ownership_error(
+                    DiagnosticCode::InvalidOwnership,
+                    format!("Node binding '{name}' has no resource"),
+                    span,
+                );
+            };
+            match resource.ownership {
+                ResourceOwnership::Owned => {
+                    let moved = ResourceBinding {
+                        id: resource.id.clone(),
+                        drop_order: resource.drop_order,
+                        ownership: ResourceOwnership::Owned,
+                    };
+                    resource.ownership = ResourceOwnership::Loaned { mutable };
+                    Some(moved)
+                }
+                _ => None,
+            }
+        };
+        if outcome.is_some() {
+            return outcome;
+        }
+        self.ownership_error(
+            DiagnosticCode::BorrowConflict,
+            format!("Node '{name}' is not available for a new borrow"),
+            span,
+        )
+    }
+
+    fn restore_loan(&mut self, name: &str, scopes: &mut [BTreeMap<String, Binding>]) {
+        if let Some(binding) = resolve_binding_mut(scopes, name)
+            && let Some(resource) = binding.resource.as_mut()
+            && matches!(resource.ownership, ResourceOwnership::Loaned { .. })
+        {
+            resource.ownership = ResourceOwnership::Owned;
+        }
+    }
+
+    fn cleanup_scope(&mut self, scope: &mut BTreeMap<String, Binding>, span: &SourceSpan) {
+        let mut resources = scope
+            .values_mut()
+            .filter_map(|binding| binding.resource.as_mut())
+            .filter_map(|resource| match resource.ownership {
+                ResourceOwnership::Owned | ResourceOwnership::Loaned { .. } => {
+                    resource.ownership = ResourceOwnership::Moved;
+                    Some((resource.drop_order, resource.id.clone()))
+                }
+                ResourceOwnership::Moved | ResourceOwnership::Borrowed { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        resources.sort_by(|left, right| right.0.cmp(&left.0));
+        for (_, id) in resources {
+            let id = Operand::Constant(self.intern_string(&id));
+            self.emit(ByteOp::SpriteRemove, vec![id], span);
+        }
+    }
+
+    fn cleanup_all_scopes(&mut self, scopes: &mut [BTreeMap<String, Binding>], span: &SourceSpan) {
+        for scope in scopes.iter_mut().rev() {
+            self.cleanup_scope(scope, span);
+        }
+    }
+
+    fn ownership_error<T>(
+        &mut self,
+        code: DiagnosticCode,
+        message: impl Into<String>,
+        span: &SourceSpan,
+    ) -> Option<T> {
+        self.error(code, message, Some(span.clone()));
+        None
     }
 
     fn emit_jump_if_false(
@@ -1097,16 +1816,25 @@ impl ModernCompiler {
     ) -> Option<(Operand, ModernType)> {
         match &expression.kind {
             ExpressionKind::Literal(literal) => Some((self.literal_operand(literal), literal.ty())),
-            ExpressionKind::Identifier(name) => resolve_binding(scopes, name)
-                .map(|binding| (binding.operand, binding.ty))
-                .or_else(|| {
+            ExpressionKind::Identifier(name) => match resolve_binding(scopes, name) {
+                Some(binding) if binding.ty == ModernType::Node => {
+                    self.error(
+                        DiagnosticCode::InvalidOwnership,
+                        format!("Node '{name}' cannot be used as an expression value"),
+                        Some(expression.span.clone()),
+                    );
+                    None
+                }
+                Some(binding) => Some((binding.operand, binding.ty)),
+                None => {
                     self.error(
                         DiagnosticCode::InvalidOperand,
                         format!("unknown variable '{name}'"),
                         Some(expression.span.clone()),
                     );
                     None
-                }),
+                }
+            },
             _ => {
                 self.error(
                     DiagnosticCode::InvalidOperand,
@@ -1125,16 +1853,25 @@ impl ModernCompiler {
     ) -> Option<(Operand, ModernType)> {
         match value {
             Value::Literal(literal) => Some((self.literal_operand(literal), literal.ty())),
-            Value::Identifier { span, name } => resolve_binding(scopes, name)
-                .map(|binding| (binding.operand, binding.ty))
-                .or_else(|| {
+            Value::Identifier { span, name } => match resolve_binding(scopes, name) {
+                Some(binding) if binding.ty == ModernType::Node => {
+                    self.error(
+                        DiagnosticCode::InvalidOwnership,
+                        format!("Node '{name}' must be moved into a new 'let' binding"),
+                        Some(span.clone()),
+                    );
+                    None
+                }
+                Some(binding) => Some((binding.operand, binding.ty)),
+                None => {
                     self.error(
                         DiagnosticCode::InvalidOperand,
                         format!("unknown variable '{name}'"),
                         Some(span.clone()),
                     );
                     None
-                }),
+                }
+            },
         }
     }
 
@@ -1156,6 +1893,7 @@ impl ModernCompiler {
         let op = match ty {
             ModernType::Int | ModernType::Bool => ByteOp::SetInt,
             ModernType::String => ByteOp::SetString,
+            ModernType::Node => return,
         };
         self.emit(op, vec![target.clone(), value], span);
     }
@@ -1221,6 +1959,7 @@ impl ModernCompiler {
         match ty {
             ModernType::Int | ModernType::Bool => Operand::IntRegister(key),
             ModernType::String => Operand::StringRegister(key),
+            ModernType::Node => Operand::None,
         }
     }
 
@@ -1274,7 +2013,7 @@ impl ModernCompiler {
     }
 
     fn fresh_label(&mut self, prefix: &str) -> String {
-        let label = format!("__aria31_{prefix}_{}", self.generated_label);
+        let label = format!("__aria_{prefix}_{}", self.generated_label);
         self.generated_label = self.generated_label.saturating_add(1);
         label
     }
@@ -1334,7 +2073,7 @@ impl ModernCompiler {
         CompileOutput {
             program: (!has_errors).then_some(CompiledProgram {
                 format_version: ARIAC_FORMAT_VERSION,
-                language_version: LanguageVersion::V3_1,
+                language_version: LanguageVersion::CURRENT,
                 game_id: self.game_id,
                 constants: self.constants,
                 instructions: self.instructions,
@@ -1379,15 +2118,19 @@ fn collect_scene_sites(
             StatementKind::While { body, .. } => {
                 collect_scene_sites(body, source_scene, calls, transfers);
             }
+            StatementKind::Borrow { body, .. } => {
+                collect_scene_sites(body, source_scene, calls, transfers);
+            }
             StatementKind::Say { .. }
             | StatementKind::Narrate { .. }
             | StatementKind::ClearDialogue
             | StatementKind::AwaitAdvance
             | StatementKind::Wait { .. }
             | StatementKind::Background { .. }
-            | StatementKind::Show { .. }
+            | StatementKind::Spawn { .. }
             | StatementKind::Hide { .. }
-            | StatementKind::Remove { .. }
+            | StatementKind::Reveal { .. }
+            | StatementKind::Drop { .. }
             | StatementKind::Move { .. }
             | StatementKind::Declare { .. }
             | StatementKind::Assign { .. }
@@ -1398,8 +2141,86 @@ fn collect_scene_sites(
             | StatementKind::Volume { .. }
             | StatementKind::Save { .. }
             | StatementKind::Load { .. }
+            | StatementKind::SetFlag { .. }
+            | StatementKind::SetTextSpeed { .. }
+            | StatementKind::SetAuto { .. }
+            | StatementKind::SetSkip { .. }
+            | StatementKind::SetLocale { .. }
+            | StatementKind::SetTheme { .. }
+            | StatementKind::SetTextBox { .. }
+            | StatementKind::Tween { .. }
+            | StatementKind::Effect { .. }
+            | StatementKind::UnlockChapter { .. }
+            | StatementKind::SetChapterProgress { .. }
+            | StatementKind::UnlockCg { .. }
+            | StatementKind::Preload { .. }
+            | StatementKind::OpenMenu { .. }
+            | StatementKind::OpenScreen { .. }
             | StatementKind::End => {}
         }
+    }
+}
+
+/// True when every route through a statement list transfers control away from
+/// its lexical continuation. This is deliberately side-effect-free: the
+/// validation pass owns unreachable-code diagnostics, while lowering needs a
+/// compact answer to merge ownership only for paths that can meet again.
+fn block_definitely_exits(statements: &[Statement]) -> bool {
+    statements.iter().any(statement_definitely_exits)
+}
+
+fn statement_definitely_exits(statement: &Statement) -> bool {
+    match &statement.kind {
+        StatementKind::End
+        | StatementKind::Return
+        | StatementKind::Jump { .. }
+        | StatementKind::Choice { .. } => true,
+        StatementKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            !else_branch.is_empty()
+                && block_definitely_exits(then_branch)
+                && block_definitely_exits(else_branch)
+        }
+        StatementKind::Borrow { body, .. } => block_definitely_exits(body),
+        StatementKind::Say { .. }
+        | StatementKind::Narrate { .. }
+        | StatementKind::ClearDialogue
+        | StatementKind::AwaitAdvance
+        | StatementKind::Wait { .. }
+        | StatementKind::Background { .. }
+        | StatementKind::Spawn { .. }
+        | StatementKind::Hide { .. }
+        | StatementKind::Reveal { .. }
+        | StatementKind::Drop { .. }
+        | StatementKind::Move { .. }
+        | StatementKind::Declare { .. }
+        | StatementKind::Assign { .. }
+        | StatementKind::AddAssign { .. }
+        | StatementKind::While { .. }
+        | StatementKind::Call { .. }
+        | StatementKind::Play { .. }
+        | StatementKind::Stop { .. }
+        | StatementKind::Volume { .. }
+        | StatementKind::Save { .. }
+        | StatementKind::Load { .. }
+        | StatementKind::SetFlag { .. }
+        | StatementKind::SetTextSpeed { .. }
+        | StatementKind::SetAuto { .. }
+        | StatementKind::SetSkip { .. }
+        | StatementKind::SetLocale { .. }
+        | StatementKind::SetTheme { .. }
+        | StatementKind::SetTextBox { .. }
+        | StatementKind::Tween { .. }
+        | StatementKind::Effect { .. }
+        | StatementKind::UnlockChapter { .. }
+        | StatementKind::SetChapterProgress { .. }
+        | StatementKind::UnlockCg { .. }
+        | StatementKind::Preload { .. }
+        | StatementKind::OpenMenu { .. }
+        | StatementKind::OpenScreen { .. } => false,
     }
 }
 
@@ -1456,8 +2277,44 @@ fn resolve_binding(scopes: &[BTreeMap<String, Binding>], name: &str) -> Option<B
         .find_map(|scope| scope.get(name).cloned())
 }
 
+fn resolve_binding_mut<'a>(
+    scopes: &'a mut [BTreeMap<String, Binding>],
+    name: &str,
+) -> Option<&'a mut Binding> {
+    scopes
+        .iter_mut()
+        .rev()
+        .find_map(|scope| scope.get_mut(name))
+}
+
 fn scene_label(name: &str) -> String {
     format!("scene:{name}")
+}
+
+fn is_presentation_route(route: &str) -> bool {
+    matches!(
+        route,
+        "setup"
+            | "title"
+            | "demo_end"
+            | "dialogue"
+            | "pause"
+            | "save"
+            | "load"
+            | "settings"
+            | "backlog"
+            | "chapter_select"
+            | "gallery"
+            // An interlude is a story-owned held surface. It deliberately
+            // remains layout-free in Core, but is a standard semantic route
+            // so strict scripts can save, log, and replay its silence.
+            | "interlude"
+            // A chapter day card is a semantic presentation checkpoint. It
+            // remains project-rendered, but is deliberately whitelisted so a
+            // saved game can return to the same card rather than falling back
+            // to dialogue on restore.
+            | "day_card"
+    )
 }
 
 fn type_name(ty: ModernType) -> &'static str {
@@ -1465,6 +2322,7 @@ fn type_name(ty: ModernType) -> &'static str {
         ModernType::Int => "Int",
         ModernType::Bool => "Bool",
         ModernType::String => "String",
+        ModernType::Node => "Node",
     }
 }
 
@@ -1529,34 +2387,28 @@ mod tests {
     #[test]
     fn structured_source_type_checks_and_lowers_without_host_opcodes() {
         let output = compile_script(
-            "aria 3.1;\n\
+            "aria;\n\
              entry start;\n\
              state route: Int = 0;\n\
              scene start {\n\
                background asset(\"#07131f\") with fade(200ms);\n\
-               show ミオ = image(asset(\"assets/mio.webp\")) at (760px, 86px) z 20;\n\
+               let mut ミオ = show image(asset(\"assets/mio.webp\")) at (760px, 86px) z 20;\n\
                say ミオ: \"海へ行こう。\";\n\
                choice { \"海\" => sea; \"駅\" => station; }\n\
              }\n\
-             scene sea { var visits: Int = 0; visits += 1; if visits > 0 { play bgm asset(\"assets/sea.ogg\") loop; } end; }\n\
+             scene sea { let mut visits: Int = 0; visits += 1; if visits > 0 { play bgm asset(\"assets/sea.ogg\") loop; } end; }\n\
              scene station { end; }\n",
         );
         assert!(!output.has_errors(), "{:#?}", output.diagnostics);
         let program = output.program.unwrap();
-        assert_eq!(program.language_version, LanguageVersion::V3_1);
-        assert!(
-            program
-                .instructions
-                .iter()
-                .all(|instruction| instruction.op != ByteOp::Host)
-        );
+        assert_eq!(program.language_version, LanguageVersion::CURRENT);
         program.validate().unwrap();
     }
 
     #[test]
     fn modern_semantics_reject_implicit_conversions_and_mutating_let() {
         let output = compile_script(
-            "aria 3.1;\nentry start;\nscene start { let name: String = \"ミオ\"; name = \"別名\"; if name { end; } }\n",
+            "aria;\nentry start;\nscene start { let name: String = \"ミオ\"; name = \"別名\"; if name { end; } }\n",
         );
         assert!(output.has_errors());
         assert!(
@@ -1576,7 +2428,7 @@ mod tests {
     #[test]
     fn modern_dialogue_waits_only_when_authored_explicitly() {
         let output = compile_script(
-            "aria 3.1;\nentry start;\nscene start { say \"海風\"; await advance; end; }\n",
+            "aria;\nentry start;\nscene start { say \"海風\"; await advance; end; }\n",
         );
         assert!(!output.has_errors(), "{:#?}", output.diagnostics);
         let instructions = &output.program.unwrap().instructions;
@@ -1588,6 +2440,225 @@ mod tests {
     }
 
     #[test]
+    fn owned_nodes_move_borrow_and_drop_without_runtime_gc() {
+        let output = compile_script(
+            "aria;\n\
+             entry start;\n\
+             scene start {\n\
+               let mut mio = show image(asset(\"assets/mio.webp\")) at (10px, 20px) z 3;\n\
+               borrow mut mio as portrait {\n\
+                 move &mut portrait to (30px, 40px);\n\
+                 hide &mut portrait;\n\
+               }\n\
+               let outro = mio;\n\
+               drop outro;\n\
+               end;\n\
+             }\n",
+        );
+        assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+        let program = output.program.unwrap();
+        let removes = program
+            .instructions
+            .iter()
+            .filter(|instruction| instruction.op == ByteOp::SpriteRemove)
+            .count();
+        assert_eq!(removes, 1, "moved/dropped node must release exactly once");
+        program.validate().unwrap();
+    }
+
+    #[test]
+    fn ownership_diagnostics_reject_use_after_move_and_borrow_conflicts() {
+        let moved = compile_script(
+            "aria;\nentry start;\nscene start {\n\
+             let mut mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             let outro = mio;\n\
+             hide &mut mio;\n\
+             end;\n}\n",
+        );
+        assert!(moved.has_errors());
+        assert!(
+            moved
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::UseAfterMove)
+        );
+
+        let borrowed = compile_script(
+            "aria;\nentry start;\nscene start {\n\
+             let mut mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             borrow mut mio as portrait { hide &mut mio; }\n\
+             end;\n}\n",
+        );
+        assert!(borrowed.has_errors());
+        assert!(
+            borrowed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::BorrowConflict)
+        );
+    }
+
+    #[test]
+    fn ownership_merges_exclusive_branches_and_rejects_path_dependent_lifetimes() {
+        let both_drop = compile_script(
+            "aria;\nentry start;\nstate mut route: Int = 0;\nscene start {\n\
+             let mut mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             if route == 0 { drop mio; } else { drop mio; }\n\
+             end;\n}\n",
+        );
+        assert!(!both_drop.has_errors(), "{:#?}", both_drop.diagnostics);
+        let program = both_drop.program.unwrap();
+        assert_eq!(
+            program
+                .instructions
+                .iter()
+                .filter(|instruction| instruction.op == ByteOp::SpriteRemove)
+                .count(),
+            2,
+            "each runtime branch owns and drops its copy of the control-flow path"
+        );
+        program.validate().unwrap();
+
+        let divergent = compile_script(
+            "aria;\nentry start;\nstate mut route: Int = 0;\nscene start {\n\
+             let mut mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             if route == 0 { drop mio; } else { hide &mut mio; }\n\
+             end;\n}\n",
+        );
+        assert!(divergent.has_errors());
+        assert!(divergent.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::InvalidOwnership
+                && diagnostic.message.contains("conditional ownership")
+        }));
+
+        let loop_drop = compile_script(
+            "aria;\nentry start;\nstate mut keep: Bool = false;\nscene start {\n\
+             let mut mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             while keep { drop mio; }\n\
+             end;\n}\n",
+        );
+        assert!(loop_drop.has_errors());
+        assert!(loop_drop.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::InvalidOwnership
+                && diagnostic.message.contains("loop ownership")
+        }));
+    }
+
+    #[test]
+    fn borrow_blocks_drop_their_own_nodes_and_preserve_state_mutability() {
+        let output = compile_script(
+            "aria;\nentry start;\nstate mut route: Int = 0;\nscene start {\n\
+             let mut mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             borrow mut mio as portrait {\n\
+               let temporary = show rect(0px, 0px, 16px, 16px, \"#fff\") z 2;\n\
+               move &mut portrait to (1px, 2px);\n\
+             }\n\
+             route += 1;\n\
+             end;\n}\n",
+        );
+        assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+        let program = output.program.unwrap();
+        assert_eq!(
+            program
+                .instructions
+                .iter()
+                .filter(|instruction| instruction.op == ByteOp::SpriteRemove)
+                .count(),
+            2,
+            "the temporary borrow-block node and the outer node each drop once"
+        );
+
+        let immutable_state = compile_script(
+            "aria;\nentry start;\nstate route: Int = 0;\nscene start { route += 1; end; }\n",
+        );
+        assert!(immutable_state.has_errors());
+        assert!(immutable_state.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("requires a mutable Int variable")
+        }));
+    }
+
+    #[test]
+    fn nodes_cannot_be_used_as_scalar_condition_values() {
+        let output = compile_script(
+            "aria;\nentry start;\nscene start {\n\
+             let mio = show image(asset(\"assets/mio.webp\")) at (0px, 0px) z 1;\n\
+             if mio == mio { end; } else { end; }\n\
+             }\n",
+        );
+        assert!(output.has_errors());
+        assert!(output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::InvalidOwnership
+                && diagnostic
+                    .message
+                    .contains("cannot be used as an expression")
+        }));
+    }
+
+    #[test]
+    fn single_language_compiles_semantic_presentation_routes_into_ariac7() {
+        let output = compile_script(
+            "aria;\n\
+             module test.ui;\n\
+             entry start;\n\
+             scene start { screen settings; end; }\n",
+        );
+        assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+        let program = output.program.unwrap();
+        assert_eq!(program.language_version, LanguageVersion::CURRENT);
+        assert!(
+            program
+                .instructions
+                .iter()
+                .any(|instruction| instruction.op == ByteOp::OpenScreen)
+        );
+        assert_eq!(
+            CompiledProgram::decode(&program.encode().unwrap()).unwrap(),
+            program
+        );
+    }
+
+    #[test]
+    fn single_language_reports_retired_visual_ui_syntax_and_invalid_routes() {
+        let retired = compile_script(
+            "aria;\n\
+             ui_theme coast { string title \"Coast\"; }\n\
+             ui_screen dialogue { slot dialogue; }\n\
+             entry start;\n\
+             scene start { theme umikaze; end; }\n",
+        );
+        assert!(retired.has_errors());
+        assert!(retired.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::DeprecatedUiSyntax
+                && diagnostic.message.contains("retired")
+        }));
+        let declaration_lines = retired
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code == DiagnosticCode::DeprecatedUiSyntax
+                    && diagnostic.message.starts_with("visual UI declarations")
+            })
+            .filter_map(|diagnostic| diagnostic.span.as_ref().map(|span| span.line))
+            .collect::<Vec<_>>();
+        assert_eq!(declaration_lines, vec![2, 3]);
+
+        let invalid = compile_script(
+            "aria;\n\
+             ui_theme coast { string title \"Coast\"; }\n\
+             ui_screen dialogue { text value bind theme.missing; slot dialogue; }\n\
+             entry start;\n\
+             scene start { screen absent; end; }\n",
+        );
+        assert!(invalid.has_errors());
+        assert!(invalid.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::InvalidUiBinding
+                && diagnostic.message.contains("standard presentation route")
+        }));
+    }
+
+    #[test]
     fn scenes_cannot_fall_through_and_imports_are_library_sources() {
         let output = compile(CompileInput {
             game_id: "jp.example.modern".to_owned(),
@@ -1595,18 +2666,18 @@ mod tests {
             sources: vec![
                 SourceUnit {
                     logical_path: "scripts/main.aria".to_owned(),
-                    source: "aria 3.1;\nimport \"./common.aria\";\nentry start;\nscene start { call helper; end; }\n".to_owned(),
+                    source: "aria;\nuse \"./common.aria\";\nentry start;\nscene start { call helper; end; }\n".to_owned(),
                 },
                 SourceUnit {
                     logical_path: "scripts/common.aria".to_owned(),
-                    source: "aria 3.1;\nscene helper { return; }\n".to_owned(),
+                    source: "aria;\nscene helper { return; }\n".to_owned(),
                 },
             ],
         });
         assert!(!output.has_errors(), "{:#?}", output.diagnostics);
 
         let fallthrough = compile_script(
-            "aria 3.1;\nentry start;\nscene start { narrate \"missing terminator\"; }\n",
+            "aria;\nentry start;\nscene start { narrate \"missing terminator\"; }\n",
         );
         assert!(fallthrough.has_errors());
         assert!(fallthrough.diagnostics.iter().any(|diagnostic| {
@@ -1619,7 +2690,7 @@ mod tests {
     #[test]
     fn recursive_calls_and_jumps_to_returning_scenes_are_rejected() {
         let output = compile_script(
-            "aria 3.1;\n+             entry start;\n+             scene start { call helper; end; }\n+             scene helper { call helper; return; }\n",
+            "aria;\n+             entry start;\n+             scene start { call helper; end; }\n+             scene helper { call helper; return; }\n",
         );
         assert!(output.has_errors());
         assert!(output.diagnostics.iter().any(|diagnostic| {
@@ -1629,7 +2700,7 @@ mod tests {
         }));
 
         let jump_to_return = compile_script(
-            "aria 3.1;\nentry start;\nscene start { jump helper; }\nscene helper { return; }\n",
+            "aria;\nentry start;\nscene start { jump helper; }\nscene helper { return; }\n",
         );
         assert!(jump_to_return.has_errors());
         assert!(

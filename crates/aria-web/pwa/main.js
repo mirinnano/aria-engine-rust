@@ -11,6 +11,7 @@ const heldSources = new Map();
 const activeGamepadSources = new Map();
 const pointer = { x: 0, y: 0, primary_pressed: false, primary_held: false };
 let pointerPresent = false;
+let scrollDeltaY = 0;
 let sequence = 0;
 let logicalSize = { width: 1280, height: 720 };
 
@@ -113,6 +114,22 @@ function resizeCanvas() {
   canvas.height = Math.max(1, Math.round(bounds.height * ratio));
 }
 
+// This value is part of every Core input rather than a renderer-only resize
+// detail.  It makes the responsive branch selected by a PWA replay exactly
+// reproducible by the Native player (and vice versa). `canvas` already lives
+// inside the CSS safe-area padding, so the remaining insets are zero in its
+// local coordinate system.
+function uiViewport() {
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    width: Math.max(1, Math.round(bounds.width * ratio)),
+    height: Math.max(1, Math.round(bounds.height * ratio)),
+    scale_factor: ratio,
+    safe_area: { top: 0, right: 0, bottom: 0, left: 0 },
+  };
+}
+
 function pointerPosition(event) {
   const bounds = canvas.getBoundingClientRect();
   const scale = Math.min(bounds.width / logicalSize.width, bounds.height / logicalSize.height);
@@ -161,9 +178,18 @@ canvas.addEventListener("pointerup", (event) => {
   pointerPosition(event);
   pointer.primary_held = false;
 });
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  scrollDeltaY += event.deltaY;
+}, { passive: false });
 
 async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  // The first worker claims this page after its cache is ready. Reloading at
+  // that exact moment aborts the initial PAK streaming request, producing a
+  // spurious startup failure before the second load succeeds. Only a page
+  // that already had a controller should reload for a newly activated update.
+  const hadController = Boolean(navigator.serviceWorker.controller);
   const registration = await navigator.serviceWorker.register("./service-worker.js", {
     scope: "./",
   });
@@ -178,7 +204,9 @@ async function registerServiceWorker() {
   updateButton.addEventListener("click", () => {
     registration.waiting?.postMessage({ type: "SKIP_WAITING" });
   });
-  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload());
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) location.reload();
+  });
 }
 
 async function loadBundledFonts(fontAssets, readAsset) {
@@ -217,18 +245,16 @@ async function boot() {
   resizeCanvas();
   const { default: init, WebPak, WebRuntime } = await import("./pkg/aria_web.js");
   await init();
-  const [bundleResponse, bytecodeResponse, pakResponse] = await Promise.all([
+  const [bundleResponse, bytecodeResponse] = await Promise.all([
     fetch("./bundle.aria.json"),
     fetch("./game.ariac"),
-    fetch("./game.ariapak"),
   ]);
   if (!bundleResponse.ok) {
     throw new Error(`bundle.aria.json: HTTP ${bundleResponse.status}`);
   }
   if (!bytecodeResponse.ok) throw new Error(`game.ariac: HTTP ${bytecodeResponse.status}`);
-  if (!pakResponse.ok) throw new Error(`game.ariapak: HTTP ${pakResponse.status}`);
   const bundle = await bundleResponse.json();
-  if (bundle.schema_version !== 5 || bundle.vm_abi_version !== 1) {
+  if (bundle.schema_version !== 5 || ![2, 4].includes(bundle.vm_abi_version)) {
     throw new Error("unsupported Aria portable bundle");
   }
   logicalSize = { width: bundle.logical_width, height: bundle.logical_height };
@@ -238,32 +264,60 @@ async function boot() {
     bundle.logical_width,
     bundle.logical_height,
   );
-  const pakBytes = new Uint8Array(await pakResponse.arrayBuffer());
-  let pak;
-  if (bundle.pak_profile === "dev") {
-    pak = new WebPak(pakBytes);
-  } else {
-    // Protected Web builds receive short-lived key material from the host
-    // integration. The hook is deliberately outside the VM and only returns
-    // the four values needed by the adapter-owned package reader.
-    const keyProvider = globalThis.ariaPakKeyProvider;
-    if (typeof keyProvider !== "function") {
-      throw new Error("protected Aria package requires ariaPakKeyProvider(bundle)");
+  const packs = bundle.pak_packs?.length
+    ? bundle.pak_packs
+    : [{
+      pack_id: bundle.pack_id,
+      file: "game.ariapak",
+      size: bundle.pak_size,
+      content_root_blake3: bundle.pak_content_root_blake3,
+      assets: bundle.font_assets,
+    }];
+  const mounted = [];
+  for (const declaration of packs) {
+    const response = await fetch(`./${declaration.file}`);
+    if (!response.ok) throw new Error(`${declaration.file}: HTTP ${response.status}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== declaration.size) {
+      throw new Error(`${declaration.file}: size does not match bundle.aria.json`);
     }
-    const keys = await keyProvider(bundle);
-    pak = WebPak.new_with_keys(
-      pakBytes,
-      keys.verification_key_id,
-      keys.verification_key_hex,
-      keys.encryption_key_id || "",
-      keys.encryption_key_hex || "",
-    );
+    let pak;
+    if (bundle.pak_profile === "dev") {
+      pak = new WebPak(bytes);
+    } else {
+      // Signed and protected Web builds receive their trust material from the
+      // host integration. The hook is deliberately outside the VM and only
+      // returns the values needed by the adapter-owned package reader.
+      const keyProvider = globalThis.ariaPakKeyProvider;
+      if (typeof keyProvider !== "function") {
+        throw new Error("signed/protected Aria package requires ariaPakKeyProvider(bundle)");
+      }
+      const keys = await keyProvider(bundle);
+      pak = WebPak.new_with_keys(
+        bytes,
+        keys.verification_key_id,
+        keys.verification_key_hex,
+        keys.encryption_key_id || "",
+        keys.encryption_key_hex || "",
+      );
+    }
+    if (pak.game_id() !== bundle.game_id
+      || pak.content_root_blake3() !== declaration.content_root_blake3) {
+      throw new Error(`${declaration.file}: metadata does not match bundle.aria.json`);
+    }
+    mounted.push(pak);
   }
-  if (pak.game_id() !== bundle.game_id) throw new Error("bytecode/pak game ID mismatch");
-  if (pak.content_root_blake3() !== bundle.pak_content_root_blake3) {
-    throw new Error("pak content root does not match portable bundle");
-  }
-  const readAsset = (logicalPath) => pak.read(logicalPath);
+  const readAsset = (logicalPath) => {
+    let lastError;
+    for (const pak of mounted) {
+      try {
+        return pak.read(logicalPath);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error(`missing asset '${logicalPath}'`);
+  };
   globalThis.ariaAssetBytes = readAsset;
   const fontFamilies = await loadBundledFonts(bundle.font_assets, readAsset);
   const renderer = await createWebRenderer(canvas, readAsset, {
@@ -275,7 +329,10 @@ async function boot() {
   audio.installUnlock(document);
   const saves = new IndexedDbSaveStore(`aria-v3-${bundle.save_namespace}`, 3);
   await saves.open();
-  setStatus(`${renderer.backend.toUpperCase()} / クリックまたはキー入力で開始`);
+  // Renderer readiness is not a game UI element. Leaving a fixed technical
+  // pill over a title screen made the PWA look unfinished and hid authored
+  // controls; status is now reserved for recovery/errors.
+  setStatus("");
 
   let previous = performance.now();
   async function frame(now) {
@@ -288,14 +345,18 @@ async function boot() {
       pressed: [...pressed],
       held: [...held],
       pointer: pointerPresent ? { ...pointer } : null,
+      scroll_delta_y: scrollDeltaY,
+      viewport: uiViewport(),
     };
     pressed.clear();
     pointer.primary_pressed = false;
+    scrollDeltaY = 0;
     const output = JSON.parse(runtime.step(JSON.stringify(input)));
+    logicalSize = output.scene.logical_size || logicalSize;
     await audio.consume(output.audio);
-    await renderer.submit(output.render);
-    globalThis.__ariaRenderedFrame = output.render.frame_number;
-    window.dispatchEvent(new CustomEvent("aria-render-frame", { detail: output.render }));
+    await renderer.submit(output.scene);
+    globalThis.__ariaRenderedFrame = output.scene.frame_number;
+    window.dispatchEvent(new CustomEvent("aria-render-frame", { detail: output.scene }));
 
     for (const command of output.runtime) {
       if (command.kind === "save") {

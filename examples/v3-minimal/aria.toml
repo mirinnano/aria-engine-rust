@@ -1,4 +1,4 @@
-schema = 3
+schema = 4
 
 [game]
 id = "jp.example.aria-v3-minimal"
@@ -12,3 +12,6 @@ logical_height = 720
 asset_roots = ["assets"]
 fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
 save_namespace = "aria-v3-minimal"
+
+[presentation]
+frontend = "ui"

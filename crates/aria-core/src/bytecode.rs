@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// The V3.1 compiled-program container. The runtime never executes source
+/// The compiled-program container for the single Aria language. The runtime never executes source
 /// text: it validates this target-independent binary representation first.
-pub const ARIAC_FORMAT_VERSION: u16 = 4;
-pub const ARIAC_MAGIC: [u8; 8] = *b"ARIAC4\0\0";
-pub const ARIAC_VM_ABI_VERSION: u16 = 1;
+///
+/// ARIAC7 deliberately contains no layout, theme, or component definition.
+/// Those are owned by a game presentation package (React/CSS), while this
+/// file remains a deterministic description of narrative semantics.
+pub const ARIAC_FORMAT_VERSION: u16 = 7;
+pub const ARIAC_MAGIC: [u8; 8] = *b"ARIAC7\0\0";
+pub const ARIAC_VM_ABI_VERSION: u16 = 4;
 
 const CHECKSUM_LENGTH: usize = 32;
 const FIXED_HEADER_LENGTH: usize = 34;
@@ -21,18 +25,13 @@ pub struct LanguageVersion {
 }
 
 impl LanguageVersion {
-    /// The alpha 3.0 command language. This value exists only while the
-    /// migration tool converts existing V3 alpha projects.
-    pub const V3_0: Self = Self { major: 3, minor: 0 };
-    /// The structured, typed author language introduced for the 1.0 line.
-    pub const V3_1: Self = Self { major: 3, minor: 1 };
-    /// Compatibility alias for old embedding callers. New code should use an
-    /// explicit language version; release packages must use [`Self::V3_1`].
-    pub const V3: Self = Self::V3_0;
+    /// Internal compiled-program ABI marker. Aria source itself is
+    /// deliberately unversioned (`aria;`) and has no compatibility mode.
+    pub const CURRENT: Self = Self { major: 1, minor: 0 };
 
     #[must_use]
     pub const fn is_supported(self) -> bool {
-        matches!(self, Self::V3_0 | Self::V3_1)
+        self.major == Self::CURRENT.major && self.minor == Self::CURRENT.minor
     }
 }
 
@@ -74,9 +73,20 @@ pub enum ByteOp {
     Save,
     Load,
     End,
-    /// Compatibility-only opcode for the alpha 3.0 source bridge. Aria 3.1
-    /// never emits this opcode and release validation rejects it.
-    Host,
+    SetFlag,
+    SetPersistentFlag,
+    SetTextSpeed,
+    SetAutoMode,
+    SetSkipMode,
+    SetLocale,
+    TweenSprite,
+    ScreenEffect,
+    UnlockChapter,
+    SetChapterProgress,
+    UnlockCg,
+    PreloadAsset,
+    OpenScreen,
+    GetFlag,
 }
 
 impl ByteOp {
@@ -109,7 +119,20 @@ impl ByteOp {
             Self::Save => 24,
             Self::Load => 25,
             Self::End => 26,
-            Self::Host => 27,
+            Self::SetFlag => 28,
+            Self::SetPersistentFlag => 29,
+            Self::SetTextSpeed => 30,
+            Self::SetAutoMode => 31,
+            Self::SetSkipMode => 32,
+            Self::SetLocale => 33,
+            Self::TweenSprite => 36,
+            Self::ScreenEffect => 37,
+            Self::UnlockChapter => 38,
+            Self::SetChapterProgress => 39,
+            Self::UnlockCg => 40,
+            Self::PreloadAsset => 41,
+            Self::OpenScreen => 42,
+            Self::GetFlag => 43,
         }
     }
 
@@ -142,7 +165,20 @@ impl ByteOp {
             24 => Ok(Self::Save),
             25 => Ok(Self::Load),
             26 => Ok(Self::End),
-            27 => Ok(Self::Host),
+            28 => Ok(Self::SetFlag),
+            29 => Ok(Self::SetPersistentFlag),
+            30 => Ok(Self::SetTextSpeed),
+            31 => Ok(Self::SetAutoMode),
+            32 => Ok(Self::SetSkipMode),
+            33 => Ok(Self::SetLocale),
+            36 => Ok(Self::TweenSprite),
+            37 => Ok(Self::ScreenEffect),
+            38 => Ok(Self::UnlockChapter),
+            39 => Ok(Self::SetChapterProgress),
+            40 => Ok(Self::UnlockCg),
+            41 => Ok(Self::PreloadAsset),
+            42 => Ok(Self::OpenScreen),
+            43 => Ok(Self::GetFlag),
             value => Err(AriacError::InvalidOpcode(value)),
         }
     }
@@ -155,8 +191,7 @@ impl ByteOp {
             | Self::SetString
             | Self::Background
             | Self::SpriteVisibility
-            | Self::BeginTransition
-            | Self::Host => operand_count == 2,
+            | Self::BeginTransition => operand_count == 2,
             Self::WaitAdvance
             | Self::Delay
             | Self::Jump
@@ -171,6 +206,20 @@ impl ByteOp {
             Self::SpriteImage | Self::SpriteText | Self::PlayAudio => operand_count == 6,
             Self::SpriteRect => operand_count == 7,
             Self::PresentChoice => operand_count >= 2 && operand_count.is_multiple_of(2),
+            Self::SetFlag
+            | Self::SetPersistentFlag
+            | Self::UnlockChapter
+            | Self::SetChapterProgress => operand_count == 2,
+            Self::SetTextSpeed
+            | Self::SetAutoMode
+            | Self::SetSkipMode
+            | Self::SetLocale
+            | Self::UnlockCg
+            | Self::PreloadAsset => operand_count == 1,
+            Self::TweenSprite => operand_count == 5,
+            Self::ScreenEffect => operand_count == 5,
+            Self::OpenScreen => operand_count == 1,
+            Self::GetFlag => operand_count == 2,
         }
     }
 }
@@ -226,7 +275,7 @@ impl CompiledProgram {
     pub fn empty(game_id: impl Into<String>) -> Self {
         Self {
             format_version: ARIAC_FORMAT_VERSION,
-            language_version: LanguageVersion::V3_1,
+            language_version: LanguageVersion::CURRENT,
             game_id: game_id.into(),
             constants: Vec::new(),
             instructions: vec![EncodedInstruction::new(ByteOp::End, Vec::new())],
@@ -268,7 +317,6 @@ impl CompiledProgram {
                 "source map length differs from instruction table".to_owned(),
             ));
         }
-
         for constant in &self.constants {
             match constant {
                 Constant::String(value) => validate_string(value, "constant string")?,
@@ -563,6 +611,7 @@ fn validate_instruction_schema(
         ByteOp::Jump | ByteOp::Call => require_address(&operands[0], 0),
         ByteOp::JumpIfFalse => require_address(&operands[3], 3),
         ByteOp::SetInt | ByteOp::AddInt => require_int_register(&operands[0]),
+        ByteOp::GetFlag => require_int_register(&operands[1]),
         ByteOp::SetString => require_string_register(&operands[0]),
         ByteOp::PresentChoice => {
             for (position, operand) in operands.iter().enumerate().skip(1).step_by(2) {
@@ -819,10 +868,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ariac4_round_trips_and_is_binary_deterministic() {
+    fn ariac7_round_trips_and_is_binary_deterministic() {
         let program = CompiledProgram {
             format_version: ARIAC_FORMAT_VERSION,
-            language_version: LanguageVersion::V3_1,
+            language_version: LanguageVersion::CURRENT,
             game_id: "jp.example.game".to_owned(),
             constants: vec![Constant::String("海へ行こう。".to_owned())],
             instructions: vec![
@@ -860,7 +909,7 @@ mod tests {
     }
 
     #[test]
-    fn ariac4_rejects_corruption_and_unknown_opcode() {
+    fn ariac7_rejects_corruption_and_unknown_opcode() {
         let program = CompiledProgram::empty("jp.example.game");
         let encoded = program.encode().unwrap();
         let mut corrupt = encoded.clone();
@@ -881,6 +930,21 @@ mod tests {
             CompiledProgram::decode(&invalid_opcode),
             Err(AriacError::InvalidOpcode(0xff))
         ));
+
+        // 27 was the removed host bridge; 34 and 35 were the retired
+        // script-owned theme/textbox instructions. ARIAC7 deliberately has
+        // holes at all three values rather than a compatibility decoder.
+        for retired_opcode in [27_u8, 34, 35] {
+            let mut retired = program.encode().unwrap();
+            retired[body_start] = retired_opcode;
+            let checksum_start = retired.len() - CHECKSUM_LENGTH;
+            let checksum = blake3::hash(&retired[ARIAC_MAGIC.len()..checksum_start]);
+            retired[checksum_start..].copy_from_slice(checksum.as_bytes());
+            assert!(matches!(
+                CompiledProgram::decode(&retired),
+                Err(AriacError::InvalidOpcode(code)) if code == retired_opcode
+            ));
+        }
     }
 
     #[test]

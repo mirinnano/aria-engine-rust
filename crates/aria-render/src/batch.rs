@@ -1,4 +1,4 @@
-use aria_core::protocol::{BlendMode, DrawCommand, RenderFrame};
+use aria_core::protocol::{BlendMode, DrawCommand, SceneFrame};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -26,7 +26,7 @@ pub struct RenderBatch {
 /// Groups consecutive compatible commands. It never reorders transparent
 /// commands, preserving the core's stable z/id ordering.
 #[must_use]
-pub fn build_batches(frame: &RenderFrame) -> Vec<RenderBatch> {
+pub fn build_batches(frame: &SceneFrame) -> Vec<RenderBatch> {
     let mut batches: Vec<RenderBatch> = Vec::new();
     for command in &frame.commands {
         let key = key_for(command);
@@ -91,13 +91,19 @@ mod tests {
             visible: true,
             blend: BlendMode::Alpha,
             mask: None,
+            scale: 1.0,
+            rotation_degrees: 0.0,
+            tint: aria_core::protocol::Color::WHITE,
+            fit: aria_core::protocol::SpriteFit::Fill,
+            style: Default::default(),
         };
-        let frame = RenderFrame {
+        let frame = SceneFrame {
             frame_number: 1,
             logical_size: LogicalSize {
                 width: 1280,
                 height: 720,
             },
+            viewport: Default::default(),
             clear_color: Color::BLACK,
             commands: vec![
                 sprite("a"),
@@ -113,10 +119,12 @@ mod tests {
                     color: Color::WHITE,
                     corner_radius: 0.0,
                     z: 1,
+                    style: Default::default(),
                 },
                 sprite("c"),
             ],
             transition: None,
+            effects: Vec::new(),
         };
         let batches = build_batches(&frame);
         assert_eq!(batches.len(), 3);

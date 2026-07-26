@@ -24,17 +24,28 @@ impl AtomicSaveStore {
         namespace: impl Into<String>,
     ) -> Result<Self, SaveStoreError> {
         let namespace = namespace.into();
-        if namespace.trim().is_empty()
-            || namespace.contains(['/', '\\'])
-            || namespace == "."
-            || namespace == ".."
-        {
-            return Err(SaveStoreError::InvalidNamespace(namespace));
-        }
+        validate_namespace(&namespace)?;
         Ok(Self {
             root: root.into(),
             namespace,
         })
+    }
+
+    /// Removes exactly one validated namespace below `root`.
+    ///
+    /// Releases use this only for names explicitly listed as legacy in their
+    /// manifest; no caller can pass a path or escape the chosen save root.
+    pub fn purge_namespace(
+        root: impl AsRef<Path>,
+        namespace: &str,
+    ) -> Result<bool, SaveStoreError> {
+        validate_namespace(namespace)?;
+        let directory = root.as_ref().join(namespace);
+        if !directory.exists() {
+            return Ok(true);
+        }
+        fs::remove_dir_all(directory)?;
+        Ok(true)
     }
 
     pub fn save(&self, slot: u32, envelope: &SaveEnvelopeV3) -> Result<(), SaveStoreError> {
@@ -115,6 +126,17 @@ impl AtomicSaveStore {
     }
 }
 
+fn validate_namespace(namespace: &str) -> Result<(), SaveStoreError> {
+    if namespace.trim().is_empty()
+        || namespace.contains(['/', '\\'])
+        || namespace == "."
+        || namespace == ".."
+    {
+        return Err(SaveStoreError::InvalidNamespace(namespace.to_owned()));
+    }
+    Ok(())
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SaveStoreError> {
     let mut file = AtomicWriteFile::open(path)?;
     file.write_all(bytes)?;
@@ -172,5 +194,37 @@ mod tests {
         let loaded = store.load(1).unwrap().unwrap();
         assert_eq!(loaded.envelope.payload_as::<i32>().unwrap(), 1);
         assert!(loaded.recovered_from_previous);
+    }
+
+    #[test]
+    fn purge_namespace_removes_only_the_explicit_legacy_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = AtomicSaveStore::new(temp.path(), "umikaze-v3").unwrap();
+        let current = AtomicSaveStore::new(temp.path(), "umikaze-v4").unwrap();
+        legacy.save(1, &save(1, 1)).unwrap();
+        current.save(1, &save(2, 2)).unwrap();
+
+        assert!(AtomicSaveStore::purge_namespace(temp.path(), "umikaze-v3").unwrap());
+        assert!(!legacy.directory().exists());
+        assert!(current.directory().exists());
+        assert_eq!(
+            current
+                .load(1)
+                .unwrap()
+                .unwrap()
+                .envelope
+                .payload_as::<i32>()
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn purge_namespace_rejects_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            AtomicSaveStore::purge_namespace(temp.path(), "../other"),
+            Err(SaveStoreError::InvalidNamespace(_))
+        ));
     }
 }
