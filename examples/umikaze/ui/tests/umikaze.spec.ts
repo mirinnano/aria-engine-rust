@@ -146,7 +146,17 @@ test("title and transparent RMenu use English commands with a stable localized d
   expect(titleLayout.fragmentAnimation).toBe("none");
 
   await page.getByRole("button", { name: "LOAD" }).click();
-  await expect(page.getByRole("dialog", { name: "LOAD" }).locator(".record-stage-photograph--understructure")).toHaveAttribute("src", /understructure-evening-v1-/);
+  // The demo deliberately excludes the later-day understructure photograph.
+  // Its archive screen must still have a complete, authored fallback rather
+  // than pulling an unreleased asset back into the public bundle.
+  const archivePhoto = page.getByRole("dialog", { name: "LOAD" })
+    .locator(".record-stage-photograph--understructure");
+  await expect(archivePhoto).toHaveAttribute(
+    "src",
+    process.env.UMIKAZE_DEMO === "true"
+      ? /hospital-corridor-overcast-v1-/
+      : /understructure-evening-v1-/,
+  );
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "START" }).click();
@@ -210,7 +220,9 @@ test("title EXIT confirms safely, and RMenu arrows move the focused command", as
   await page.keyboard.press("Escape");
 
   const menu = page.getByRole("dialog", { name: "メニュー" });
-  await menu.getByRole("button", { name: "RESUME" }).focus();
+  // The first command is focused on opening, so arrows are immediately
+  // usable without a preliminary Tab or mouse action.
+  await expect(menu.getByRole("button", { name: "RESUME" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("button", { name: "AUTO" })).toBeFocused();
   await expect(menu.getByText("文章を自動で送る", { exact: true })).toBeVisible();
@@ -423,7 +435,7 @@ test("a completed page advances to the next page or source line only on the foll
   await expect(page.locator(".continue-mark")).toHaveCount(0);
 });
 
-test("every ordinary reading surface, Enter, and a downward wheel gesture advance", async ({ page }) => {
+test("every ordinary reading surface, Enter, Space, and a downward wheel gesture advance", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await beginFirstChapter(page);
   const band = page.locator(".reading-band");
@@ -437,6 +449,11 @@ test("every ordinary reading surface, Enter, and a downward wheel gesture advanc
   const enterPage = await band.getAttribute("data-page-id");
   await page.keyboard.press("Enter");
   await expect(band).not.toHaveAttribute("data-page-id", enterPage || "");
+
+  await waitForCompletedPage(page);
+  const spacePage = await band.getAttribute("data-page-id");
+  await page.keyboard.press("Space");
+  await expect(band).not.toHaveAttribute("data-page-id", spacePage || "");
 
   await waitForCompletedPage(page);
   const wheelPage = await band.getAttribute("data-page-id");

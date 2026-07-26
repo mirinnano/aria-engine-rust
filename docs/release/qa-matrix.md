@@ -26,7 +26,7 @@ CIでは`python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umika
 | Area | 確認内容 |
 | --- | --- |
 | Windows | NSISの新規インストール・アンインストール・日本語パス・DPI 100/150%・WebView2未導入時の導入経路 |
-| Linux | `.deb`または選択したAppImageの新規インストール・削除・Wayland/X11・WebKitGTKあり/なしの診断 |
+| Linux | AppImageの新規起動・削除・Wayland/X11・WebKitGTKあり/なしの診断。ストア向け追加形式は別途確認する。 |
 | macOS | DMG起動・署名・notarization・Retina・アクセシビリティ権限なしでの読み上げ/キーボード操作 |
 | Web | Chrome/Edge/Safari/iOS/Androidでの初回ロード、オフライン再起動、IndexedDB無効時の安全な保存失敗 |
 | Input | クリック、Enter、Space、下スクロール、H、Escape、右クリック、ゲームパッドA/B/Y/D-pad、接続解除/再接続 |

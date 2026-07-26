@@ -24,9 +24,11 @@ paper-grain, wave-divider, and chapter-ornament raster assets complement the
 existing seaside scene without baking any player-facing words into images.
 It deliberately uses color backgrounds and vector-like rectangles, so the
 project can be compiled and replayed without shipping the original artwork.
-The bundled Noto Sans JP UI face and M PLUS 1 Code reading face make the
+The bundled Noto Sans CJK JP face carries the reader and operational text,
+while M PLUS 1 Code is reserved for compact record metadata. This keeps the
 same project runnable on desktop and web without relying on a host font.
-M PLUS 1 Code is distributed under the SIL Open Font License; see
+Both fonts are distributed under the SIL Open Font License; see
+[`licenses/NotoSansCJKJP-OFL.txt`](licenses/NotoSansCJKJP-OFL.txt) and
 [`licenses/MPLUS1Code-OFL.txt`](licenses/MPLUS1Code-OFL.txt).
 
 ## 日本語シナリオ

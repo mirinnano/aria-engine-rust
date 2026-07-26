@@ -128,12 +128,13 @@ jobs:
             (cd "target/package-$target" && "./$player" --headless > first-frame.json)
             grep -q '"frame_number"' "target/package-$target/first-frame.json"
           fi
-      - name: Render a packaged Native Player frame under Xvfb
+      - name: Launch a packaged Native Player under Xvfb
         if: runner.os == 'Linux'
         shell: bash
         run: |
           cargo run --locked --release -p aria-cli -- build examples/v3-player-smoke --target linux-x64 --profile signed --release --out target/native-player-smoke
-          timeout 30s xvfb-run -a target/native-player-smoke/aria-player
+          python3 scripts/assert-process-stays-alive.py --seconds 4 -- \
+            xvfb-run -a target/native-player-smoke/aria-player
       - name: Assert native player size budget
         if: runner.os != 'macOS'
         shell: bash
@@ -280,18 +281,8 @@ jobs:
             examples/v3-player-smoke --target macos-universal --profile signed --release \
             --out target/package-macos-universal
           file target/package-macos-universal/aria-player
-          # macOS does not ship GNU coreutils' `timeout`; use the Python
-          # standard library so the launch gate has the same 30-second bound
-          # on every hosted macOS runner.
-          python3 - <<'PY'
-          import subprocess
-
-          subprocess.run(
-              ["target/package-macos-universal/aria-player"],
-              check=True,
-              timeout=30,
-          )
-          PY
+          python3 scripts/assert-process-stays-alive.py --seconds 4 -- \
+            target/package-macos-universal/aria-player
       - uses: actions/upload-artifact@v4
         with:
           name: aria-native-macos-universal

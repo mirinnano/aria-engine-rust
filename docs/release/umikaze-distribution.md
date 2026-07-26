@@ -46,6 +46,10 @@ the game-owned presentation into `examples/umikaze/dist/web`; Tauri only embeds
 that already staged directory. The same content boundary is therefore shared
 by Web, AppImage, DMG, and NSIS releases.
 
+The staged payload also includes `licenses/` with the OFL notices for every
+bundled typeface. Static Web archives expose those notices directly, while
+desktop bundles include the same directory as an application resource.
+
 ## CLI installers
 
 For a native `aria build` bundle, the CLI can produce the portable archive and

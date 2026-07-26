@@ -372,7 +372,11 @@ function FocusMenu({
   descriptionPlacement?: "after-list" | "under-focused-item";
 }) {
   const descriptionId = useId();
+  const menuRef = useRef<HTMLElement | null>(null);
   const firstAvailable = items.find((item) => !item.disabled)?.id ?? "";
+  const initialFocusableId = items.some((item) => item.id === initialFocusId && !item.disabled)
+    ? initialFocusId
+    : firstAvailable;
   const [focusedActionId, setFocusedActionId] = useState(initialFocusId ?? firstAvailable);
   const focused = items.find((item) => item.id === focusedActionId)
     ?? items.find((item) => !item.disabled)
@@ -384,6 +388,19 @@ function FocusMenu({
       ? initialFocusId
       : firstAvailable);
   }, [firstAvailable, focusedActionId, initialFocusId, items]);
+
+  // Opening a command surface must make it immediately usable with a d-pad
+  // or arrow keys. React Aria's focus scope intentionally has no opinion
+  // about our visual command order, so place focus on the deterministic first
+  // command exactly once for each newly mounted (or reconfigured) menu.
+  // This is deliberately not driven by hover/state updates: pointer preview
+  // remains a preview and never steals a keyboard player's focus.
+  useEffect(() => {
+    if (!initialFocusableId) return;
+    const target = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>("[data-stage-menu-item]") ?? [])]
+      .find((control) => control.dataset.ariaAction === initialFocusableId && !control.disabled);
+    target?.focus({ preventScroll: true });
+  }, [initialFocusableId]);
 
   const moveFocus = (container: HTMLElement, direction: -1 | 1) => {
     const controls = [...container.querySelectorAll<HTMLButtonElement>("[data-stage-menu-item]")]
@@ -398,6 +415,7 @@ function FocusMenu({
 
   return (
     <nav
+      ref={menuRef}
       className={`focus-menu ${className}`.trim()}
       aria-label={label}
       onKeyDown={(event) => {

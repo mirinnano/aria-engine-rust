@@ -1,4 +1,5 @@
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -214,3 +215,20 @@ run(cargo, buildArgs, {
     ARIA_PRESENTATION_PREBUILT_DIR: presentationCache,
   },
 });
+
+// Font licenses are part of every distributable copy, not merely source-tree
+// documentation.  Keeping them next to the staged Web payload means the
+// static archive exposes them at /licenses/ and the Tauri bundle can carry
+// the same directory as a native resource.
+const licenseSource = resolve(gameRoot, "licenses");
+const licenseOutput = resolve(output, "licenses");
+if (!existsSync(licenseSource)) {
+  throw new Error(`missing required distribution licenses: ${licenseSource}`);
+}
+rmSync(licenseOutput, { recursive: true, force: true });
+cpSync(licenseSource, licenseOutput, { recursive: true, dereference: false });
+for (const required of ["NotoSansCJKJP-OFL.txt", "MPLUS1Code-OFL.txt", "ShipporiMincho-OFL.txt"]) {
+  if (!existsSync(resolve(licenseOutput, required))) {
+    throw new Error(`distribution license was not staged: ${required}`);
+  }
+}

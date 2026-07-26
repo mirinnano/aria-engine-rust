@@ -48,7 +48,7 @@ CIで次の環境変数を提供できることを確認する。値そのもの
 npm --prefix examples/umikaze/ui run release:web
 npm --prefix examples/umikaze/ui run release:demo:web
 
-# 各OSで実行。既定はWindows=NSIS / Linux=deb / macOS=DMG。
+# 各OSで実行。既定はWindows=NSIS / Linux=AppImage / macOS=DMG。
 npm --prefix examples/umikaze/ui run release:desktop
 npm --prefix examples/umikaze/ui run release:demo:desktop
 ```
@@ -62,7 +62,7 @@ Windowsコード署名、macOS notarization、Linuxパッケージの署名、St
 - [ ] 体験版の`game.ariac`/PAK/source mapにDAY 5–10が含まれない。
 - [ ] 体験版はDAY 4後に`demo_end`へ到達し、再読/タイトル帰還だけを提示する。
 - [ ] 署名済みPAKとchecksumの検証が成功する。
-- [ ] NSIS/DEB/DMGは各対象OSで新規インストール・起動・削除できる。
+- [ ] NSIS/AppImage/DMGは各対象OSで新規インストール・起動・削除できる。
 - [ ] 手動保存、自動保存、破損世代回復、履歴復帰、設定、CG解放を実機で確認した。
 - [ ] 右クリック/Escape/H/Enter/Space/スクロール/ゲームパッドの操作を確認した。
 - [ ] 静止タイトルで継続描画がなく、長文が字幕帯を越えない。

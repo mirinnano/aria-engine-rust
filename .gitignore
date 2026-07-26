@@ -178,6 +178,7 @@ src/AriaEngine/aria_error_ai.*
 **/test-results/
 **/playwright-report/
 **/src-tauri/target/
+__pycache__/
 
 # Keys and certificates
 *.pfx
