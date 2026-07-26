@@ -280,7 +280,18 @@ jobs:
             examples/v3-player-smoke --target macos-universal --profile signed --release \
             --out target/package-macos-universal
           file target/package-macos-universal/aria-player
-          timeout 30s target/package-macos-universal/aria-player
+          # macOS does not ship GNU coreutils' `timeout`; use the Python
+          # standard library so the launch gate has the same 30-second bound
+          # on every hosted macOS runner.
+          python3 - <<'PY'
+          import subprocess
+
+          subprocess.run(
+              ["target/package-macos-universal/aria-player"],
+              check=True,
+              timeout=30,
+          )
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: aria-native-macos-universal
