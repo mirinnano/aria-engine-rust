@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 
 const url = process.argv[2] || "http://127.0.0.1:4173/";
+const verificationKey = process.env.ARIA_WEB_TEST_VERIFICATION_KEY;
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
@@ -8,6 +9,16 @@ page.on("pageerror", (error) => errors.push(String(error)));
 page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
 });
+if (verificationKey) {
+  await page.addInitScript((key) => {
+    globalThis.ariaPakKeyProvider = async () => ({
+      verification_key_id: "publisher",
+      verification_key_hex: key,
+      encryption_key_id: "",
+      encryption_key_hex: "",
+    });
+  }, verificationKey);
+}
 await page.addInitScript(() => {
   globalThis.__ariaFrameCount = 0;
   addEventListener("aria-render-frame", () => globalThis.__ariaFrameCount++);

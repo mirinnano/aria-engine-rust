@@ -1,9 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const PROJECT_SCHEMA_V3: u32 = 3;
+/// Schema 4 makes a game-owned presentation package explicit. Aria no longer
+/// embeds visual UI declarations in story source or ARIAC.
+pub const PROJECT_SCHEMA: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11,6 +13,7 @@ pub struct ProjectManifest {
     pub schema: u32,
     pub game: GameManifest,
     pub runtime: RuntimeManifest,
+    pub presentation: PresentationManifest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +32,11 @@ pub struct RuntimeManifest {
     pub logical_width: u32,
     pub logical_height: u32,
     pub asset_roots: Vec<String>,
+    /// Exact logical asset paths intentionally kept out of the runtime pak.
+    /// This is useful for source-only art and fonts retained for design work
+    /// but not referenced by a shipping presentation.
+    #[serde(default)]
+    pub asset_excludes: Vec<String>,
     /// Ordered, project-bundled fonts used for every Player target.
     ///
     /// The list is intentionally logical asset paths rather than host family
@@ -36,7 +44,25 @@ pub struct RuntimeManifest {
     /// Windows/Linux/browser system font as part of the game contract.
     #[serde(default)]
     pub fonts: Vec<String>,
+    /// Optional scheduling roles for shipped assets. Unlisted assets remain
+    /// in the boot pack for backwards-compatible startup behavior.
+    #[serde(default)]
+    pub asset_pack_roles: BTreeMap<String, String>,
     pub save_namespace: String,
+    /// Save namespaces that this release deliberately retires before opening
+    /// the current namespace.  This remains opt-in: a project cannot erase a
+    /// record merely by changing its current save name.
+    #[serde(default)]
+    pub legacy_save_namespaces: Vec<String>,
+}
+
+/// Project-local frontend source. The directory must contain the game UI's
+/// package manifest; the CLI validates and bundles it rather than inventing a
+/// generic visual fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresentationManifest {
+    pub frontend: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -63,9 +89,9 @@ impl ProjectManifest {
 
     pub fn validate(&self) -> Result<(), ProjectValidationError> {
         let mut problems = Vec::new();
-        if self.schema != PROJECT_SCHEMA_V3 {
+        if self.schema != PROJECT_SCHEMA {
             problems.push(format!(
-                "schema must be {PROJECT_SCHEMA_V3}, got {}",
+                "schema must be {PROJECT_SCHEMA}, got {}",
                 self.schema
             ));
         }
@@ -104,6 +130,28 @@ impl ProjectManifest {
                 ));
             }
         }
+        let mut asset_excludes = BTreeMap::new();
+        for excluded in &self.runtime.asset_excludes {
+            validate_canonical_logical_path("runtime.asset_excludes", excluded, &mut problems);
+            if !self
+                .runtime
+                .asset_roots
+                .iter()
+                .any(|root| is_under_asset_root(excluded, root))
+            {
+                problems.push(format!(
+                    "runtime.asset_excludes '{excluded}' must be located below one of runtime.asset_roots"
+                ));
+            }
+            if let Ok(key) = crate::compiler::portable_path_key(excluded)
+                && let Some(existing) = asset_excludes.insert(key, excluded)
+                && existing != excluded
+            {
+                problems.push(format!(
+                    "runtime.asset_excludes '{existing}' and '{excluded}' collide on a case-insensitive filesystem"
+                ));
+            }
+        }
         if self.runtime.fonts.len() > 32 {
             problems.push("runtime.fonts may contain at most 32 bundled fonts".to_owned());
         }
@@ -125,6 +173,16 @@ impl ProjectManifest {
                     "runtime.fonts '{font}' must be located below one of runtime.asset_roots"
                 ));
             }
+            if self
+                .runtime
+                .asset_excludes
+                .iter()
+                .any(|excluded| excluded == font)
+            {
+                problems.push(format!(
+                    "runtime.fonts '{font}' must not also appear in runtime.asset_excludes"
+                ));
+            }
             if let Ok(key) = crate::compiler::portable_path_key(font)
                 && let Some(existing) = fonts.insert(key, font)
                 && existing != font
@@ -134,11 +192,76 @@ impl ProjectManifest {
                 ));
             }
         }
+        let mut pack_roles = BTreeMap::new();
+        for (asset, role) in &self.runtime.asset_pack_roles {
+            validate_canonical_logical_path("runtime.asset_pack_roles", asset, &mut problems);
+            if !self
+                .runtime
+                .asset_roots
+                .iter()
+                .any(|root| is_under_asset_root(asset, root))
+            {
+                problems.push(format!(
+                    "runtime.asset_pack_roles asset '{asset}' must be located below one of runtime.asset_roots"
+                ));
+            }
+            if self
+                .runtime
+                .asset_excludes
+                .iter()
+                .any(|excluded| excluded == asset)
+            {
+                problems.push(format!(
+                    "runtime.asset_pack_roles asset '{asset}' must not also appear in runtime.asset_excludes"
+                ));
+            }
+            if !matches!(role.as_str(), "boot" | "hot" | "cold" | "overlay") {
+                problems.push(format!(
+                    "runtime.asset_pack_roles '{asset}' has unsupported role '{role}'; use boot, hot, cold, or overlay"
+                ));
+            }
+            if let Ok(key) = crate::compiler::portable_path_key(asset)
+                && let Some(existing) = pack_roles.insert(key, asset)
+                && existing != asset
+            {
+                problems.push(format!(
+                    "runtime.asset_pack_roles assets '{existing}' and '{asset}' collide on a case-insensitive filesystem"
+                ));
+            }
+        }
         if self.runtime.save_namespace.trim().is_empty() {
             problems.push("runtime.save_namespace must not be empty".to_owned());
         }
         if self.runtime.save_namespace.contains(['/', '\\']) {
             problems.push("runtime.save_namespace must be a single logical name".to_owned());
+        }
+        let mut legacy_save_namespaces = BTreeSet::new();
+        for namespace in &self.runtime.legacy_save_namespaces {
+            if namespace.trim().is_empty() || namespace.contains(['/', '\\']) {
+                problems.push(
+                    "runtime.legacy_save_namespaces must contain single logical names".to_owned(),
+                );
+                continue;
+            }
+            if namespace == &self.runtime.save_namespace {
+                problems.push(
+                    "runtime.legacy_save_namespaces must not include runtime.save_namespace"
+                        .to_owned(),
+                );
+            }
+            if !legacy_save_namespaces.insert(namespace.clone()) {
+                problems.push(format!(
+                    "runtime.legacy_save_namespaces contains duplicate namespace '{namespace}'"
+                ));
+            }
+        }
+        validate_canonical_logical_path(
+            "presentation.frontend",
+            &self.presentation.frontend,
+            &mut problems,
+        );
+        if self.presentation.frontend == "." {
+            problems.push("presentation.frontend must name a project subdirectory".to_owned());
         }
 
         if problems.is_empty() {
@@ -199,7 +322,7 @@ mod tests {
 
     fn manifest() -> ProjectManifest {
         ProjectManifest {
-            schema: 3,
+            schema: 4,
             game: GameManifest {
                 id: "jp.example.umikaze".to_owned(),
                 version: "3.0.0".to_owned(),
@@ -210,8 +333,14 @@ mod tests {
                 logical_width: 1280,
                 logical_height: 720,
                 asset_roots: vec!["assets".to_owned()],
+                asset_excludes: Vec::new(),
                 fonts: Vec::new(),
+                asset_pack_roles: BTreeMap::new(),
                 save_namespace: "umikaze-v3".to_owned(),
+                legacy_save_namespaces: Vec::new(),
+            },
+            presentation: PresentationManifest {
+                frontend: "ui".to_owned(),
             },
         }
     }

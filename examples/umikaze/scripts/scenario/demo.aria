@@ -1,0 +1,35 @@
+aria;
+module umikaze.scenario.ja.demo;
+
+// The trial deliberately imports only the public opening arc. These are the
+// exact canonical chapter modules used by the full release; no duplicate or
+// shortened prose is maintained here.
+use "ja-JP/chapter-00.aria";
+use "ja-JP/chapter-01.aria";
+use "ja-JP/chapter-02.aria";
+use "ja-JP/chapter-03.aria";
+use "ja-JP/chapter-04.aria";
+
+scene chapter_select_ja {
+  screen chapter_select;
+  background asset("#102b38") with wipe(260ms);
+  choice {
+    "PROLOGUE" => novel_chapter_00;
+    "DAY 1" => novel_chapter_01;
+    "DAY 2" => novel_chapter_02;
+    "DAY 3" => novel_chapter_03;
+    "DAY 4" => novel_chapter_04;
+  }
+}
+
+// The close lands after the rain-room scene, before the later escalation.
+// Its choices stay inside the installed record: no invented store URLs,
+// telemetry, or forced sharing action is part of the player flow.
+scene novel_chapter_04_complete {
+  background asset("#0f2f39") with fade(720ms);
+  screen demo_end;
+  choice {
+    "もう一度読む" => chapter_select_ja;
+    "タイトルへ戻る" => start;
+  }
+}

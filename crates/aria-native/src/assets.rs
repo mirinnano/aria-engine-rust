@@ -64,22 +64,38 @@ impl ImageResolver for NativeAssetStore {
 }
 
 fn is_svg(logical_path: &str, bytes: &[u8]) -> bool {
-    match logical_path.rsplit_once('.') {
-        Some((_, extension)) if extension.eq_ignore_ascii_case("svg") => true,
-        // Some PNGs carry textual metadata or thumbnails that happen to
-        // contain the bytes `<svg`. Once a concrete raster extension is
-        // present, the extension is authoritative and content sniffing must
-        // not route that image through the SVG decoder.
-        Some(_) => false,
-        None => bytes
-            .iter()
-            .copied()
-            .skip_while(u8::is_ascii_whitespace)
-            .take(512)
-            .collect::<Vec<_>>()
-            .windows(4)
-            .any(|window| window.eq_ignore_ascii_case(b"<svg")),
-    }
+    logical_path
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("svg"))
+        || svg_document_prefix(bytes)
+}
+
+/// Detect an SVG only when its document element occurs at the beginning of a
+/// UTF-8 text document (optionally after XML's declaration). Looking for
+/// `"<svg"` anywhere in the first bytes is unsafe: a compressed PNG can
+/// contain that byte sequence by chance and would then be sent to the SVG
+/// decoder.
+fn svg_document_prefix(bytes: &[u8]) -> bool {
+    let Ok(document) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let document = document.trim_start_matches(|character: char| {
+        character.is_ascii_whitespace() || character == '\u{feff}'
+    });
+    let document = if document
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<?xml"))
+    {
+        document
+            .find("?>")
+            .map_or(document, |end| document[end + 2..].trim_start())
+    } else {
+        document
+    };
+    document
+        .as_bytes()
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"<svg"))
 }
 
 fn decode_raster(bytes: &[u8]) -> Result<RasterImage, String> {
@@ -159,7 +175,18 @@ mod tests {
     fn svg_detection_accepts_extension_and_document_prefix() {
         assert!(is_svg("art/scene.svg", b"not actually XML"));
         assert!(is_svg("art/scene.dat", b" \n<svg viewBox=\"0 0 1 1\"/>"));
+        assert!(is_svg(
+            "art/scene.dat",
+            b"\xef\xbb\xbf<?xml version=\"1.0\"?>\n<svg viewBox=\"0 0 1 1\"/>"
+        ));
         assert!(!is_svg("art/scene.png", b"\x89PNG\r\n"));
-        assert!(!is_svg("art/scene.png", b"\x89PNG\r\nmetadata<svg"));
+    }
+
+    #[test]
+    fn svg_detection_does_not_scan_binary_raster_payloads() {
+        assert!(!is_svg(
+            "art/sea-fog-overlay.png",
+            b"\x89PNG\r\n\x1a\ncompressed-data-<svg-by-chance"
+        ));
     }
 }

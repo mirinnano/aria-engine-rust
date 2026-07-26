@@ -1,10 +1,10 @@
-aria 3.1;
+aria;
 module example.minimal;
 entry start;
 
 scene start {
   background asset("#07131f") with fade(240ms);
-  show mio = image(asset("assets/mio.svg")) at (760px, 86px) z 20;
+  let mut mio = show image(asset("assets/mio.svg")) at (760px, 86px) z 20;
   say ミオ: "潮風の音、聞こえる？";
   await advance;
   choice {

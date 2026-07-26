@@ -16,12 +16,12 @@ pub struct LoadedProject {
     pub manifest: ProjectManifest,
 }
 
-/// The exact, canonical logical paths that make up a loose V3 project.
+/// The exact, canonical logical paths that make up a loose Aria project.
 ///
 /// This inventory is deliberately built once and shared by `check`, `build`,
 /// and the loose Native Player. A file that only resolves because Windows is
 /// case-insensitive, or because a host normalizes Unicode differently, is not
-/// a V3 asset path.
+/// an Aria asset path.
 #[derive(Debug, Clone)]
 pub struct AssetInventory {
     entries: BTreeMap<String, PathBuf>,
@@ -77,6 +77,37 @@ impl LoadedProject {
         Ok(Self { root, manifest })
     }
 
+    /// Creates a validated build-only view of this project.  A content
+    /// variant may select a smaller import closure and a separate save
+    /// namespace without mutating the author's `aria.toml` on disk.
+    ///
+    /// This is intentionally an explicit copy rather than an environment
+    /// lookup: the selected entry and save namespace become ordinary bundle
+    /// metadata, which keeps demo and full-release builds reproducible.
+    pub fn with_runtime_overrides(
+        &self,
+        entry: Option<&str>,
+        save_namespace: Option<&str>,
+    ) -> Result<Self> {
+        let mut manifest = self.manifest.clone();
+        if let Some(entry) = entry {
+            manifest.runtime.entry = entry.to_owned();
+        }
+        if let Some(save_namespace) = save_namespace {
+            manifest.runtime.save_namespace = save_namespace.to_owned();
+            // A content-limited edition must never silently remove the
+            // full game's records just because it shares source assets.
+            manifest.runtime.legacy_save_namespaces.clear();
+        }
+        manifest
+            .validate()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(Self {
+            root: self.root.clone(),
+            manifest,
+        })
+    }
+
     pub fn sources(&self) -> Result<Vec<SourceUnit>> {
         let mut sources = Vec::new();
         for entry in WalkDir::new(&self.root)
@@ -109,6 +140,12 @@ impl LoadedProject {
     pub fn asset_inventory(&self) -> Result<AssetInventory> {
         let mut entries = BTreeMap::new();
         let mut portable_names = BTreeMap::new();
+        let excluded = self
+            .manifest
+            .runtime
+            .asset_excludes
+            .iter()
+            .collect::<BTreeSet<_>>();
         for root in &self.manifest.runtime.asset_roots {
             let disk_root = self.root.join(root);
             let metadata = fs::symlink_metadata(&disk_root)
@@ -139,6 +176,9 @@ impl LoadedProject {
                     continue;
                 }
                 let logical_path = logical_path(&self.root, entry.path())?;
+                if excluded.contains(&logical_path) {
+                    continue;
+                }
                 let portable_name = aria_core::compiler::portable_path_key(&logical_path)
                     .map_err(|error| anyhow::anyhow!(error))?;
                 if let Some(existing) = portable_names.insert(portable_name, logical_path.clone())
@@ -171,7 +211,7 @@ impl LoadedProject {
     ) -> Result<()> {
         if require_at_least_one && self.manifest.runtime.fonts.is_empty() {
             bail!(
-                "release requires at least one runtime.fonts asset; V3 Players never use system fonts"
+                "release requires at least one runtime.fonts asset; Aria Players never use system fonts"
             );
         }
         let mut database = fontdb::Database::new();
@@ -246,7 +286,7 @@ fn include_project_entry(entry: &DirEntry) -> bool {
     !(entry.file_type().is_dir()
         && matches!(
             name.as_ref(),
-            ".git" | ".aria-migrate-backup" | "target" | "dist" | "bin" | "obj" | "node_modules"
+            ".git" | "target" | "dist" | "bin" | "obj" | "node_modules"
         ))
 }
 
@@ -270,10 +310,10 @@ fn validate_program_asset_references(
             continue;
         };
         let Some(path) = constant_string(program, operand) else {
-            // The structured 3.1 front end only emits literal asset paths.
-            // Keep the alpha bridge diagnosable without pretending a dynamic
-            // legacy register has an exact package identity.
-            if program.language_version == aria_core::LanguageVersion::V3_1 {
+            // The single Aria source language emits literal asset paths. A
+            // non-literal path is never packageable because it has no stable
+            // asset identity.
+            if program.language_version == aria_core::LanguageVersion::CURRENT {
                 diagnostics.push(asset_diagnostic(
                     program,
                     instruction_index,

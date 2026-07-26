@@ -1,133 +1,22 @@
-aria 3.1;
+aria;
 module umikaze.main;
-entry title;
+entry start;
 
-state selected_route: Int = 0;
+use "scenario/ja-JP/index.aria";
 
-scene title {
-  remove title_panel;
-  remove title_logo;
-  remove title_subtitle;
-  remove title_note;
-  background asset("assets/bg/ui_title_menu_ocean.png") with fade(600ms);
-  show title_panel = rect(430px, 286px, 420px, 300px, "#101417d9") z 5;
-  show title_logo = text("海風") at (560px, 92px) size 72px z 10;
-  show title_subtitle = text("THE RECORDS OF AUTUMN") at (500px, 190px) size 18px z 10;
-  show title_note = text("Rust V3 移植版・umikaze opening") at (500px, 250px) size 16px z 10;
-  wait 500ms;
-  choice {
-    "START / 序章を読む" => prologue;
-    "CHAPTER SELECT" => chapter_select;
-    "テスターのみなさまへ" => tester;
-    "EXIT" => finish;
-  }
-}
+state visit_count: Int = 0;
 
-scene chapter_select {
-  remove title_panel;
-  remove title_logo;
-  remove title_subtitle;
-  remove title_note;
-  background asset("assets/bg/ui_chapter_select_ocean.png") with wipe(420ms);
-  show chapter_title = text("CHAPTER SELECT") at (500px, 48px) size 36px z 10;
-  show chapter_subtitle = text("SELECT A TIDE TO BEGIN") at (520px, 104px) size 14px z 10;
-  show chapter_panel = rect(120px, 150px, 1040px, 330px, "#101417c8") z 5;
-  show chapter_copy = text("PROLOGUE\nThe beginning of autumn records") at (220px, 188px) size 24px z 10;
-  show chapter_hint = text("このRust V3版では、海風のプロローグを先に遊べます。") at (220px, 410px) size 18px z 10;
-  choice {
-    "PROLOGUE / 海風の記録" => prologue;
-    "TITLE" => title;
-  }
-}
+// Visual composition is deliberately not authored in Aria. The package in
+// ../ui owns DOM structure, typography, responsive layout, and accessibility.
+// These screen names are semantic routes supplied by the runtime contract.
 
-scene prologue {
-  remove chapter_title;
-  remove chapter_subtitle;
-  remove chapter_panel;
-  remove chapter_copy;
-  remove chapter_hint;
-  background asset("assets/bg/bg_rooftop.bmp") with fade(520ms);
-  show prologue_card = rect(52px, 48px, 1176px, 88px, "#050607c4") z 5;
-  show prologue_title = text("PROLOGUE  /  秋の海風") at (86px, 72px) size 28px z 10;
-  narrate "春が来るたび、俺はあの不格好な雛菊を思い出す。";
-  await advance;
-  narrate "彼女が最期に遺した、ささやかな祈りのような花。";
-  await advance;
-  narrate "彼女がいなくなっても、世界は何の異常も起こさず、平然と一秒ずつ更新を続けていく。";
-  await advance;
-  narrate "けれど、ふとした瞬間に思い出すのだ。あの日々の、まるで太陽のような眩しさを。";
-  await advance;
-  say 俺: "――だからこれは、俺たちが命を燃やし尽くした、あの最高に眩しい秋の記録だ。";
-  await advance;
-  choice {
-    "ミオの記憶へ" => mio_memory;
-    "TITLE" => title;
-  }
-}
-
-scene mio_memory {
-  remove prologue_card;
-  remove prologue_title;
-  background asset("assets/bg/bg_hotel_room.bmp") with fade(480ms);
-  show memory_card = rect(48px, 48px, 1184px, 88px, "#1d2430c8") z 5;
-  show memory_title = text("MIO SIDE  /  ミオ視点") at (86px, 72px) size 28px z 10;
-  narrate "昔の私は、どこにでもいる普通の女の子だった。";
-  await advance;
-  narrate "泥だらけになって走り回り、スケッチブックに好きなものを描いていた。";
-  await advance;
-  narrate "けれど、入退院を繰り返すうちに、私の机はいつも空席のままになった。";
-  await advance;
-  say ミオ: "……一度でいいから、また学校に行きたい。";
-  await advance;
-  say ミオ: "せめて残った時間ぐらい、普通の女の子として笑っていたい。";
-  await advance;
-  choice {
-    "旅の始まりへ" => travel;
-    "TITLE" => title;
-  }
-}
-
-scene travel {
-  remove memory_card;
-  remove memory_title;
-  background asset("assets/bg/bg_yokohama_platform.bmp") with wipe(520ms);
-  show travel_card = rect(52px, 48px, 1176px, 88px, "#101417c4") z 5;
-  show travel_title = text("THE FIRST TIDE  /  旅の始まり") at (86px, 72px) size 28px z 10;
-  say ミオ: "一人で死ぬのは怖い。けれど、誰かに憐れまれて死ぬのはもっと嫌だ。";
-  await advance;
-  say 俺: "俺が、お前の最後の旅に付き合ってやる。";
-  await advance;
-  say ミオ: "……えっ？";
-  await advance;
-  say 俺: "まだ死なないんだろ？ じゃあ、行くぞ。";
-  await advance;
-  narrate "ミオは泣きそうな顔で笑った。セミだけが、まだ鳴いていた。";
-  await advance;
-  choice {
-    "もう一度タイトルを見る" => title;
-    "記録を閉じる" => finish;
-  }
-}
-
-scene tester {
-  remove title_panel;
-  remove title_logo;
-  remove title_subtitle;
-  remove title_note;
-  background asset("assets/bg/ui_title_menu_ocean.png") with fade(420ms);
-  show tester_panel = rect(120px, 120px, 1040px, 420px, "#050607d9") z 5;
-  show tester_title = text("テスターのみなさまへ。") at (210px, 168px) size 30px z 10;
-  narrate "今回は、海風のRust V3移植版オープニングです。";
-  await advance;
-  narrate "同じPAK・VM・入力意味をNativeとWebで共有するための、最初の縦切りになっています。";
-  await advance;
-  narrate "プレイしてくれて有難うございました。";
-  await advance;
-  choice {
-    "TITLE" => title;
-  }
-}
-
-scene finish {
-  end;
+scene start {
+  locale "ja-JP";
+  text_speed 28;
+  // The React presentation owns the stage treatment. A plain, deterministic
+  // scene colour keeps the title free of the old generative-looking backdrop.
+  background asset("#264450") with fade(240ms);
+  persistent flag "umikaze_setup_complete" = true;
+  screen title;
+  choice { "記録をはじめる" => chapter_select_ja; }
 }

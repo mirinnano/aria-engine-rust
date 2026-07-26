@@ -32,23 +32,13 @@ pub fn command(path: &Path, json: bool, release: bool) -> Result<u8> {
             );
         }
     }
-    let unsupported_count = crate::release::unsupported_runtime_command_count(&output);
     let modern_language = crate::release::has_release_language(&output);
-    if release && unsupported_count > 0 && !json {
-        eprintln!(
-            "error: release check rejected {unsupported_count} unsupported runtime command(s)"
-        );
-    }
     if release && !modern_language && !json {
-        eprintln!(
-            "error: release check requires structured 'aria 3.1;' source; run 'aria migrate' first"
-        );
+        eprintln!("error: release check requires source in the single 'aria;' language");
     }
-    Ok(
-        if output.has_errors() || (release && (unsupported_count > 0 || !modern_language)) {
-            2
-        } else {
-            0
-        },
-    )
+    Ok(if output.has_errors() || (release && !modern_language) {
+        2
+    } else {
+        0
+    })
 }

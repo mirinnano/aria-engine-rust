@@ -1,4 +1,4 @@
-//! Concrete wgpu submission for the platform-neutral `RenderFrame` protocol.
+//! Concrete wgpu submission for the platform-neutral scene protocol.
 //!
 //! This module owns no window, filesystem, browser API, or audio device. The
 //! host provides an `ImageResolver`; Native and Web can therefore submit the
@@ -6,9 +6,15 @@
 
 use std::collections::BTreeMap;
 
-use aria_core::protocol::{BlendMode, Color, DrawCommand, Rect, RenderFrame, TransitionKind};
+use aria_core::protocol::{
+    BlendMode, Color, DrawCommand, DrawStyle, GradientStyle, Rect, SceneFrame, ScreenEffect,
+    SpriteFit, TextAlign, TextDecoration, TransitionKind,
+};
 use bytemuck::{Pod, Zeroable};
-use glyphon::{Attrs, Buffer, Color as GlyphColor, Family, Metrics, Shaping, TextArea, TextBounds};
+use glyphon::{
+    Attrs, Buffer, Color as GlyphColor, Family, Metrics, Shaping, TextArea, TextBounds,
+    cosmic_text::Align,
+};
 use thiserror::Error;
 use wgpu::util::DeviceExt;
 
@@ -105,6 +111,12 @@ struct QuadVertex {
     position: [f32; 2],
     uv: [f32; 2],
     color: [f32; 4],
+    /// Physical-pixel extent, corner radius, and soft-edge width used by the
+    /// fragment SDF. Keeping these per-vertex makes every draw command a
+    /// complete value object with no host-side shape reconstruction.
+    sdf: [f32; 4],
+    border_width: f32,
+    shape_enabled: f32,
 }
 
 #[derive(Debug)]
@@ -120,6 +132,7 @@ struct QuadPlan {
     vertices: [QuadVertex; 6],
     texture_key: String,
     blend: BlendMode,
+    clip: Option<Rect>,
 }
 
 #[derive(Debug)]
@@ -128,9 +141,10 @@ struct TextPlan {
     bounds: Rect,
     color: Color,
     font_size: f32,
+    style: DrawStyle,
 }
 
-/// A small, order-preserving 2D renderer for `RenderFrame`.
+/// A small, order-preserving 2D renderer for `SceneFrame`.
 ///
 /// Each draw command remains in Core-provided z/id order. The implementation
 /// intentionally favors correctness and a clear adapter boundary over an
@@ -285,7 +299,7 @@ impl WgpuRenderer {
     #[must_use]
     pub fn viewport_transform(
         &self,
-        frame: &RenderFrame,
+        frame: &SceneFrame,
         surface: RenderSurfaceSize,
     ) -> ViewportTransform {
         ViewportTransform::fit(
@@ -293,14 +307,19 @@ impl WgpuRenderer {
             surface.width.max(1),
             surface.height.max(1),
             surface.scale_factor(),
-            SafeAreaInsets::default(),
+            SafeAreaInsets {
+                top: frame.viewport.safe_area.top * frame.viewport.scale_factor,
+                right: frame.viewport.safe_area.right * frame.viewport.scale_factor,
+                bottom: frame.viewport.safe_area.bottom * frame.viewport.scale_factor,
+                left: frame.viewport.safe_area.left * frame.viewport.scale_factor,
+            },
         )
     }
 
     /// Encodes and submits one complete ordered Core frame to `target`.
     pub fn render(
         &mut self,
-        frame: &RenderFrame,
+        frame: &SceneFrame,
         target: &wgpu::TextureView,
         surface: RenderSurfaceSize,
         resolver: &mut dyn ImageResolver,
@@ -324,9 +343,18 @@ impl WgpuRenderer {
                     opacity,
                     visible,
                     blend,
+                    scale,
+                    rotation_degrees,
+                    tint,
+                    fit,
+                    style,
                     ..
                 } if *visible => {
-                    let desired_size = requested_size(*destination);
+                    let desired_size = if *fit == SpriteFit::Fill {
+                        requested_size(*destination)
+                    } else {
+                        None
+                    };
                     let texture_key = texture_key(asset, desired_size);
                     if !self.textures.contains_key(&texture_key) {
                         let image =
@@ -350,45 +378,151 @@ impl WgpuRenderer {
                         .textures
                         .get(&texture_key)
                         .expect("a texture was inserted or already existed");
-                    let bounds =
-                        resolved_sprite_bounds(*destination, texture.width, texture.height);
+                    let mut bounds =
+                        fitted_sprite_bounds(*destination, texture.width, texture.height, *fit);
+                    if (*scale - 1.0).abs() > f32::EPSILON {
+                        let center_x = bounds.x + bounds.width * 0.5;
+                        let center_y = bounds.y + bounds.height * 0.5;
+                        bounds.width *= *scale;
+                        bounds.height *= *scale;
+                        bounds.x = center_x - bounds.width * 0.5;
+                        bounds.y = center_y - bounds.height * 0.5;
+                    }
+                    let tint = Color {
+                        red: ((u16::from(tint.red) * u16::from(style_opacity(style))) / 255) as u8,
+                        green: ((u16::from(tint.green) * u16::from(style_opacity(style))) / 255)
+                            as u8,
+                        blue: ((u16::from(tint.blue) * u16::from(style_opacity(style))) / 255)
+                            as u8,
+                        alpha: (((u32::from(tint.alpha) * u32::from(*opacity))
+                            * u32::from(style_opacity(style)))
+                            / (255 * 255)) as u8,
+                    };
                     quads.push(QuadPlan {
-                        vertices: quad_vertices(
+                        vertices: quad_vertices_styled(
                             bounds,
-                            Color {
-                                red: 255,
-                                green: 255,
-                                blue: 255,
-                                alpha: *opacity,
-                            },
+                            [tint; 4],
                             viewport,
                             surface,
+                            *rotation_degrees,
+                            style.corner_radius,
+                            0.0,
+                            0.0,
+                            style.corner_radius > 0.0,
                         ),
                         texture_key,
                         blend: *blend,
+                        clip: style
+                            .clip
+                            .or((*fit == SpriteFit::Cover).then_some(*destination))
+                            .map(|clip| physical_rect(clip, viewport)),
                     });
                 }
-                DrawCommand::Rectangle { bounds, color, .. } => quads.push(QuadPlan {
-                    vertices: quad_vertices(*bounds, *color, viewport, surface),
-                    texture_key: WHITE_TEXTURE_KEY.to_owned(),
-                    blend: BlendMode::Alpha,
-                }),
+                DrawCommand::Rectangle {
+                    bounds,
+                    color,
+                    corner_radius,
+                    style,
+                    ..
+                } => {
+                    if let Some(shadow) = style.shadow {
+                        let blur = shadow.blur.max(0.75);
+                        quads.push(QuadPlan {
+                            vertices: quad_vertices_styled(
+                                Rect {
+                                    x: bounds.x + shadow.offset_x - blur,
+                                    y: bounds.y + shadow.offset_y - blur,
+                                    width: bounds.width + blur * 2.0,
+                                    height: bounds.height + blur * 2.0,
+                                },
+                                [apply_style_opacity(shadow.color, style.opacity); 4],
+                                viewport,
+                                surface,
+                                0.0,
+                                (*corner_radius).max(style.corner_radius) + blur,
+                                0.0,
+                                blur,
+                                true,
+                            ),
+                            texture_key: WHITE_TEXTURE_KEY.to_owned(),
+                            blend: BlendMode::Alpha,
+                            clip: style.clip.map(|clip| physical_rect(clip, viewport)),
+                        });
+                    }
+                    let fill = gradient_colors(*bounds, *color, style.gradient, style.opacity);
+                    quads.push(QuadPlan {
+                        vertices: quad_vertices_styled(
+                            *bounds,
+                            fill,
+                            viewport,
+                            surface,
+                            0.0,
+                            (*corner_radius).max(style.corner_radius),
+                            0.0,
+                            0.0,
+                            true,
+                        ),
+                        texture_key: WHITE_TEXTURE_KEY.to_owned(),
+                        blend: BlendMode::Alpha,
+                        clip: style.clip.map(|clip| physical_rect(clip, viewport)),
+                    });
+                    if let Some(border) = style.border {
+                        let width = f32::from(border.width.max(1));
+                        for border_bounds in [
+                            Rect {
+                                height: width,
+                                ..*bounds
+                            },
+                            Rect {
+                                y: bounds.y + bounds.height - width,
+                                height: width,
+                                ..*bounds
+                            },
+                            Rect { width, ..*bounds },
+                            Rect {
+                                x: bounds.x + bounds.width - width,
+                                width,
+                                ..*bounds
+                            },
+                        ] {
+                            quads.push(QuadPlan {
+                                vertices: quad_vertices_styled(
+                                    border_bounds,
+                                    [apply_style_opacity(border.color, style.opacity); 4],
+                                    viewport,
+                                    surface,
+                                    0.0,
+                                    (*corner_radius).max(style.corner_radius),
+                                    width,
+                                    0.0,
+                                    true,
+                                ),
+                                texture_key: WHITE_TEXTURE_KEY.to_owned(),
+                                blend: BlendMode::Alpha,
+                                clip: style.clip.map(|clip| physical_rect(clip, viewport)),
+                            });
+                        }
+                    }
+                }
                 DrawCommand::Text {
                     text: content,
                     speaker,
                     bounds,
                     color,
                     font_size,
+                    style,
                     ..
-                } => text.push(TextPlan {
-                    text: speaker.as_ref().map_or_else(
+                } => append_text_plans(
+                    &mut text,
+                    speaker.as_ref().map_or_else(
                         || content.clone(),
                         |speaker| format!("{speaker}\n{content}"),
                     ),
-                    bounds: *bounds,
-                    color: *color,
-                    font_size: *font_size,
-                }),
+                    *bounds,
+                    *color,
+                    *font_size,
+                    *style,
+                ),
                 DrawCommand::Sprite { .. } => {}
             }
         }
@@ -410,7 +544,61 @@ impl WgpuRenderer {
                 ),
                 texture_key: WHITE_TEXTURE_KEY.to_owned(),
                 blend: BlendMode::Alpha,
+                clip: None,
             });
+        }
+        for effect in &frame.effects {
+            let (color, alpha) = match effect {
+                ScreenEffect::Tint {
+                    color,
+                    opacity,
+                    progress,
+                } => (
+                    *color,
+                    ((*opacity as f32) * (1.0 - *progress)).round() as u8,
+                ),
+                ScreenEffect::Flash {
+                    color,
+                    opacity,
+                    progress,
+                } => (
+                    *color,
+                    ((*opacity as f32) * (1.0 - *progress)).round() as u8,
+                ),
+                ScreenEffect::Shake { .. } => continue,
+            };
+            quads.push(QuadPlan {
+                vertices: quad_vertices(
+                    Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: frame.logical_size.width as f32,
+                        height: frame.logical_size.height as f32,
+                    },
+                    Color { alpha, ..color },
+                    viewport,
+                    surface,
+                ),
+                texture_key: WHITE_TEXTURE_KEY.to_owned(),
+                blend: BlendMode::Alpha,
+                clip: None,
+            });
+        }
+
+        let (shake_x, shake_y) = shake_offset(&frame.effects);
+        if shake_x.abs() > f32::EPSILON || shake_y.abs() > f32::EPSILON {
+            let ndc_x = shake_x * 2.0 / frame.logical_size.width.max(1) as f32;
+            let ndc_y = -shake_y * 2.0 / frame.logical_size.height.max(1) as f32;
+            for quad in &mut quads {
+                for vertex in &mut quad.vertices {
+                    vertex.position[0] += ndc_x;
+                    vertex.position[1] += ndc_y;
+                }
+            }
+            for plan in &mut text {
+                plan.bounds.x += shake_x;
+                plan.bounds.y += shake_y;
+            }
         }
 
         if !text.is_empty() && !self.text.has_fonts() {
@@ -419,20 +607,28 @@ impl WgpuRenderer {
 
         let mut text_buffers = Vec::with_capacity(text.len());
         for plan in &text {
+            let line_height = if plan.style.line_height > 0.0 {
+                plan.style.line_height
+            } else {
+                plan.font_size * 1.35
+            };
             let mut buffer = Buffer::new(
                 &mut self.text.font_system,
                 Metrics::new(
                     (plan.font_size.max(1.0) * viewport.scale).max(1.0),
-                    (plan.font_size.max(1.0) * viewport.scale * 1.35).max(1.0),
+                    (line_height.max(1.0) * viewport.scale).max(1.0),
                 ),
             );
             let bounds = physical_rect(plan.bounds, viewport);
             buffer.set_size(Some(bounds.width.max(1.0)), Some(bounds.height.max(1.0)));
+            let tracking_em = plan.style.letter_spacing / plan.font_size.max(1.0);
             buffer.set_text(
                 &plan.text,
-                &Attrs::new().family(Family::SansSerif),
+                &Attrs::new()
+                    .family(Family::SansSerif)
+                    .letter_spacing(tracking_em),
                 Shaping::Advanced,
-                None,
+                Some(text_align(plan.style.text_align)),
             );
             buffer.shape_until_scroll(&mut self.text.font_system, false);
             text_buffers.push(buffer);
@@ -445,22 +641,28 @@ impl WgpuRenderer {
                 surface.height,
                 text_buffers.iter().zip(&text).map(|(buffer, plan)| {
                     let bounds = physical_rect(plan.bounds, viewport);
+                    let clipped = plan
+                        .style
+                        .clip
+                        .map(|clip| intersect_rect(bounds, physical_rect(clip, viewport)))
+                        .unwrap_or(bounds);
+                    let color = apply_style_opacity(plan.color, plan.style.opacity);
                     TextArea {
                         buffer,
                         left: bounds.x,
                         top: bounds.y,
                         scale: 1.0,
                         bounds: TextBounds {
-                            left: bounds.x.floor() as i32,
-                            top: bounds.y.floor() as i32,
-                            right: (bounds.x + bounds.width).ceil() as i32,
-                            bottom: (bounds.y + bounds.height).ceil() as i32,
+                            left: clipped.x.floor() as i32,
+                            top: clipped.y.floor() as i32,
+                            right: (clipped.x + clipped.width).ceil() as i32,
+                            bottom: (clipped.y + clipped.height).ceil() as i32,
                         },
                         default_color: GlyphColor::rgba(
-                            plan.color.red,
-                            plan.color.green,
-                            plan.color.blue,
-                            plan.color.alpha,
+                            color.red,
+                            color.green,
+                            color.blue,
+                            color.alpha,
                         ),
                         custom_glyphs: &[],
                     }
@@ -491,6 +693,9 @@ impl WgpuRenderer {
                 multiview_mask: None,
             });
             for plan in &quads {
+                if !set_scissor_for_clip(&mut pass, plan.clip, surface) {
+                    continue;
+                }
                 pass.set_pipeline(match plan.blend {
                     BlendMode::Alpha => &self.alpha_pipeline,
                     BlendMode::Add => &self.add_pipeline,
@@ -511,6 +716,7 @@ impl WgpuRenderer {
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.draw(0..6, 0..1);
             }
+            pass.set_scissor_rect(0, 0, surface.width, surface.height);
             self.text
                 .render(&mut pass)
                 .map_err(|error| WgpuRendererError::TextRender(error.to_string()))?;
@@ -533,8 +739,14 @@ fn create_pipeline(
     label: &'static str,
     blend: wgpu::BlendState,
 ) -> wgpu::RenderPipeline {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        0 => Float32x2,
+        1 => Float32x2,
+        2 => Float32x4,
+        3 => Float32x4,
+        4 => Float32,
+        5 => Float32,
+    ];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
@@ -654,6 +866,45 @@ fn resolved_sprite_bounds(bounds: Rect, width: u32, height: u32) -> Rect {
     }
 }
 
+fn fitted_sprite_bounds(bounds: Rect, width: u32, height: u32, fit: SpriteFit) -> Rect {
+    let destination = resolved_sprite_bounds(bounds, width, height);
+    if matches!(fit, SpriteFit::Fill)
+        || bounds.width <= 0.0
+        || bounds.height <= 0.0
+        || width == 0
+        || height == 0
+    {
+        return destination;
+    }
+    let source_aspect = width as f32 / height as f32;
+    let destination_aspect = destination.width / destination.height.max(f32::EPSILON);
+    let scale = match fit {
+        SpriteFit::Contain => {
+            if source_aspect > destination_aspect {
+                destination.width / width as f32
+            } else {
+                destination.height / height as f32
+            }
+        }
+        SpriteFit::Cover => {
+            if source_aspect > destination_aspect {
+                destination.height / height as f32
+            } else {
+                destination.width / width as f32
+            }
+        }
+        SpriteFit::Fill => unreachable!("fill returned above"),
+    };
+    let fitted_width = width as f32 * scale;
+    let fitted_height = height as f32 * scale;
+    Rect {
+        x: destination.x + (destination.width - fitted_width) * 0.5,
+        y: destination.y + (destination.height - fitted_height) * 0.5,
+        width: fitted_width,
+        height: fitted_height,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TransitionOverlay {
     bounds: Rect,
@@ -661,7 +912,7 @@ struct TransitionOverlay {
 }
 
 fn transition_overlay(
-    frame: &RenderFrame,
+    frame: &SceneFrame,
     kind: TransitionKind,
     progress: f32,
 ) -> Option<TransitionOverlay> {
@@ -712,6 +963,23 @@ fn quad_vertices(
     viewport: ViewportTransform,
     surface: RenderSurfaceSize,
 ) -> [QuadVertex; 6] {
+    quad_vertices_styled(
+        bounds, [color; 4], viewport, surface, 0.0, 0.0, 0.0, 0.0, false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn quad_vertices_styled(
+    bounds: Rect,
+    colors: [Color; 4],
+    viewport: ViewportTransform,
+    surface: RenderSurfaceSize,
+    rotation_degrees: f32,
+    corner_radius: f32,
+    border_width: f32,
+    softness: f32,
+    shape_enabled: bool,
+) -> [QuadVertex; 6] {
     let physical = physical_rect(bounds, viewport);
     let width = surface.width as f32;
     let height = surface.height as f32;
@@ -719,44 +987,235 @@ fn quad_vertices(
     let right = (physical.x + physical.width) / width * 2.0 - 1.0;
     let top = 1.0 - physical.y / height * 2.0;
     let bottom = 1.0 - (physical.y + physical.height) / height * 2.0;
-    let color = [
-        color.red as f32 / 255.0,
-        color.green as f32 / 255.0,
-        color.blue as f32 / 255.0,
-        color.alpha as f32 / 255.0,
+    let mut positions = [
+        [left, top],
+        [right, top],
+        [right, bottom],
+        [left, top],
+        [right, bottom],
+        [left, bottom],
     ];
+    if rotation_degrees.abs() > f32::EPSILON {
+        let center = [(left + right) * 0.5, (top + bottom) * 0.5];
+        let radians = rotation_degrees.to_radians();
+        let (sin, cos) = radians.sin_cos();
+        for position in &mut positions {
+            let x = position[0] - center[0];
+            let y = position[1] - center[1];
+            position[0] = center[0] + x * cos - y * sin;
+            position[1] = center[1] + x * sin + y * cos;
+        }
+    }
+    let sdf = [
+        physical.width.max(1.0),
+        physical.height.max(1.0),
+        (corner_radius.max(0.0) * viewport.scale).min(physical.width.min(physical.height) * 0.5),
+        softness.max(0.0) * viewport.scale,
+    ];
+    let to_float = |color: Color| {
+        [
+            color.red as f32 / 255.0,
+            color.green as f32 / 255.0,
+            color.blue as f32 / 255.0,
+            color.alpha as f32 / 255.0,
+        ]
+    };
+    let vertex = |position, uv, color| QuadVertex {
+        position,
+        uv,
+        color: to_float(color),
+        sdf,
+        border_width: border_width.max(0.0) * viewport.scale,
+        shape_enabled: f32::from(shape_enabled),
+    };
     [
-        QuadVertex {
-            position: [left, top],
-            uv: [0.0, 0.0],
-            color,
-        },
-        QuadVertex {
-            position: [right, top],
-            uv: [1.0, 0.0],
-            color,
-        },
-        QuadVertex {
-            position: [right, bottom],
-            uv: [1.0, 1.0],
-            color,
-        },
-        QuadVertex {
-            position: [left, top],
-            uv: [0.0, 0.0],
-            color,
-        },
-        QuadVertex {
-            position: [right, bottom],
-            uv: [1.0, 1.0],
-            color,
-        },
-        QuadVertex {
-            position: [left, bottom],
-            uv: [0.0, 1.0],
-            color,
-        },
+        vertex(positions[0], [0.0, 0.0], colors[0]),
+        vertex(positions[1], [1.0, 0.0], colors[1]),
+        vertex(positions[2], [1.0, 1.0], colors[2]),
+        vertex(positions[3], [0.0, 0.0], colors[0]),
+        vertex(positions[4], [1.0, 1.0], colors[2]),
+        vertex(positions[5], [0.0, 1.0], colors[3]),
     ]
+}
+
+fn gradient_colors(
+    bounds: Rect,
+    fallback: Color,
+    gradient: Option<GradientStyle>,
+    opacity: u8,
+) -> [Color; 4] {
+    let Some(gradient) = gradient else {
+        return [apply_style_opacity(fallback, opacity); 4];
+    };
+    let radians = gradient.angle_degrees.to_radians();
+    let direction = [radians.cos(), radians.sin()];
+    let denominator =
+        (direction[0].abs() * bounds.width + direction[1].abs() * bounds.height).max(1.0);
+    let sample = |x: f32, y: f32| {
+        let projection = (x * direction[0] + y * direction[1]) / denominator + 0.5;
+        blend_color(
+            gradient.start,
+            gradient.end,
+            projection.clamp(0.0, 1.0),
+            opacity,
+        )
+    };
+    let half_width = bounds.width * 0.5;
+    let half_height = bounds.height * 0.5;
+    [
+        sample(-half_width, -half_height),
+        sample(half_width, -half_height),
+        sample(half_width, half_height),
+        sample(-half_width, half_height),
+    ]
+}
+
+fn blend_color(start: Color, end: Color, progress: f32, opacity: u8) -> Color {
+    let blend = |left: u8, right: u8| {
+        (f32::from(left) + (f32::from(right) - f32::from(left)) * progress).round() as u8
+    };
+    apply_style_opacity(
+        Color {
+            red: blend(start.red, end.red),
+            green: blend(start.green, end.green),
+            blue: blend(start.blue, end.blue),
+            alpha: blend(start.alpha, end.alpha),
+        },
+        opacity,
+    )
+}
+
+fn apply_style_opacity(mut color: Color, opacity: u8) -> Color {
+    color.alpha = ((u16::from(color.alpha) * u16::from(opacity)) / 255) as u8;
+    color
+}
+
+fn append_text_plans(
+    plans: &mut Vec<TextPlan>,
+    text: String,
+    bounds: Rect,
+    color: Color,
+    font_size: f32,
+    style: DrawStyle,
+) {
+    match style.text_decoration {
+        TextDecoration::Shadow {
+            color: shadow,
+            offset_x,
+            offset_y,
+        } => plans.push(TextPlan {
+            text: text.clone(),
+            bounds: Rect {
+                x: bounds.x + f32::from(offset_x),
+                y: bounds.y + f32::from(offset_y),
+                ..bounds
+            },
+            color: shadow,
+            font_size,
+            style,
+        }),
+        TextDecoration::Outline {
+            color: outline,
+            width,
+        } => {
+            let width = i8::try_from(width.min(i8::MAX as u8)).unwrap_or(i8::MAX);
+            for (x, y) in [(-width, 0), (width, 0), (0, -width), (0, width)] {
+                plans.push(TextPlan {
+                    text: text.clone(),
+                    bounds: Rect {
+                        x: bounds.x + f32::from(x),
+                        y: bounds.y + f32::from(y),
+                        ..bounds
+                    },
+                    color: outline,
+                    font_size,
+                    style,
+                });
+            }
+        }
+        TextDecoration::None => {}
+    }
+    plans.push(TextPlan {
+        text,
+        bounds,
+        color,
+        font_size,
+        style,
+    });
+}
+
+fn text_align(align: TextAlign) -> Align {
+    match align {
+        TextAlign::Start => Align::Left,
+        TextAlign::Center => Align::Center,
+        TextAlign::End => Align::End,
+    }
+}
+
+fn intersect_rect(left: Rect, right: Rect) -> Rect {
+    let x = left.x.max(right.x);
+    let y = left.y.max(right.y);
+    let right_edge = (left.x + left.width).min(right.x + right.width);
+    let bottom_edge = (left.y + left.height).min(right.y + right.height);
+    Rect {
+        x,
+        y,
+        width: (right_edge - x).max(0.0),
+        height: (bottom_edge - y).max(0.0),
+    }
+}
+
+fn set_scissor_for_clip(
+    pass: &mut wgpu::RenderPass<'_>,
+    clip: Option<Rect>,
+    surface: RenderSurfaceSize,
+) -> bool {
+    let clip = clip.unwrap_or(Rect {
+        x: 0.0,
+        y: 0.0,
+        width: surface.width as f32,
+        height: surface.height as f32,
+    });
+    let x = clip.x.max(0.0).floor() as u32;
+    let y = clip.y.max(0.0).floor() as u32;
+    let right = (clip.x + clip.width)
+        .min(surface.width as f32)
+        .ceil()
+        .max(0.0) as u32;
+    let bottom = (clip.y + clip.height)
+        .min(surface.height as f32)
+        .ceil()
+        .max(0.0) as u32;
+    if right <= x || bottom <= y {
+        return false;
+    }
+    pass.set_scissor_rect(x, y, right - x, bottom - y);
+    true
+}
+
+fn style_opacity(style: &DrawStyle) -> u8 {
+    style.opacity
+}
+
+fn shake_offset(effects: &[ScreenEffect]) -> (f32, f32) {
+    effects
+        .iter()
+        .filter_map(|effect| {
+            let ScreenEffect::Shake {
+                amplitude,
+                progress,
+            } = effect
+            else {
+                return None;
+            };
+            let fade = (1.0 - progress.clamp(0.0, 1.0)).max(0.0);
+            let phase = progress.clamp(0.0, 1.0) * std::f32::consts::TAU * 3.0;
+            Some((
+                amplitude * phase.sin() * fade,
+                amplitude * (phase * 1.37).cos() * fade,
+            ))
+        })
+        .fold((0.0, 0.0), |(x, y), (dx, dy)| (x + dx, y + dy))
 }
 
 fn physical_rect(bounds: Rect, viewport: ViewportTransform) -> Rect {
@@ -782,12 +1241,18 @@ struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
+    @location(3) sdf: vec4<f32>,
+    @location(4) border_width: f32,
+    @location(5) shape_enabled: f32,
 }
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) sdf: vec4<f32>,
+    @location(3) border_width: f32,
+    @location(4) shape_enabled: f32,
 }
 
 @group(0) @binding(0) var texture_sampler_source: texture_2d<f32>;
@@ -799,18 +1264,36 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.position = vec4<f32>(input.position, 0.0, 1.0);
     output.uv = input.uv;
     output.color = input.color;
+    output.sdf = input.sdf;
+    output.border_width = input.border_width;
+    output.shape_enabled = input.shape_enabled;
     return output;
+}
+
+fn rounded_box_distance(uv: vec2<f32>, extent: vec2<f32>, radius: f32) -> f32 {
+    let point = (uv - vec2<f32>(0.5, 0.5)) * extent;
+    let inner = extent * 0.5 - vec2<f32>(radius, radius);
+    let corner = abs(point) - inner;
+    return length(max(corner, vec2<f32>(0.0, 0.0)))
+        + min(max(corner.x, corner.y), 0.0) - radius;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(texture_sampler_source, texture_sampler, input.uv) * input.color;
+    var output = textureSample(texture_sampler_source, texture_sampler, input.uv) * input.color;
+    if input.shape_enabled > 0.5 {
+        let distance = rounded_box_distance(input.uv, input.sdf.xy, input.sdf.z);
+        let anti_alias = max(0.75, input.sdf.w);
+        let coverage = 1.0 - smoothstep(-anti_alias, anti_alias, distance);
+        output.a = output.a * coverage;
+    }
+    return output;
 }
 "#;
 
 #[cfg(test)]
 mod tests {
-    use aria_core::protocol::LogicalSize;
+    use aria_core::protocol::{LogicalSize, SceneFrame};
 
     use super::*;
 
@@ -831,15 +1314,17 @@ mod tests {
 
     #[test]
     fn letterboxed_geometry_maps_logical_bounds_to_ndc() {
-        let frame = RenderFrame {
+        let frame = SceneFrame {
             frame_number: 1,
             logical_size: LogicalSize {
                 width: 1280,
                 height: 720,
             },
+            viewport: Default::default(),
             clear_color: Color::BLACK,
             commands: Vec::new(),
             transition: None,
+            effects: Vec::new(),
         };
         let surface = RenderSurfaceSize::new(2560, 1080, 1.0);
         let viewport = ViewportTransform::fit(

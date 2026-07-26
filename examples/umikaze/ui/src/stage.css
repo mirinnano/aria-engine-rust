@@ -1,0 +1,1662 @@
+/*
+ * System-screen stage for Umikaze.
+ *
+ * Everything in this file is deliberately scoped to non-reading routes and
+ * components. The subtitle film, its input targets, and its typography stay
+ * in app.css without an override here.
+ */
+
+.umikaze {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --stage-ink: #090b12;
+  --stage-sea: #0d3942;
+  --stage-signal: #a7dcda;
+  --stage-oxide: #671c38;
+  --stage-white: #f3f2e9;
+}
+
+.record-stage-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: none;
+  background: #06080c;
+  contain: paint;
+}
+
+.record-stage-photograph {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  /* The source photos already carry their own grain and imperfect light.
+     Keeping this image still avoids turning a location into a wallpaper. */
+  display: block;
+}
+
+.record-stage-photograph--window { object-position: 58% 50%; }
+.record-stage-photograph--motion { object-position: 50% 52%; }
+.record-stage-photograph--understructure { object-position: 55% 54%; }
+
+/* One inert grade is enough to make real photography carry interface text.
+   There is no blur, blend-mode, scanline, or continuously composited layer. */
+.record-stage-backdrop::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  content: "";
+  background: linear-gradient(106deg, rgb(5 7 12 / 91%) 0%, rgb(7 13 18 / 72%) 40%, rgb(5 14 18 / 46%) 100%);
+}
+
+.record-stage-signal {
+  position: absolute;
+  display: block;
+  z-index: 3;
+}
+
+.record-stage-signal {
+  width: min(52vw, 47rem);
+  height: 3px;
+  opacity: 0.58;
+  background: linear-gradient(90deg, transparent, var(--stage-signal), transparent);
+}
+
+.record-stage-signal--one {
+  top: 18%;
+  right: -12%;
+  transform: rotate(-4deg);
+}
+
+/* The home stage carries only three real, public-domain fragments. They are
+   distant weather in the image, not a collage of references or a second
+   layer of UI copy. */
+.record-stage-fragments {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  overflow: hidden;
+  color: rgb(215 232 223 / 54%);
+  font-family: var(--font-record);
+  pointer-events: none;
+}
+
+.record-stage-fragment {
+  position: absolute;
+  margin: 0;
+  font-size: clamp(0.48rem, 0.28vw + 0.38rem, 0.72rem);
+  font-weight: 400;
+  letter-spacing: 0.055em;
+  line-height: 1.85;
+  text-shadow: 0 1px 1px rgb(3 7 14 / 84%);
+}
+
+.record-stage-fragment--tractatus-silence {
+  top: 52%;
+  left: 42%;
+  width: min(24rem, 29vw);
+  color: rgb(207 216 209 / 46%);
+  transform: rotate(-2deg);
+}
+
+.record-stage-fragment--yodaka {
+  top: 30%;
+  left: 47%;
+  width: min(17rem, 22vw);
+  color: rgb(230 215 220 / 58%);
+  letter-spacing: 0.12em;
+  transform: rotate(-4deg);
+}
+
+.record-stage-fragment--galaxy {
+  left: 37%;
+  bottom: 4%;
+  width: min(23rem, 29vw);
+  color: rgb(195 228 222 / 48%);
+  letter-spacing: 0.075em;
+}
+
+.record-stage-backdrop--title {
+  background: #110916;
+}
+
+.record-stage-backdrop--title::before {
+  background: linear-gradient(106deg, rgb(31 8 26 / 92%) 0%, rgb(21 12 31 / 73%) 43%, rgb(2 18 24 / 45%) 100%);
+}
+
+.record-stage-backdrop--setup::before {
+  background: linear-gradient(106deg, rgb(5 11 13 / 91%) 0%, rgb(10 27 25 / 72%) 46%, rgb(5 18 18 / 48%) 100%);
+}
+
+.record-stage-backdrop--title .record-stage-signal--one { top: 24%; right: -8%; opacity: 0.7; }
+
+/* One command list, used on the title, language screen, and transparent
+   RMenu. It is a list of physical labels rather than a group of cards. */
+.focus-menu {
+  position: relative;
+  z-index: 2;
+  width: min(22rem, 100%);
+  color: var(--stage-white);
+}
+
+.focus-menu-list {
+  display: grid;
+  gap: 0;
+}
+
+.focus-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 43px;
+  padding: 0.35rem 0.9rem 0.35rem 1.15rem;
+  border: 0;
+  border-bottom: 1px solid rgb(243 242 233 / 22%);
+  background: transparent;
+  color: rgb(243 242 233 / 74%);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: clamp(0.82rem, 0.55vw + 0.65rem, 1.04rem);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-align: left;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 84%);
+  transition: color 120ms linear, border-color 120ms linear;
+}
+
+.focus-menu-item::before {
+  position: absolute;
+  left: 0;
+  width: 0.35rem;
+  height: 1px;
+  content: "";
+  background: rgb(167 220 218 / 65%);
+  transition: width 120ms linear, background-color 120ms linear;
+}
+
+.focus-menu-item:hover,
+.focus-menu-item.is-focused,
+.focus-menu-item:focus-visible {
+  border-color: rgb(232 226 217 / 64%);
+  color: var(--stage-white);
+}
+
+.focus-menu-item:hover::before,
+.focus-menu-item.is-focused::before,
+.focus-menu-item:focus-visible::before {
+  width: 0.82rem;
+  background: var(--stage-signal);
+}
+
+.focus-menu-item:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.focus-menu-item[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.focus-menu-command { min-width: 0; }
+
+.focus-menu-state {
+  margin-left: 1rem;
+  color: var(--stage-signal);
+  font-size: 0.61em;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.18em;
+}
+
+.focus-menu-description {
+  min-height: 2.8em;
+  margin: 0.85rem 0 0;
+  color: rgb(241 237 226 / 89%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.74rem, 0.35vw + 0.65rem, 0.92rem);
+  line-height: 1.7;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 90%);
+}
+
+/*
+ * Home and first light use one off-centre tide axis.  The identity stays in
+ * the left weather; the first decision begins at the same visual height in
+ * the open water.  It is not a left rail plus a right panel: it is one
+ * opening gesture, with the record named before it is entered.
+ */
+.record-title-screen {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 19rem);
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: clamp(2.75rem, 9vw, 11rem);
+  width: 100%;
+  height: 100%;
+  padding: max(2.4rem, env(safe-area-inset-top)) clamp(2rem, 9vw, 9rem) max(2.4rem, env(safe-area-inset-bottom));
+  overflow: hidden;
+  animation: stage-arrive 200ms var(--ease-out) both;
+}
+
+.record-title-screen::after { content: none; }
+
+.title-identity {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  min-width: 0;
+  padding-left: clamp(0.1rem, 1.5vw, 1rem);
+}
+
+.title-masthead {
+  position: relative;
+  align-self: center;
+  width: min(33rem, 100%);
+  margin: 0;
+  transform: translateY(clamp(0.35rem, 2.5vh, 1.5rem));
+  text-shadow: 0 2px 3px rgb(0 0 0 / 84%);
+}
+
+.title-masthead h1 {
+  margin: 0;
+  color: var(--stage-white);
+  font-family: var(--font-title);
+  font-size: clamp(3.25rem, 7.3vw, 7.5rem);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  line-height: 0.96;
+}
+
+.title-masthead .title-subtitle {
+  margin: clamp(0.8rem, 1.9vh, 1.25rem) 0 0;
+  color: rgb(202 231 225 / 82%);
+  font-family: var(--font-record);
+  font-size: clamp(0.59rem, 0.34vw + 0.48rem, 0.8rem);
+  letter-spacing: 0.24em;
+}
+
+.title-masthead .title-edition {
+  width: max-content;
+  margin: 0.82rem 0 0;
+  padding: 0.12rem 0.36rem 0.1rem 0.5rem;
+  border: 1px solid rgb(202 231 225 / 42%);
+  color: rgb(228 223 200 / 83%);
+  font-family: var(--font-ui);
+  font-size: 0.57rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  line-height: 1.2;
+}
+
+.title-selection {
+  position: relative;
+  z-index: 2;
+  align-self: center;
+  justify-self: start;
+  width: min(19rem, 100%);
+  margin-top: clamp(3.5rem, 12vh, 8rem);
+  padding-left: clamp(0.9rem, 1.25vw, 1.2rem);
+}
+
+.title-selection-kicker {
+  margin: 0 0 clamp(1.25rem, 2.4vh, 1.8rem);
+  color: rgb(202 231 225 / 66%);
+  font-family: var(--font-record);
+  font-size: clamp(0.54rem, 0.29vw + 0.46rem, 0.7rem);
+  letter-spacing: 0.24em;
+  line-height: 1.3;
+}
+
+.title-command-list {
+  width: 100%;
+  margin: 0;
+}
+
+/* The trial ending borrows the record's horizon rather than turning into a
+   storefront. One short vertical tide mark divides what has been read from
+   the two clear, local actions that remain. */
+.demo-end-screen {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
+  align-items: end;
+  gap: clamp(2rem, 10vw, 11rem);
+  width: 100%;
+  height: 100%;
+  padding: max(2.5rem, env(safe-area-inset-top)) clamp(2rem, 9vw, 9rem) max(2.5rem, env(safe-area-inset-bottom));
+  overflow: hidden;
+  animation: stage-arrive 200ms var(--ease-out) both;
+}
+
+.demo-end-screen::before {
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  left: clamp(1.3rem, 5vw, 5.5rem);
+  width: 1px;
+  content: "";
+  background: linear-gradient(180deg, transparent, rgb(167 220 218 / 62%) 18%, rgb(167 220 218 / 18%) 82%, transparent);
+}
+
+.demo-end-copy {
+  position: relative;
+  align-self: center;
+  max-width: min(35rem, 80%);
+  padding-left: clamp(1.4rem, 3vw, 3.4rem);
+  text-shadow: 0 2px 3px rgb(0 0 0 / 88%);
+}
+
+.demo-end-kicker {
+  margin: 0 0 clamp(1rem, 2.2vh, 1.55rem);
+  color: rgb(203 230 222 / 78%);
+  font-family: var(--font-record);
+  font-size: clamp(0.57rem, 0.32vw + 0.48rem, 0.77rem);
+  letter-spacing: 0.26em;
+  line-height: 1.3;
+}
+
+.demo-end-copy h1 {
+  margin: 0;
+  color: var(--stage-white);
+  font-family: var(--font-title);
+  font-size: clamp(2rem, 4vw, 4.4rem);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1.28;
+}
+
+.demo-end-lead {
+  max-width: 23rem;
+  margin: clamp(1rem, 2.3vh, 1.7rem) 0 0;
+  color: rgb(231 237 229 / 79%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.79rem, 0.4vw + 0.66rem, 1rem);
+  letter-spacing: 0.035em;
+  line-height: 1.85;
+}
+
+.demo-end-command-list {
+  align-self: end;
+  justify-self: start;
+  width: min(20rem, 100%);
+  margin-bottom: clamp(1.1rem, 6vh, 4.2rem);
+}
+
+.demo-end-command-list .focus-menu-list { gap: clamp(1.35rem, 3.2vh, 2.4rem); }
+
+.demo-end-command-list .focus-menu-item {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content);
+  grid-template-areas:
+    "command"
+    "note";
+  row-gap: 0.42rem;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0 !important;
+  background: transparent;
+  color: rgb(243 242 233 / 66%);
+  font-size: clamp(0.88rem, 0.62vw + 0.67rem, 1.12rem);
+  letter-spacing: 0.2em;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%), 0 0 0.9rem rgb(167 220 218 / 8%);
+}
+
+.demo-end-command-list .focus-menu-item::before {
+  top: 0.08em;
+  left: -1rem;
+  width: 1px;
+  height: 0.92em;
+  opacity: 0;
+  background: var(--stage-signal);
+  transform: scaleY(0.45);
+  transition: opacity 120ms linear, transform 120ms var(--ease-out);
+}
+
+.demo-end-command-list .focus-menu-item:hover,
+.demo-end-command-list .focus-menu-item.is-focused,
+.demo-end-command-list .focus-menu-item:focus-visible {
+  color: var(--stage-white);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%), 0 0 0.9rem rgb(167 220 218 / 18%);
+}
+
+.demo-end-command-list .focus-menu-item:hover::before,
+.demo-end-command-list .focus-menu-item.is-focused::before,
+.demo-end-command-list .focus-menu-item:focus-visible::before {
+  width: 1px;
+  opacity: 0.9;
+  transform: scaleY(1);
+}
+
+.demo-end-command-list .focus-menu-command { grid-area: command; }
+.demo-end-command-list .focus-menu-inline-description {
+  grid-area: note;
+  color: rgb(230 234 222 / 73%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.68rem, 0.3vw + 0.59rem, 0.86rem);
+  font-weight: 400;
+  letter-spacing: 0.025em;
+  line-height: 1.65;
+  white-space: nowrap;
+}
+
+.title-command-list .focus-menu-list { gap: clamp(1.1rem, 2.7vh, 1.9rem); }
+
+.title-command-list .focus-menu-item {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content) auto;
+  grid-template-areas:
+    "command state"
+    "note note";
+  column-gap: 0.75rem;
+  row-gap: 0.36rem;
+  align-items: baseline;
+  justify-content: flex-start;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0 !important;
+  background: transparent;
+  color: rgb(243 242 233 / 66%);
+  font-size: clamp(0.9rem, 0.68vw + 0.67rem, 1.18rem);
+  letter-spacing: 0.21em;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 92%), 0 0 0.8rem rgb(167 220 218 / 7%);
+  transition: color 120ms linear, text-shadow 120ms linear;
+}
+
+.title-command-list .focus-menu-item::before {
+  top: 50%;
+  left: -1rem;
+  width: 1px;
+  height: 0.85em;
+  opacity: 0;
+  background: var(--stage-signal);
+  transform: translateY(-50%) scaleY(0.45);
+  transition: opacity 120ms linear, transform 120ms var(--ease-out);
+}
+
+.title-command-list .focus-menu-item:hover,
+.title-command-list .focus-menu-item.is-focused,
+.title-command-list .focus-menu-item:focus-visible {
+  border: 0;
+  color: var(--stage-white);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%), 0 0 0.9rem rgb(167 220 218 / 16%);
+}
+
+.title-command-list .focus-menu-item:hover::before,
+.title-command-list .focus-menu-item.is-focused::before,
+.title-command-list .focus-menu-item:focus-visible::before {
+  width: 1px;
+  opacity: 0.9;
+  background: var(--stage-signal);
+  transform: translateY(-50%) scaleY(1);
+}
+
+.title-command-list .focus-menu-command { grid-area: command; }
+
+.title-command-list .focus-menu-state {
+  grid-area: state;
+  margin-left: 0;
+  color: var(--stage-signal);
+  font-size: 0.53em;
+  letter-spacing: 0.18em;
+  transform: translateY(-0.08em);
+}
+
+.title-command-list .focus-menu-inline-description {
+  display: none;
+  grid-area: note;
+  width: min(18rem, 100%);
+  margin: 0;
+  color: rgb(230 237 229 / 85%);
+  font-size: clamp(0.7rem, 0.32vw + 0.65rem, 0.88rem);
+  letter-spacing: 0.055em;
+  line-height: 1.75;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%);
+}
+
+.title-command-list .focus-menu-item:is(.is-focused, :focus, [data-focused]) .focus-menu-inline-description { display: block; }
+
+.record-title-screen--home {
+  grid-template-columns: minmax(0, 1fr) minmax(12.75rem, 18rem);
+  column-gap: clamp(3rem, 10vw, 12rem);
+  padding: max(2.7rem, env(safe-area-inset-top)) clamp(2rem, 8.5vw, 8.5rem) max(2.5rem, env(safe-area-inset-bottom));
+}
+
+.record-title-screen--home .title-masthead {
+  width: min(36rem, 100%);
+  transform: translateY(clamp(0.8rem, 4.5vh, 3rem));
+}
+
+/* The title opens once, like a record coming into focus. The identity settles
+   first and the command column follows; no ambient animation remains. */
+.record-title-screen--home .title-identity {
+  animation: stage-identity-arrive 220ms var(--ease-out) 20ms both;
+}
+
+.record-title-screen--home .title-selection {
+  animation: stage-selection-arrive 240ms var(--ease-out) 120ms both;
+}
+
+.record-title-screen--home .title-masthead h1 {
+  font-size: clamp(4.4rem, 9.6vw, 10.2rem);
+  letter-spacing: 0.16em;
+  line-height: 0.84;
+}
+
+.record-title-screen--home .title-selection { margin-top: clamp(4.5rem, 15vh, 10rem); }
+.record-setup-screen .title-masthead h1 { font-size: clamp(3rem, 6.7vw, 6.8rem); }
+.record-setup-screen .title-selection { width: min(20rem, 100%); }
+
+/*
+ * Interlude / opening record
+ *
+ * These are deliberately text-only dark frames. They do not borrow the
+ * reader's subtitle field, photograph, grain, or scanline treatment: a short
+ * sentence needs an actual absence around it, not a new kind of panel.
+ */
+.route-interlude {
+  background: #05060a;
+}
+
+.route-interlude .presentation-layer {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+.interlude-screen {
+  display: grid;
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(ellipse at 52% 53%, rgb(20 37 43 / 17%), transparent 46%),
+    #05060a;
+}
+
+.interlude-advance {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: max(2rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right)) max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+  border: 0;
+  background: transparent;
+  color: var(--stage-white);
+  cursor: pointer;
+}
+
+.interlude-line {
+  max-width: min(42rem, 84vw);
+  margin: 0;
+  color: rgb(239 237 225 / 93%);
+  font-family: var(--font-title);
+  font-size: clamp(1.08rem, 0.72vw + 0.88rem, 1.72rem);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  line-height: 2;
+  text-align: center;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 92%), 0 0 1.5rem rgb(96 189 187 / 11%);
+  opacity: 0;
+  animation: interlude-line-arrive 140ms var(--ease-out) both;
+}
+
+.interlude-screen--first .interlude-line { animation-delay: 200ms; }
+.interlude-screen--return .interlude-line { animation-delay: 0ms; }
+
+.interlude-advance:hover .interlude-line { color: #fffdf3; }
+.interlude-advance:focus-visible { outline: 1px solid rgb(167 220 218 / 84%); outline-offset: -7px; }
+
+@keyframes interlude-line-arrive {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.opening-record {
+  display: grid;
+  grid-area: 1 / 1;
+  align-content: center;
+  justify-items: center;
+  gap: 0.72rem;
+  background: #05060a;
+  color: rgb(231 237 229 / 88%);
+  font-family: var(--font-record);
+  letter-spacing: 0.16em;
+  pointer-events: none;
+}
+
+.opening-record p,
+.opening-record span { margin: 0; }
+.opening-record span { font-size: clamp(0.68rem, 0.33vw + 0.58rem, 0.82rem); }
+
+/*
+ * Chapter day card
+ *
+ * This is a held establishing shot rather than a menu or another subtitle.
+ * The photograph is selected from the scene authored for the chapter, while
+ * each weather grade names the day's particular place: ward, platform, rain,
+ * island, harbour, or the blue-black terminus. One still layer, no video and
+ * no looping noise, keeps both the pause and WebKit's compositor quiet.
+ */
+.route-day_card {
+  background: #02080c;
+}
+
+.route-day_card .scene-photograph,
+.route-day_card .atmosphere,
+.route-day_card .scene-direction-layer {
+  inset: 0;
+}
+
+.route-day_card .scene-photograph::after {
+  background: linear-gradient(90deg, rgb(2 8 12 / 54%), rgb(2 8 12 / 15%) 58%, rgb(2 8 12 / 31%));
+}
+
+.route-day_card .atmosphere {
+  background: linear-gradient(90deg, rgb(2 9 13 / 72%) 0%, rgb(2 9 13 / 39%) 39%, rgb(2 9 13 / 6%) 73%, rgb(2 9 13 / 26%));
+}
+
+.route-day_card .presentation-layer {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+/* A colour grade is the only mutable visual material between days. It makes
+   the existing project photographs read as a place, without loading a second
+   stage image or asking the GPU to blur/transcode anything continuously. */
+.route-day_card.day-card-theme-ward .atmosphere {
+  background: linear-gradient(90deg, rgb(7 16 21 / 79%), rgb(12 24 28 / 43%) 45%, rgb(17 28 29 / 10%) 74%, rgb(3 9 13 / 38%));
+}
+.route-day_card.day-card-theme-departure .atmosphere {
+  background: linear-gradient(90deg, rgb(5 18 26 / 69%), rgb(16 48 58 / 27%) 49%, rgb(222 204 157 / 8%) 79%, rgb(4 12 18 / 27%));
+}
+.route-day_card.day-card-theme-rain .atmosphere {
+  background: linear-gradient(90deg, rgb(10 12 22 / 78%), rgb(32 45 57 / 44%) 43%, rgb(20 38 51 / 14%) 75%, rgb(2 8 13 / 36%));
+}
+.route-day_card.day-card-theme-rail .atmosphere {
+  background: linear-gradient(90deg, rgb(20 15 16 / 77%), rgb(74 62 49 / 33%) 48%, rgb(23 34 39 / 9%) 76%, rgb(4 9 13 / 34%));
+}
+.route-day_card.day-card-theme-shore .atmosphere,
+.route-day_card.day-card-theme-island .atmosphere {
+  background: linear-gradient(90deg, rgb(2 15 21 / 74%), rgb(10 58 64 / 31%) 48%, rgb(154 205 192 / 8%) 76%, rgb(3 16 21 / 32%));
+}
+.route-day_card.day-card-theme-clear .atmosphere {
+  background: linear-gradient(90deg, rgb(12 24 27 / 66%), rgb(85 100 80 / 22%) 45%, rgb(233 219 171 / 10%) 77%, rgb(5 15 18 / 27%));
+}
+.route-day_card.day-card-theme-harbor .atmosphere {
+  background: linear-gradient(90deg, rgb(22 12 19 / 73%), rgb(67 46 44 / 26%) 44%, rgb(11 57 64 / 14%) 75%, rgb(3 12 17 / 34%));
+}
+.route-day_card.day-card-theme-north .atmosphere,
+.route-day_card.day-card-theme-terminus .atmosphere {
+  background: linear-gradient(90deg, rgb(3 8 20 / 83%), rgb(12 28 49 / 42%) 45%, rgb(35 58 76 / 12%) 75%, rgb(1 5 12 / 47%));
+}
+.route-day_card.day-card-theme-spring .atmosphere {
+  background: linear-gradient(90deg, rgb(17 25 27 / 68%), rgb(85 104 93 / 25%) 47%, rgb(224 211 195 / 11%) 77%, rgb(7 13 17 / 28%));
+}
+
+.day-card {
+  position: relative;
+  display: grid;
+  grid-area: 1 / 1;
+  align-content: end;
+  width: 100%;
+  height: 100%;
+  padding: max(2rem, env(safe-area-inset-top)) max(2rem, 8.5vw) max(2.1rem, env(safe-area-inset-bottom)) max(2rem, 8.5vw);
+  overflow: hidden;
+  animation: day-card-arrive 220ms var(--ease-out) both;
+}
+
+.day-card-copy {
+  width: min(34rem, 68vw);
+  margin-bottom: clamp(1.75rem, 5vh, 4rem);
+  text-shadow: 0 2px 18px rgb(0 0 0 / 76%), 0 1px 2px rgb(0 0 0 / 88%);
+  animation: day-card-copy-arrive 220ms var(--ease-out) 70ms both;
+}
+
+.day-card-date,
+.day-card-synopsis {
+  margin: 0;
+}
+
+.day-card-date {
+  margin-top: 0;
+  color: rgb(240 237 224 / 83%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.81rem, 0.42vw + 0.66rem, 1rem);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+}
+
+.day-card h1 {
+  margin: 0.42rem 0 0;
+  color: var(--stage-white);
+  font-family: var(--font-title);
+  font-size: clamp(3.1rem, 7.4vw, 7.5rem);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  line-height: 0.94;
+}
+
+.day-card-synopsis {
+  max-width: 29rem;
+  margin-top: clamp(1.2rem, 3vh, 2rem);
+  color: rgb(242 240 230 / 91%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.82rem, 0.38vw + 0.69rem, 1.02rem);
+  letter-spacing: 0.055em;
+  line-height: 1.95;
+}
+
+.day-card-advance {
+  position: absolute;
+  right: max(2rem, calc(env(safe-area-inset-right) + 1.4rem));
+  bottom: max(2.1rem, calc(env(safe-area-inset-bottom) + 1.4rem));
+  min-width: 7.4rem;
+  min-height: 44px;
+  padding: 0.7rem 0 0.7rem 2.6rem;
+  border: 0;
+  background: transparent;
+  color: rgb(242 240 230 / 72%);
+  cursor: pointer;
+  font-family: var(--font-record);
+  font-size: clamp(0.66rem, 0.33vw + 0.57rem, 0.8rem);
+  letter-spacing: 0.22em;
+  text-align: right;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%);
+  animation: day-card-advance-arrive 180ms var(--ease-out) 120ms both;
+  transition: color 120ms linear, text-shadow 120ms linear, transform 100ms var(--ease-out);
+}
+
+.day-card-advance::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 1.7rem;
+  height: 1px;
+  content: "";
+  background: rgb(167 220 218 / 67%);
+  transform: translateY(-50%);
+  transition: width 160ms var(--ease-out), background-color 120ms linear;
+}
+
+.day-card-advance:hover,
+.day-card-advance:focus-visible {
+  color: var(--stage-white);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%), 0 0 0.9rem rgb(167 220 218 / 18%);
+}
+
+.day-card-advance:hover::before,
+.day-card-advance:focus-visible::before {
+  width: 2.4rem;
+  background: var(--stage-signal);
+}
+
+.day-card-advance:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.day-card-advance:active { transform: translateY(1px) scale(0.985); }
+
+@keyframes day-card-arrive {
+  from { opacity: 0; transform: translateY(0.65rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes stage-identity-arrive {
+  from { opacity: 0; transform: translateY(0.7rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes stage-selection-arrive {
+  from { opacity: 0; transform: translateY(0.9rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes day-card-copy-arrive {
+  from { opacity: 0; transform: translateY(0.75rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes day-card-advance-arrive {
+  from { opacity: 0; transform: translateX(-0.45rem); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* The pause screen is intentionally transparent: the stopped scene stays
+   visible, with no scrim, drawer, surface, glass, or attached panel. */
+.rmenu-overlay {
+  position: absolute;
+  inset: 0;
+  display: block;
+  padding: 0;
+  background: transparent !important;
+  animation: none;
+}
+
+.rmenu-modal {
+  position: absolute;
+  top: max(72px, calc(env(safe-area-inset-top) + 42px));
+  left: max(72px, calc(env(safe-area-inset-left) + 42px));
+  width: min(24rem, calc(100vw - 9rem));
+  height: auto;
+  margin: 0;
+  outline: 0;
+}
+
+.pause-ledger.stage-rmenu {
+  width: 100%;
+  max-height: calc(100vh - 7.25rem);
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  outline: 0;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+/* RMenu is a sequence of unframed signals.  The gap, not a ruled list,
+   establishes the rhythm; only the selected signal receives its annotation. */
+.rmenu-command-list { width: 100%; }
+.rmenu-command-list .focus-menu-list {
+  gap: clamp(1.1rem, 3vh, 2.1rem);
+}
+
+.rmenu-command-list .focus-menu-item {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content) auto;
+  grid-template-areas:
+    "command state"
+    "note note";
+  column-gap: 0.75rem;
+  row-gap: 0.38rem;
+  align-items: baseline;
+  justify-content: flex-start;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0 !important;
+  background: transparent;
+  color: rgb(243 242 233 / 63%);
+  font-size: clamp(0.88rem, 0.66vw + 0.68rem, 1.12rem);
+  letter-spacing: 0.2em;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 90%), 0 0 0.7rem rgb(167 220 218 / 7%);
+  transition: color 120ms linear, text-shadow 120ms linear;
+}
+
+.rmenu-command-list .focus-menu-item::before {
+  top: 50%;
+  left: -0.9rem;
+  width: 1px;
+  height: 0.85em;
+  opacity: 0;
+  background: var(--stage-signal);
+  transform: translateY(-50%) scaleY(0.45);
+  transition: opacity 120ms linear, transform 120ms var(--ease-out);
+}
+
+.rmenu-command-list .focus-menu-item:hover,
+.rmenu-command-list .focus-menu-item.is-focused,
+.rmenu-command-list .focus-menu-item:focus-visible {
+  border: 0;
+  color: var(--stage-white);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%), 0 0 0.8rem rgb(167 220 218 / 16%);
+}
+
+.rmenu-command-list .focus-menu-item:hover::before,
+.rmenu-command-list .focus-menu-item.is-focused::before,
+.rmenu-command-list .focus-menu-item:focus-visible::before {
+  width: 1px;
+  opacity: 0.9;
+  background: var(--stage-signal);
+  transform: translateY(-50%) scaleY(1);
+}
+
+.rmenu-command-list .focus-menu-state {
+  grid-area: state;
+  margin-left: 0;
+  color: var(--stage-signal);
+  font-size: 0.53em;
+  letter-spacing: 0.18em;
+  transform: translateY(-0.08em);
+}
+
+.rmenu-command-list .focus-menu-command { grid-area: command; }
+
+.rmenu-command-list .focus-menu-inline-description {
+  display: none;
+  grid-area: note;
+  width: min(21rem, 100%);
+  margin: 0;
+  color: rgb(229 236 229 / 84%);
+  font-size: clamp(0.72rem, 0.35vw + 0.66rem, 0.9rem);
+  letter-spacing: 0.055em;
+  line-height: 1.75;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 94%);
+}
+
+.rmenu-command-list .focus-menu-item:is(.is-focused, :focus, [data-focused]) .focus-menu-inline-description { display: block; }
+
+/* Archive sheets share the same photograph-backed signal material. Their
+   content has no rounded container and uses rows, rules, and paper labels. */
+.sheet-overlay--archive,
+.sheet-overlay--chapter,
+.sheet-overlay--confirm {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  padding: 0;
+  background: transparent;
+  animation: none;
+}
+
+.sheet-overlay--archive,
+.sheet-overlay--chapter {
+  align-items: stretch;
+  justify-items: stretch;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.sheet-overlay--confirm {
+  align-items: center;
+  justify-items: center;
+  padding: 1.2rem;
+}
+
+.sheet-modal--archive,
+.sheet-modal--chapter {
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.sheet-modal--confirm {
+  width: min(34rem, 100%);
+  height: auto;
+}
+
+.sheet.stage-sheet {
+  position: relative;
+  display: block;
+  width: min(94rem, 100%);
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: rgb(6 10 18 / 38%);
+  box-shadow: none;
+  animation: none;
+}
+
+.sheet--archive.stage-sheet,
+.sheet--chapter.stage-sheet { background: rgb(6 10 18 / 38%); }
+
+.sheet--confirm.stage-sheet {
+  height: auto;
+  min-height: 20rem;
+  border: 1px solid rgb(233 227 216 / 33%);
+  background: rgb(11 9 18 / 88%);
+}
+
+.stage-sheet-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: clamp(1.5rem, 4.5vw, 5rem) clamp(1.4rem, 7vw, 8rem) clamp(1.35rem, 3.5vw, 3.6rem);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(167 220 218 / 46%) transparent;
+  animation: stage-arrive 180ms var(--ease-out) both;
+}
+
+.stage-sheet-content::-webkit-scrollbar,
+.backlog-list::-webkit-scrollbar,
+.chapter-index-menu::-webkit-scrollbar { width: 4px; height: 4px; }
+.stage-sheet-content::-webkit-scrollbar-thumb,
+.backlog-list::-webkit-scrollbar-thumb,
+.chapter-index-menu::-webkit-scrollbar-thumb { background: rgb(167 220 218 / 52%); }
+.stage-sheet-content::-webkit-scrollbar-track,
+.backlog-list::-webkit-scrollbar-track,
+.chapter-index-menu::-webkit-scrollbar-track { background: transparent; }
+
+.stage-sheet .sheet-header {
+  flex: 0 0 auto;
+  min-height: 54px;
+  padding: 0;
+  border: 0;
+}
+
+.stage-sheet .sheet-kicker {
+  margin: 0 0 0.42rem;
+  color: rgb(167 220 218 / 76%);
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+}
+
+.stage-sheet .sheet-header h2 {
+  margin: 0;
+  color: var(--stage-white);
+  font-family: var(--font-ui);
+  font-size: clamp(1.65rem, 2.6vw, 3.1rem);
+  font-weight: 300;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-shadow: 0 2px 2px rgb(0 0 0 / 64%);
+}
+
+.stage-close {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem 0;
+  border: 0;
+  background: transparent;
+  color: rgb(243 242 233 / 68%);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  letter-spacing: 0.17em;
+  text-align: right;
+  transition: color 120ms linear;
+}
+
+.stage-close:hover,
+.stage-close:focus-visible { color: var(--stage-white); }
+.stage-close:focus-visible { outline: 1px solid var(--focus); outline-offset: 3px; }
+
+.stage-sheet .sheet-tide-line {
+  flex: 0 0 auto;
+  width: clamp(2.6rem, 5vw, 5rem);
+  height: 1px;
+  margin: 1.15rem 0 clamp(1.5rem, 4vh, 3.3rem);
+  background: linear-gradient(90deg, var(--stage-signal), transparent);
+}
+
+.stage-sheet .sheet-intro {
+  max-width: 40rem;
+  margin: 0;
+  color: rgb(239 236 226 / 82%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.8rem, 0.35vw + 0.71rem, 0.98rem);
+  line-height: 1.85;
+}
+
+/* Save and load are a ledger of ten real positions, not a tile dashboard. */
+.sheet--save .save-slots,
+.sheet--load .save-slots {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: min(62rem, 100%);
+  margin-top: clamp(1.3rem, 4vh, 3rem);
+  border: 0;
+}
+
+.sheet--save .record-slot,
+.sheet--load .record-slot {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 9rem) minmax(10rem, 1fr) minmax(12rem, 1.35fr);
+  align-items: center;
+  min-height: clamp(50px, 7vh, 66px);
+  padding: 0.65rem 1rem 0.65rem 0;
+  border: 0;
+  border-top: 1px solid rgb(243 242 233 / 18%);
+  background: transparent;
+  color: rgb(243 242 233 / 81%);
+  text-align: left;
+  transition: color 120ms linear, border-color 120ms linear, transform 100ms var(--ease-out);
+}
+
+.sheet--save .record-slot::before,
+.sheet--load .record-slot::before {
+  top: 50%;
+  left: 0;
+  width: 0.55rem;
+  height: 1px;
+  content: "";
+  background: rgb(167 220 218 / 54%);
+  transform: translateY(-50%);
+  transition: width 120ms linear, background-color 120ms linear;
+}
+
+.sheet--save .record-slot:hover,
+.sheet--save .record-slot:focus-visible,
+.sheet--load .record-slot:hover,
+.sheet--load .record-slot:focus-visible {
+  border-color: rgb(243 242 233 / 58%);
+  color: var(--stage-white);
+  outline: 0;
+}
+
+.sheet--save .record-slot:hover::before,
+.sheet--save .record-slot:focus-visible::before,
+.sheet--load .record-slot:hover::before,
+.sheet--load .record-slot:focus-visible::before {
+  width: 1.25rem;
+  background: var(--stage-signal);
+}
+
+.sheet--save .record-slot:focus-visible,
+.sheet--load .record-slot:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
+.sheet--save .record-slot:not([aria-disabled="true"]):active,
+.sheet--load .record-slot:not([aria-disabled="true"]):active { transform: translateX(0.12rem); }
+.sheet--save .record-slot[aria-disabled="true"],
+.sheet--load .record-slot[aria-disabled="true"] { cursor: not-allowed; opacity: 0.42; }
+.sheet--save .record-slot-index,
+.sheet--load .record-slot-index { padding-left: 1.55rem; color: rgb(167 220 218 / 76%); font-family: var(--font-ui); font-size: 0.62rem; letter-spacing: 0.15em; }
+.sheet--save .record-slot-action,
+.sheet--load .record-slot-action { color: inherit; font-family: var(--font-ui); font-size: 0.89rem; line-height: 1.35; }
+.sheet--save .record-slot-label,
+.sheet--load .record-slot-label { color: rgb(235 231 220 / 63%); font-family: var(--font-ui); font-size: 0.69rem; line-height: 1.5; }
+
+/* Log retains scrolling because it is a log, but it reads as marked paper
+   lines rather than a browser list. */
+.sheet--backlog .backlog-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: min(64rem, 100%);
+  margin: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(167 220 218 / 46%) transparent;
+}
+
+.sheet--backlog .stage-sheet-content { overflow: hidden; }
+
+.sheet--backlog .backlog-list:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.sheet--backlog .backlog-entry {
+  display: grid;
+  grid-template-columns: 3.8rem minmax(0, 1fr);
+  gap: 0.7rem;
+  min-height: 104px;
+  height: 104px;
+  padding: 1rem 0.7rem 1rem 0;
+  border: 0;
+  border-top: 1px solid rgb(243 242 233 / 16%);
+  background: transparent;
+  color: rgb(243 242 233 / 83%);
+  text-align: left;
+}
+
+.sheet--backlog .backlog-entry.is-selected,
+.sheet--backlog .backlog-entry:hover,
+.sheet--backlog .backlog-entry:focus-visible {
+  color: var(--stage-white);
+  box-shadow: none;
+  outline: 0;
+}
+
+.sheet--backlog .backlog-entry.is-selected::before,
+.sheet--backlog .backlog-entry:hover::before,
+.sheet--backlog .backlog-entry:focus-visible::before {
+  position: absolute;
+  width: 1rem;
+  height: 1px;
+  content: "";
+  background: var(--stage-signal);
+}
+
+.sheet--backlog .backlog-entry:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
+.sheet--backlog .backlog-index { padding-top: 0.25rem; color: rgb(167 220 218 / 73%); font-family: var(--font-ui); font-size: 0.62rem; letter-spacing: 0.14em; }
+.sheet--backlog .backlog-speaker { color: rgb(231 217 188 / 92%); font-family: var(--font-ui); font-size: 0.71rem; letter-spacing: 0.11em; }
+.sheet--backlog .backlog-text { color: inherit; font-family: var(--font-reading); font-size: clamp(0.86rem, 0.28vw + 0.78rem, 1.02rem); line-height: 1.72; }
+.stage-sheet .empty-state { margin: 1rem 0; color: rgb(167 220 218 / 76%); font-family: var(--font-ui); }
+
+/* Settings is an index and a single tuning rail. The only controls are
+   explicit buttons, with the same values reachable from arrow keys. */
+.settings-stage {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: clamp(2.4rem, 8vw, 9.5rem);
+  width: min(68rem, 100%);
+}
+
+.settings-index {
+  display: grid;
+  align-content: start;
+  border-top: 1px solid rgb(243 242 233 / 25%);
+}
+
+.settings-index-item {
+  position: relative;
+  min-height: 52px;
+  padding: 0.65rem 0.8rem 0.65rem 1rem;
+  border: 0;
+  border-bottom: 1px solid rgb(243 242 233 / 16%);
+  background: transparent;
+  color: rgb(243 242 233 / 64%);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-align: left;
+  transition: color 120ms linear, border-color 120ms linear;
+}
+
+.settings-index-item::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 0.35rem;
+  height: 1px;
+  content: "";
+  background: rgb(167 220 218 / 65%);
+  transform: translateY(-50%);
+  transition: width 120ms linear;
+}
+
+.settings-index-item:hover,
+.settings-index-item.is-selected,
+.settings-index-item:focus-visible { color: var(--stage-white); }
+.settings-index-item.is-selected::before,
+.settings-index-item:hover::before,
+.settings-index-item:focus-visible::before { width: 0.8rem; background: var(--stage-signal); }
+.settings-index-item:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
+
+.settings-deck { min-width: 0; padding-top: 0.15rem; }
+.settings-deck-header { padding: 0 0 1.25rem; }
+.settings-deck h3 { margin: 0; color: var(--stage-white); font-family: var(--font-ui); font-size: clamp(1.1rem, 0.7vw + 0.95rem, 1.55rem); font-weight: 400; line-height: 1.3; }
+.settings-rails { display: grid; width: min(39rem, 100%); border-top: 1px solid rgb(243 242 233 / 25%); }
+
+.setting-rail,
+.binary-setting,
+.settings-status {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 1fr) minmax(13rem, 1.2fr);
+  align-items: center;
+  gap: 1.25rem;
+  min-height: 64px;
+  border-bottom: 1px solid rgb(243 242 233 / 16%);
+}
+
+.setting-rail-label { color: rgb(243 242 233 / 84%); font-family: var(--font-ui); font-size: clamp(0.78rem, 0.38vw + 0.68rem, 0.95rem); line-height: 1.45; }
+.setting-rail-controls,
+.binary-setting-controls { display: grid; grid-template-columns: 44px minmax(5.5rem, 1fr) 44px; align-items: center; min-width: 0; }
+
+.setting-rail-button {
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(167 220 218 / 84%);
+  cursor: pointer;
+  font-size: 0.68rem;
+  transition: color 120ms linear, background-color 120ms linear;
+}
+
+.setting-rail-button:hover,
+.setting-rail-button:focus-visible { background: rgb(167 220 218 / 12%); color: var(--stage-white); }
+.setting-rail-button:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
+.setting-rail-value { display: grid; min-height: 44px; place-items: center; border-top: 1px solid rgb(243 242 233 / 24%); border-bottom: 1px solid rgb(243 242 233 / 24%); color: var(--stage-white); font-family: var(--font-ui); font-size: 0.78rem; font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+.binary-setting-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.binary-setting-button { min-height: 44px; padding: 0; border: 1px solid rgb(243 242 233 / 21%); background: transparent; color: rgb(243 242 233 / 57%); cursor: pointer; font-family: var(--font-ui); font-size: 0.68rem; letter-spacing: 0.14em; transition: color 120ms linear, background-color 120ms linear, border-color 120ms linear; }
+.binary-setting-button + .binary-setting-button { border-left: 0; }
+.binary-setting-button[aria-pressed="true"] { border-color: rgb(167 220 218 / 86%); background: rgb(167 220 218 / 14%); color: var(--stage-white); }
+.binary-setting-button:focus-visible { position: relative; z-index: 1; outline: 1px solid var(--focus); outline-offset: -2px; }
+.settings-status-value { display: grid; gap: 0.2rem; min-height: 44px; align-content: center; border-top: 1px solid rgb(243 242 233 / 24%); border-bottom: 1px solid rgb(243 242 233 / 24%); }
+.settings-status-value strong { color: rgb(167 220 218 / 92%); font-family: var(--font-ui); font-size: 0.7rem; font-weight: 500; letter-spacing: 0.16em; }
+.settings-status-value span { color: rgb(235 231 220 / 65%); font-family: var(--font-ui); font-size: 0.67rem; line-height: 1.45; }
+
+/* Chapters have one live preview and one quiet index. Moving focus changes
+   only this local preview; activation remains the sole route into the story. */
+.sheet--chapter .stage-sheet-content {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.chapter-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(16rem, 0.72fr);
+  min-height: 0;
+  border-top: 1px solid rgb(243 242 233 / 22%);
+}
+
+.chapter-preview {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid rgb(243 242 233 / 22%);
+  background: #0a1b23;
+}
+
+.chapter-preview-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.84;
+}
+
+.chapter-preview::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(9 8 17 / 8%) 22%, rgb(9 8 17 / 76%) 100%);
+}
+
+.chapter-preview-record {
+  position: absolute;
+  z-index: 1;
+  right: clamp(1rem, 3vw, 3rem);
+  bottom: clamp(1rem, 4vh, 3.4rem);
+  left: clamp(1rem, 3vw, 3rem);
+  color: var(--stage-white);
+  text-shadow: 0 2px 3px rgb(0 0 0 / 86%);
+}
+
+.chapter-preview-date {
+  margin: 0 0 0.8rem;
+  color: rgb(167 220 218 / 88%);
+  font-family: var(--font-ui);
+  font-size: clamp(0.66rem, 0.28vw + 0.59rem, 0.83rem);
+  font-weight: 400;
+  letter-spacing: 0.11em;
+  line-height: 1.45;
+}
+.chapter-preview-record h3 { max-width: 30rem; margin: 0; font-family: var(--font-ui); font-size: clamp(1.35rem, 2.3vw, 2.85rem); font-weight: 300; line-height: 1.23; }
+.chapter-preview-description { max-width: 32rem; margin: 0.9rem 0 0; color: rgb(243 240 230 / 87%); font-family: var(--font-ui); font-size: clamp(0.78rem, 0.37vw + 0.7rem, 0.98rem); line-height: 1.8; }
+
+.chapter-index-menu {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(167 220 218 / 46%) transparent;
+}
+
+.chapter-index-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1.8rem;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.45rem 0.7rem 0.45rem 0.9rem;
+  border: 0;
+  border-bottom: 1px solid rgb(243 242 233 / 15%);
+  background: transparent;
+  color: rgb(243 242 233 / 68%);
+  cursor: pointer;
+  text-align: left;
+  transition: color 120ms linear, border-color 120ms linear;
+}
+
+.chapter-index-row.is-preview,
+.chapter-index-row:focus-visible { border-color: rgb(243 242 233 / 55%); color: var(--stage-white); outline: 0; }
+.chapter-index-row:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
+.chapter-index-row.is-locked { cursor: not-allowed; opacity: 0.35; }
+.chapter-index-name { min-width: 0; overflow: hidden; font-family: var(--font-ui); font-size: clamp(0.72rem, 0.35vw + 0.64rem, 0.89rem); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.chapter-index-rule { justify-self: end; width: 0.42rem; height: 1px; background: rgb(167 220 218 / 47%); transition: width 120ms linear, background-color 120ms linear; }
+.chapter-index-row.is-preview .chapter-index-rule,
+.chapter-index-row:focus-visible .chapter-index-rule { width: 1.2rem; background: var(--stage-signal); }
+
+/* CGs retain a visual index because the images are the content, but use a
+   film-strip edge and rectangular frames instead of app-card treatment. */
+.sheet--gallery .gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  width: min(76rem, 100%);
+  margin: 0;
+  border: 0;
+  background: rgb(243 242 233 / 22%);
+}
+
+.sheet--gallery .gallery-card {
+  position: relative;
+  display: grid;
+  min-height: clamp(8rem, 19vh, 13rem);
+  padding: 0.7rem;
+  overflow: hidden;
+  border: 0;
+  background: #0a1116;
+  color: var(--stage-white);
+  text-align: left;
+}
+
+.sheet--gallery .gallery-card::after { position: absolute; inset: 0; content: ""; pointer-events: none; background: linear-gradient(180deg, transparent 37%, rgb(8 8 15 / 76%)); }
+.sheet--gallery .gallery-card:hover,
+.sheet--gallery .gallery-card:focus-visible { outline: 1px solid var(--focus); outline-offset: -3px; }
+.sheet--gallery .gallery-image { opacity: 0.76; transition: opacity 120ms linear; }
+.sheet--gallery .gallery-card:hover .gallery-image,
+.sheet--gallery .gallery-card:focus-visible .gallery-image { opacity: 0.98; }
+.sheet--gallery .gallery-index,
+.sheet--gallery .gallery-label { position: relative; z-index: 1; }
+.sheet--gallery .gallery-index { color: rgb(212 237 232 / 86%); font-family: var(--font-ui); font-size: 0.58rem; letter-spacing: 0.14em; }
+.sheet--gallery .gallery-label { max-width: 13rem; font-family: var(--font-ui); font-size: 0.82rem; line-height: 1.5; }
+.sheet--gallery .gallery-card[aria-disabled="true"] { opacity: 0.38; }
+
+/* A confirmation is a small record fragment, never a native alert card. */
+.sheet--confirm .stage-sheet-content { min-height: 20rem; padding: clamp(1.3rem, 4vw, 2.8rem); }
+.sheet--confirm .sheet-tide-line { margin-bottom: 1.35rem; }
+.sheet--confirm .confirmation-message { max-width: 28rem; margin: 0.2rem 0 1.75rem; color: var(--stage-white); font-family: var(--font-ui); font-size: clamp(0.9rem, 0.4vw + 0.79rem, 1.1rem); line-height: 1.9; text-align: left; }
+.sheet--confirm .confirmation-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: auto; background: rgb(243 242 233 / 27%); }
+.sheet--confirm .confirmation-accept,
+.sheet--confirm .confirmation-cancel { min-height: 50px; padding: 0.7rem; border: 0; background: rgb(10 12 18 / 74%); color: rgb(243 242 233 / 72%); cursor: pointer; font-family: var(--font-ui); font-size: 0.72rem; letter-spacing: 0.13em; text-align: center; transition: color 120ms linear, background-color 120ms linear, transform 100ms var(--ease-out); }
+.sheet--confirm .confirmation-accept { color: var(--stage-white); }
+.sheet--confirm .confirmation-accept:hover,
+.sheet--confirm .confirmation-cancel:hover,
+.sheet--confirm .confirmation-accept:focus-visible,
+.sheet--confirm .confirmation-cancel:focus-visible { background: rgb(167 220 218 / 17%); color: var(--stage-white); outline: 1px solid var(--focus); outline-offset: -2px; }
+.sheet--confirm .confirmation-accept:active,
+.sheet--confirm .confirmation-cancel:active { transform: translateY(1px) scale(0.985); }
+
+/* Gallery viewing remains a genuine full-screen image. Its controls get the
+   same label treatment but the photograph itself stays unobscured. */
+.gallery-viewer-header,
+.gallery-viewer-controls { font-family: var(--font-ui); }
+.gallery-viewer-header { letter-spacing: 0.14em; }
+.gallery-viewer .icon-button { color: var(--stage-white); }
+.gallery-viewer-control { font-family: var(--font-ui); letter-spacing: 0.1em; }
+
+:where(.high-contrast, html.umikaze-high-contrast) .record-stage-scanlines { opacity: 0; }
+:where(.high-contrast, html.umikaze-high-contrast) .record-stage-vignette { background: rgb(0 0 0 / 82%); }
+:where(.high-contrast, html.umikaze-high-contrast) .interlude-screen { background: #000; }
+:where(.high-contrast, html.umikaze-high-contrast) .interlude-line { color: #fff; text-shadow: none; }
+:where(.high-contrast, html.umikaze-high-contrast) .focus-menu-item,
+:where(.high-contrast, html.umikaze-high-contrast) .settings-index-item,
+:where(.high-contrast, html.umikaze-high-contrast) .chapter-index-row,
+:where(.high-contrast, html.umikaze-high-contrast) .record-slot,
+:where(.high-contrast, html.umikaze-high-contrast) .backlog-entry { border-color: rgb(255 255 255 / 76%); color: #fff; }
+
+@keyframes stage-arrive {
+  from { opacity: 0; transform: translateY(0.8rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduced motion leaves a short opacity cue so a route still feels like a
+   deliberate scene change, while removing all spatial movement. */
+:where(.reduce-motion, html.umikaze-reduced-motion) .record-title-screen,
+:where(.reduce-motion, html.umikaze-reduced-motion) .stage-sheet-content,
+:where(.reduce-motion, html.umikaze-reduced-motion) .day-card,
+:where(.reduce-motion, html.umikaze-reduced-motion) .interlude-line,
+:where(.reduce-motion, html.umikaze-reduced-motion) .demo-end-screen {
+  animation: stage-fade 120ms linear both;
+}
+
+:where(.reduce-motion, html.umikaze-reduced-motion) .interlude-screen--first .interlude-line {
+  animation-delay: 120ms;
+}
+
+:where(.reduce-motion, html.umikaze-reduced-motion) :is(
+  .record-title-screen--home .title-identity,
+  .record-title-screen--home .title-selection,
+  .day-card-copy,
+  .day-card-advance
+) { animation: none !important; }
+
+:where(.reduce-motion, html.umikaze-reduced-motion) :is(
+  .day-card-advance,
+  .sheet--save .record-slot,
+  .sheet--load .record-slot,
+  .sheet--confirm .confirmation-accept,
+  .sheet--confirm .confirmation-cancel
+):active { transform: none; }
+
+:where(.reduce-motion, html.umikaze-reduced-motion) :is(
+  .focus-menu-item,
+  .settings-index-item,
+  .setting-rail-button,
+  .binary-setting-button,
+  .chapter-index-row,
+  .record-slot,
+  .gallery-card,
+  .stage-close
+) { transition-duration: 120ms !important; }
+
+@keyframes stage-fade { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .record-title-screen,
+  .stage-sheet-content,
+  .day-card,
+  .interlude-line,
+  .demo-end-screen { animation: stage-fade 120ms linear both; }
+  .interlude-screen--first .interlude-line { animation-delay: 120ms; }
+  .record-title-screen--home .title-identity,
+  .record-title-screen--home .title-selection,
+  .day-card-copy,
+  .day-card-advance { animation: none !important; }
+  .record-title-screen *,
+  .stage-sheet-content *,
+  .day-card * { scroll-behavior: auto; }
+}
+
+@media (max-width: 760px) {
+  .record-title-screen {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+    gap: clamp(1.2rem, 3vh, 1.8rem);
+    padding: max(1.6rem, env(safe-area-inset-top)) max(1.35rem, env(safe-area-inset-right)) max(1.35rem, env(safe-area-inset-bottom)) max(1.35rem, env(safe-area-inset-left));
+  }
+
+  .title-identity { grid-row: 1; padding-left: 0; }
+  .title-masthead { width: min(25rem, 92%); margin-top: 0; transform: translateY(1.4vh); }
+  .title-masthead h1 { font-size: clamp(3.1rem, 14vw, 5.8rem); }
+  .title-selection {
+    grid-row: 2;
+    align-self: end;
+    justify-self: end;
+    width: min(19rem, 100%);
+    margin-top: 0;
+    padding-left: 0.9rem;
+  }
+  .title-command-list .focus-menu-list { gap: clamp(0.88rem, 2.2vh, 1.2rem); }
+
+  .record-title-screen--home {
+    gap: clamp(1.45rem, 3.8vh, 2rem);
+  }
+
+  .record-title-screen--home .title-masthead { width: min(24rem, 88%); }
+  .record-title-screen--home .title-masthead h1 { font-size: clamp(4.1rem, 18vw, 6.5rem); }
+  .record-title-screen--home .title-selection { width: min(18rem, 100%); }
+
+  .demo-end-screen {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: clamp(1.4rem, 4vh, 2.2rem);
+    padding: max(1.6rem, env(safe-area-inset-top)) max(1.35rem, env(safe-area-inset-right)) max(1.4rem, env(safe-area-inset-bottom)) max(1.35rem, env(safe-area-inset-left));
+  }
+  .demo-end-screen::before { top: 15%; bottom: 23%; left: 0.72rem; }
+  .demo-end-copy { align-self: center; max-width: min(29rem, 88vw); padding-left: 1rem; }
+  .demo-end-copy h1 { font-size: clamp(1.85rem, 8.4vw, 3.1rem); }
+  .demo-end-command-list { width: min(19rem, 100%); margin: 0 0 0 auto; }
+  .demo-end-command-list .focus-menu-inline-description { white-space: normal; }
+
+  .day-card {
+    padding: max(1.5rem, env(safe-area-inset-top)) max(1.35rem, env(safe-area-inset-right)) max(1.6rem, env(safe-area-inset-bottom)) max(1.35rem, env(safe-area-inset-left));
+  }
+  .day-card-copy { width: min(29rem, 88vw); margin-bottom: clamp(3.8rem, 9vh, 5.4rem); }
+  .day-card h1 { font-size: clamp(3rem, 14vw, 5.4rem); letter-spacing: 0.1em; }
+  .day-card-synopsis { max-width: min(23rem, 88vw); }
+  .day-card-advance {
+    right: max(1.35rem, calc(env(safe-area-inset-right) + 0.7rem));
+    bottom: max(1.35rem, calc(env(safe-area-inset-bottom) + 0.7rem));
+  }
+
+  .record-stage-fragment { font-size: clamp(0.43rem, 1.8vw, 0.61rem); line-height: 1.7; }
+  .record-stage-fragment--tractatus-silence { top: 62%; left: -5%; width: min(15rem, 58vw); }
+  .record-stage-fragment--yodaka { top: 19%; left: 1%; width: min(13rem, 56vw); }
+  .record-stage-fragment--galaxy { right: -6%; bottom: 30%; width: min(16rem, 63vw); }
+
+  .rmenu-modal {
+    top: max(48px, calc(env(safe-area-inset-top) + 24px));
+    left: max(28px, calc(env(safe-area-inset-left) + 20px));
+    width: min(18rem, calc(100vw - 3.5rem));
+  }
+  .rmenu-command-list .focus-menu-item { min-height: 39px; }
+
+  .stage-sheet-content { padding: max(1.1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+  .stage-sheet .sheet-header h2 { font-size: 1.55rem; }
+  .stage-sheet .sheet-tide-line { margin: 0.9rem 0 1.15rem; }
+
+  .sheet--save .record-slot,
+  .sheet--load .record-slot { grid-template-columns: 5.5rem minmax(0, 1fr); min-height: 58px; gap: 0.2rem; }
+  .sheet--save .record-slot-label,
+  .sheet--load .record-slot-label { grid-column: 2; }
+
+  .settings-stage { grid-template-columns: 1fr; gap: 1.2rem; }
+  .settings-index { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-index-item { min-height: 44px; padding-left: 0.65rem; font-size: 0.66rem; }
+  .setting-rail,
+  .binary-setting,
+  .settings-status { grid-template-columns: 1fr; gap: 0.45rem; padding: 0.8rem 0; }
+  .setting-rail-controls,
+  .binary-setting-controls { width: min(20rem, 100%); }
+
+  .sheet--chapter .stage-sheet-content { overflow: auto; }
+  .chapter-stage { grid-template-columns: 1fr; min-height: auto; }
+  .chapter-preview { min-height: 18rem; border-right: 0; border-bottom: 1px solid rgb(243 242 233 / 22%); }
+  .chapter-index-menu { max-height: none; overflow: visible; }
+  .chapter-index-row { min-height: 50px; }
+
+  .sheet--gallery .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sheet--gallery .gallery-card { min-height: 9rem; }
+}
+
+@media (max-height: 640px) and (min-width: 761px) {
+  .record-title-screen { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+  .title-masthead { transform: translateY(0.35rem); }
+  .title-selection,
+  .record-title-screen--home .title-selection { margin-top: 2.75rem; }
+  .rmenu-command-list .focus-menu-item { min-height: 35px; }
+  .rmenu-command-list .focus-menu-description { margin-top: 0.45rem; }
+}

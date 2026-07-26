@@ -1,4 +1,5 @@
-// Ordered 2D rendering for the platform-neutral Aria RenderFrame protocol.
+// Ordered scene-only rendering for the platform-neutral Aria SceneFrame
+// protocol. React owns every interactive UI surface above this canvas.
 //
 // Both backends consume the same Core commands. WebGPU is preferred; WebGL2
 // is a complete fallback rather than a separate game runtime. Text is shaped
@@ -6,6 +7,8 @@
 // clipping rectangle, and logical viewport identical to sprites and rects.
 
 const MAX_TEXTURE_DIMENSION = 4096;
+const WHITE = { red: 255, green: 255, blue: 255, alpha: 255 };
+const BLACK = { red: 0, green: 0, blue: 0, alpha: 255 };
 
 export async function createWebRenderer(
   canvas,
@@ -115,6 +118,7 @@ class RendererBase {
       command.speaker || "",
       command.font_size,
       colorKey(command.color),
+      styleKey(command.style),
       this.fontFamilyCss,
       Math.ceil(bounds.width * pixelScale),
       Math.ceil(bounds.height * pixelScale),
@@ -151,7 +155,10 @@ class WebGl2Renderer extends RendererBase {
   static create(canvas, readAsset, onStatus, fontFamilies) {
     const gl = canvas.getContext("webgl2", {
       alpha: false,
-      antialias: true,
+      // Scene art is texture-filtered; multisample antialiasing mainly taxes
+      // the full-screen background in WebKit GTK without improving text (the
+      // reading surface is DOM). Keep that budget for stable frame pacing.
+      antialias: false,
       premultipliedAlpha: false,
     });
     if (!gl) throw new Error("WebGL2 context creation failed");
@@ -185,6 +192,8 @@ class WebGl2Renderer extends RendererBase {
     this.position = gl.getAttribLocation(this.program, "a_position");
     this.uv = gl.getAttribLocation(this.program, "a_uv");
     this.color = gl.getAttribLocation(this.program, "a_color");
+    this.sdf = gl.getAttribLocation(this.program, "a_sdf");
+    this.shapeEnabled = gl.getAttribLocation(this.program, "a_shape_enabled");
     this.textureUniform = gl.getUniformLocation(this.program, "u_texture");
     this.vertexBuffer = gl.createBuffer();
     this.whiteTexture = gl.createTexture();
@@ -212,7 +221,11 @@ class WebGl2Renderer extends RendererBase {
     const gl = this.gl;
     texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    // `verticesFor` maps v=0 to the top edge of a Core rectangle. Browser
+    // canvas/ImageBitmap sources are already uploaded with their first row at
+    // that sampled edge, so flipping here would render every image and text
+    // texture upside down in the WebGL2 fallback.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -235,18 +248,24 @@ class WebGl2Renderer extends RendererBase {
     gl.enableVertexAttribArray(this.position);
     gl.enableVertexAttribArray(this.uv);
     gl.enableVertexAttribArray(this.color);
-    gl.vertexAttribPointer(this.position, 2, gl.FLOAT, false, 32, 0);
-    gl.vertexAttribPointer(this.uv, 2, gl.FLOAT, false, 32, 8);
-    gl.vertexAttribPointer(this.color, 4, gl.FLOAT, false, 32, 16);
+    gl.vertexAttribPointer(this.position, 2, gl.FLOAT, false, 52, 0);
+    gl.vertexAttribPointer(this.uv, 2, gl.FLOAT, false, 52, 8);
+    gl.vertexAttribPointer(this.color, 4, gl.FLOAT, false, 52, 16);
+    gl.enableVertexAttribArray(this.sdf);
+    gl.enableVertexAttribArray(this.shapeEnabled);
+    gl.vertexAttribPointer(this.sdf, 4, gl.FLOAT, false, 52, 32);
+    gl.vertexAttribPointer(this.shapeEnabled, 1, gl.FLOAT, false, 52, 48);
     gl.uniform1i(this.textureUniform, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.enable(gl.BLEND);
     for (const plan of plans) {
+      if (!setGlScissor(gl, plan.clip, viewport)) continue;
       selectGlBlend(gl, plan.blend);
       gl.bindTexture(gl.TEXTURE_2D, plan.texture || this.whiteTexture);
-      gl.bufferData(gl.ARRAY_BUFFER, verticesFor(plan.bounds, plan.color, viewport), gl.STREAM_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, verticesFor(plan, viewport), gl.STREAM_DRAW);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
+    gl.disable(gl.SCISSOR_TEST);
   }
 }
 
@@ -370,7 +389,6 @@ class WebGpuRenderer extends RendererBase {
     if (this.recovering) return;
     const viewport = this.viewport(frame);
     const plans = await buildPlans(this, frame, viewport);
-    this.context.configure({ device: this.device, format: this.format, alphaMode: "opaque" });
     const encoder = this.device.createCommandEncoder();
     const target = this.context.getCurrentTexture().createView();
     const pass = encoder.beginRenderPass({
@@ -382,6 +400,7 @@ class WebGpuRenderer extends RendererBase {
       }],
     });
     for (const plan of plans) {
+      if (!setGpuScissor(pass, plan.clip, viewport)) continue;
       pass.setPipeline(
         plan.blend === "add"
           ? this.addPipeline
@@ -390,10 +409,10 @@ class WebGpuRenderer extends RendererBase {
             : this.alphaPipeline,
       );
       const buffer = this.device.createBuffer({
-        size: 6 * 8 * Float32Array.BYTES_PER_ELEMENT,
+        size: 6 * 13 * Float32Array.BYTES_PER_ELEMENT,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
-      this.device.queue.writeBuffer(buffer, 0, verticesFor(plan.bounds, plan.color, viewport));
+      this.device.queue.writeBuffer(buffer, 0, verticesFor(plan, viewport));
       pass.setVertexBuffer(0, buffer);
       pass.setBindGroup(0, plan.texture?.bindGroup || this.whiteBindGroup);
       pass.draw(6);
@@ -410,31 +429,102 @@ async function buildPlans(renderer, frame, viewport) {
       if (!command.visible) continue;
       const source = await renderer.image(command.asset);
       const texture = await renderer.texture(`image:${command.asset}`, source);
+      const bounds = scaleBounds(
+        fittedBounds(command.destination, source, command.fit || "fill"),
+        Number(command.scale) || 1,
+      );
       plans.push({
         texture,
-        bounds: resolvedBounds(command.destination, source),
-        color: { red: 255, green: 255, blue: 255, alpha: command.opacity },
-        blend: command.blend,
+        bounds,
+        colors: gradientColors(
+          bounds,
+          multiplyColor(command.tint || WHITE, { ...WHITE, alpha: command.opacity }),
+          command.style?.gradient,
+          styleOpacity(command.style),
+        ),
+        blend: command.blend || "alpha",
+        clip: command.style?.clip || (command.fit === "cover" ? command.destination : null),
+        cornerRadius: Number(command.style?.corner_radius) || 0,
+        softness: 0,
+        shapeEnabled: (Number(command.style?.corner_radius) || 0) > 0,
+        rotation: Number(command.rotation_degrees) || 0,
       });
     } else if (command.kind === "rectangle") {
+      const style = command.style || {};
+      const radius = Math.max(Number(command.corner_radius) || 0, Number(style.corner_radius) || 0);
+      if (style.shadow) {
+        const blur = Math.max(0.75, Number(style.shadow.blur) || 0);
+        const shadowBounds = {
+          x: command.bounds.x + (Number(style.shadow.offset_x) || 0) - blur,
+          y: command.bounds.y + (Number(style.shadow.offset_y) || 0) - blur,
+          width: command.bounds.width + blur * 2,
+          height: command.bounds.height + blur * 2,
+        };
+        plans.push({
+          texture: null,
+          bounds: shadowBounds,
+          colors: solidColors(applyOpacity(style.shadow.color || BLACK, styleOpacity(style))),
+          blend: "alpha",
+          clip: style.clip || null,
+          cornerRadius: radius + blur,
+          softness: blur,
+          shapeEnabled: true,
+          rotation: 0,
+        });
+      }
       plans.push({
+        texture: null,
         bounds: command.bounds,
-        color: command.color,
+        colors: gradientColors(command.bounds, command.color, style.gradient, styleOpacity(style)),
         blend: "alpha",
+        clip: style.clip || null,
+        cornerRadius: radius,
+        softness: 0,
+        shapeEnabled: true,
+        rotation: 0,
       });
+      if (style.border) {
+        const width = Math.max(1, Number(style.border.width) || 1);
+        for (const border of borderRects(command.bounds, width)) {
+          plans.push({
+            texture: null,
+            bounds: border,
+            colors: solidColors(applyOpacity(style.border.color || WHITE, styleOpacity(style))),
+            blend: "alpha",
+            clip: style.clip || null,
+            cornerRadius: radius,
+            softness: 0,
+            shapeEnabled: true,
+            rotation: 0,
+          });
+        }
+      }
     } else if (command.kind === "text") {
       const source = await renderer.textTexture(command, viewport);
       const texture = await renderer.texture(`text:${source.key}`, source.canvas);
       plans.push({
         texture,
         bounds: command.bounds,
-        color: { red: 255, green: 255, blue: 255, alpha: 255 },
+        colors: solidColors(WHITE),
         blend: "alpha",
+        clip: command.style?.clip || null,
+        cornerRadius: 0,
+        softness: 0,
+        shapeEnabled: false,
+        rotation: 0,
       });
     }
   }
   const transition = transitionPlan(frame);
   if (transition) plans.push(transition);
+  for (const effect of effectPlans(frame)) plans.push(effect);
+
+  const [shakeX, shakeY] = shakeOffset(frame.effects || []);
+  if (shakeX || shakeY) {
+    for (const plan of plans) {
+      plan.bounds = { ...plan.bounds, x: plan.bounds.x + shakeX, y: plan.bounds.y + shakeY };
+    }
+  }
   return plans;
 }
 
@@ -449,36 +539,56 @@ function createTextCanvas(command, pixelScale, fontFamilyCss) {
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d", { alpha: true });
+  const style = command.style || {};
   const fontSize = Math.max(1, command.font_size * pixelScale);
-  const lineHeight = Math.max(fontSize * 1.35, 1);
+  const lineHeight = Math.max(
+    (Number(style.line_height) > 0 ? Number(style.line_height) * pixelScale : fontSize * 1.35),
+    1,
+  );
+  const letterSpacing = (Number(style.letter_spacing) || 0) * pixelScale;
   context.clearRect(0, 0, width, height);
   context.font = `${fontSize}px ${fontFamilyCss}`;
   context.textBaseline = "top";
-  context.fillStyle = cssColor(command.color);
   const content = command.speaker ? `${command.speaker}\n${command.text}` : command.text;
+  const align = style.text_align === "center"
+    ? "center"
+    : style.text_align === "end"
+      ? "right"
+      : "left";
+  const x = align === "center" ? width * 0.5 : align === "right" ? width : 0;
   let y = 0;
   for (const paragraph of content.split("\n")) {
-    for (const line of wrapText(context, paragraph, width)) {
+    for (const line of wrapText(context, paragraph, width, letterSpacing)) {
       if (y + lineHeight > height + 0.5) break;
-      context.fillText(line, 0, y);
+      drawDecoratedText(
+        context,
+        line,
+        x,
+        y,
+        align,
+        letterSpacing,
+        applyOpacity(command.color, styleOpacity(style)),
+        style.text_decoration,
+        styleOpacity(style),
+      );
       y += lineHeight;
     }
   }
   return {
-    key: [content, command.font_size, colorKey(command.color), width, height].join("|"),
+    key: [content, command.font_size, colorKey(command.color), styleKey(style), width, height].join("|"),
     canvas,
     width,
     height,
   };
 }
 
-function wrapText(context, text, maxWidth) {
+function wrapText(context, text, maxWidth, letterSpacing = 0) {
   if (!text) return [""];
   const lines = [];
   let line = "";
   for (const grapheme of Array.from(text)) {
     const candidate = line + grapheme;
-    if (line && context.measureText(candidate).width > maxWidth) {
+    if (line && measuredTextWidth(context, candidate, letterSpacing) > maxWidth) {
       lines.push(line);
       line = grapheme;
     } else {
@@ -487,6 +597,53 @@ function wrapText(context, text, maxWidth) {
   }
   lines.push(line);
   return lines;
+}
+
+function drawDecoratedText(context, text, x, y, align, letterSpacing, color, decoration, opacity) {
+  const draw = (drawColor, offsetX = 0, offsetY = 0) => {
+    context.fillStyle = cssColor(drawColor);
+    drawSpacedText(context, text, x + offsetX, y + offsetY, align, letterSpacing);
+  };
+  const [kind, value] = decorationEntry(decoration);
+  if (kind === "shadow") {
+    draw(applyOpacity(value.color || BLACK, opacity), Number(value.offset_x) || 0, Number(value.offset_y) || 0);
+  } else if (kind === "outline") {
+    const width = Math.max(1, Number(value.width) || 1);
+    for (const [offsetX, offsetY] of [[-width, 0], [width, 0], [0, -width], [0, width]]) {
+      draw(applyOpacity(value.color || BLACK, opacity), offsetX, offsetY);
+    }
+  }
+  draw(color);
+}
+
+function drawSpacedText(context, text, x, y, align, letterSpacing) {
+  if (!letterSpacing) {
+    context.textAlign = align;
+    context.fillText(text, x, y);
+    return;
+  }
+  const glyphs = Array.from(text);
+  const width = measuredTextWidth(context, text, letterSpacing);
+  let cursor = align === "center" ? x - width * 0.5 : align === "right" ? x - width : x;
+  context.textAlign = "left";
+  for (const glyph of glyphs) {
+    context.fillText(glyph, cursor, y);
+    cursor += context.measureText(glyph).width + letterSpacing;
+  }
+}
+
+function measuredTextWidth(context, text, letterSpacing) {
+  const glyphs = Array.from(text);
+  return context.measureText(text).width + Math.max(0, glyphs.length - 1) * letterSpacing;
+}
+
+function decorationEntry(decoration) {
+  if (!decoration || decoration === "none") return ["none", {}];
+  if (typeof decoration === "object") {
+    const entry = Object.entries(decoration)[0];
+    return entry || ["none", {}];
+  }
+  return ["none", {}];
 }
 
 function transitionPlan(frame) {
@@ -501,24 +658,74 @@ function transitionPlan(frame) {
   if (kind === "wipe_left") {
     return {
       bounds: { x: 0, y: 0, width: width * remaining, height },
-      color: { red: 0, green: 0, blue: 0, alpha: 255 },
+      colors: solidColors(BLACK),
       blend: "alpha",
+      clip: null,
+      cornerRadius: 0,
+      softness: 0,
+      shapeEnabled: false,
+      rotation: 0,
     };
   }
   if (kind === "wipe_right") {
     return {
       bounds: { x: width * progress, y: 0, width: width * remaining, height },
-      color: { red: 0, green: 0, blue: 0, alpha: 255 },
+      colors: solidColors(BLACK),
       blend: "alpha",
+      clip: null,
+      cornerRadius: 0,
+      softness: 0,
+      shapeEnabled: false,
+      rotation: 0,
     };
   }
   // Declarative mask texture support is added at the protocol level later;
   // matching Native's current fallback keeps the frame meaning deterministic.
   return {
     bounds: { x: 0, y: 0, width, height },
-    color: { red: 0, green: 0, blue: 0, alpha: Math.round(remaining * 255) },
+    colors: solidColors({ ...BLACK, alpha: Math.round(remaining * 255) }),
     blend: "alpha",
+    clip: null,
+    cornerRadius: 0,
+    softness: 0,
+    shapeEnabled: false,
+    rotation: 0,
   };
+}
+
+function effectPlans(frame) {
+  const width = frame.logical_size.width;
+  const height = frame.logical_size.height;
+  return (frame.effects || []).flatMap((effect) => {
+    if (effect.kind === "shake") return [];
+    const opacity = Math.round((Number(effect.opacity) || 0) * (1 - clamp(Number(effect.progress) || 0, 0, 1)));
+    return [{
+      texture: null,
+      bounds: { x: 0, y: 0, width, height },
+      colors: solidColors({ ...(effect.color || WHITE), alpha: opacity }),
+      blend: "alpha",
+      clip: null,
+      cornerRadius: 0,
+      softness: 0,
+      shapeEnabled: false,
+      rotation: 0,
+    }];
+  });
+}
+
+function shakeOffset(effects) {
+  return effects
+    .filter((effect) => effect.kind === "shake")
+    .reduce(([x, y], effect) => {
+      const progress = clamp(Number(effect.progress) || 0, 0, 1);
+      const amplitude = Number(effect.amplitude) || 0;
+      const fade = 1 - progress;
+      const phase = progress * Math.PI * 2 * 3;
+      return [
+        x + amplitude * Math.sin(phase) * fade,
+        y + amplitude * Math.cos(phase * 1.37) * fade,
+      ];
+    }, [0, 0]);
 }
 
 function resolvedBounds(bounds, source) {
@@ -530,7 +737,117 @@ function resolvedBounds(bounds, source) {
   };
 }
 
-function verticesFor(bounds, color, viewport) {
+function fittedBounds(bounds, source, fit) {
+  const destination = resolvedBounds(bounds, source);
+  if (
+    fit === "fill" ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    !source.width ||
+    !source.height
+  ) {
+    return destination;
+  }
+  const sourceAspect = source.width / source.height;
+  const destinationAspect = destination.width / Math.max(Number.EPSILON, destination.height);
+  let scale;
+  if (fit === "contain") {
+    scale = sourceAspect > destinationAspect
+      ? destination.width / source.width
+      : destination.height / source.height;
+  } else {
+    scale = sourceAspect > destinationAspect
+      ? destination.height / source.height
+      : destination.width / source.width;
+  }
+  const width = source.width * scale;
+  const height = source.height * scale;
+  return {
+    x: destination.x + (destination.width - width) * 0.5,
+    y: destination.y + (destination.height - height) * 0.5,
+    width,
+    height,
+  };
+}
+
+function scaleBounds(bounds, scale) {
+  if (Math.abs(scale - 1) < Number.EPSILON) return bounds;
+  const width = bounds.width * scale;
+  const height = bounds.height * scale;
+  return {
+    x: bounds.x + (bounds.width - width) * 0.5,
+    y: bounds.y + (bounds.height - height) * 0.5,
+    width,
+    height,
+  };
+}
+
+function borderRects(bounds, width) {
+  return [
+    { ...bounds, height: width },
+    { ...bounds, y: bounds.y + bounds.height - width, height: width },
+    { ...bounds, width },
+    { ...bounds, x: bounds.x + bounds.width - width, width },
+  ];
+}
+
+function styleOpacity(style) {
+  return clamp(Number(style?.opacity ?? 255), 0, 255);
+}
+
+function applyOpacity(color, opacity) {
+  return { ...color, alpha: Math.round((Number(color.alpha) || 0) * opacity / 255) };
+}
+
+function multiplyColor(left, right) {
+  return {
+    red: Math.round((Number(left.red) || 0) * (Number(right.red) || 0) / 255),
+    green: Math.round((Number(left.green) || 0) * (Number(right.green) || 0) / 255),
+    blue: Math.round((Number(left.blue) || 0) * (Number(right.blue) || 0) / 255),
+    alpha: Math.round((Number(left.alpha) || 0) * (Number(right.alpha) || 0) / 255),
+  };
+}
+
+function solidColors(color) {
+  return [color, color, color, color];
+}
+
+function gradientColors(bounds, fallback, gradient, opacity) {
+  if (!gradient) return solidColors(applyOpacity(fallback, opacity));
+  const radians = (Number(gradient.angle_degrees) || 0) * Math.PI / 180;
+  const direction = [Math.cos(radians), Math.sin(radians)];
+  const denominator = Math.max(
+    1,
+    Math.abs(direction[0]) * bounds.width + Math.abs(direction[1]) * bounds.height,
+  );
+  const sample = (x, y) => blendColor(
+    gradient.start || fallback,
+    gradient.end || fallback,
+    clamp((x * direction[0] + y * direction[1]) / denominator + 0.5, 0, 1),
+    opacity,
+  );
+  const halfWidth = bounds.width * 0.5;
+  const halfHeight = bounds.height * 0.5;
+  return [
+    sample(-halfWidth, -halfHeight),
+    sample(halfWidth, -halfHeight),
+    sample(halfWidth, halfHeight),
+    sample(-halfWidth, halfHeight),
+  ];
+}
+
+function blendColor(start, end, progress, opacity) {
+  const blend = (left, right) => Math.round(Number(left) + (Number(right) - Number(left)) * progress);
+  return applyOpacity({
+    red: blend(start.red, end.red),
+    green: blend(start.green, end.green),
+    blue: blend(start.blue, end.blue),
+    alpha: blend(start.alpha, end.alpha),
+  }, opacity);
+}
+
+function verticesFor(plan, viewport) {
+  const bounds = plan.bounds;
   const x = viewport.offsetX + bounds.x * viewport.scale;
   const y = viewport.offsetY + bounds.y * viewport.scale;
   const width = bounds.width * viewport.scale;
@@ -539,15 +856,78 @@ function verticesFor(bounds, color, viewport) {
   const right = (x + width) / viewport.width * 2 - 1;
   const top = 1 - y / viewport.height * 2;
   const bottom = 1 - (y + height) / viewport.height * 2;
-  const [red, green, blue, alpha] = colorFloat(color);
-  return new Float32Array([
-    left, top, 0, 0, red, green, blue, alpha,
-    right, top, 1, 0, red, green, blue, alpha,
-    right, bottom, 1, 1, red, green, blue, alpha,
-    left, top, 0, 0, red, green, blue, alpha,
-    right, bottom, 1, 1, red, green, blue, alpha,
-    left, bottom, 0, 1, red, green, blue, alpha,
-  ]);
+  const positions = [
+    [left, top], [right, top], [right, bottom],
+    [left, top], [right, bottom], [left, bottom],
+  ];
+  if (plan.rotation) {
+    const radians = plan.rotation * Math.PI / 180;
+    const centerX = (left + right) * 0.5;
+    const centerY = (top + bottom) * 0.5;
+    const sin = Math.sin(radians);
+    const cos = Math.cos(radians);
+    for (const position of positions) {
+      const localX = position[0] - centerX;
+      const localY = position[1] - centerY;
+      position[0] = centerX + localX * cos - localY * sin;
+      position[1] = centerY + localX * sin + localY * cos;
+    }
+  }
+  const radius = Math.min(
+    Math.max(0, Number(plan.cornerRadius) || 0) * viewport.scale,
+    Math.min(width, height) * 0.5,
+  );
+  const sdf = [width, height, radius, Math.max(0, Number(plan.softness) || 0) * viewport.scale];
+  const uv = [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]];
+  const colors = plan.colors || solidColors(WHITE);
+  const data = [];
+  for (let index = 0; index < 6; index += 1) {
+    data.push(...positions[index], ...uv[index], ...colorFloat(colors[[0, 1, 2, 0, 2, 3][index]]), ...sdf, plan.shapeEnabled ? 1 : 0);
+  }
+  return new Float32Array(data);
+}
+
+function physicalClip(clip, viewport) {
+  if (!clip) return null;
+  return {
+    x: viewport.offsetX + clip.x * viewport.scale,
+    y: viewport.offsetY + clip.y * viewport.scale,
+    width: clip.width * viewport.scale,
+    height: clip.height * viewport.scale,
+  };
+}
+
+function setGlScissor(gl, clip, viewport) {
+  const rect = physicalClip(clip, viewport) || {
+    x: 0,
+    y: 0,
+    width: viewport.width,
+    height: viewport.height,
+  };
+  const x = Math.max(0, Math.floor(rect.x));
+  const top = Math.max(0, Math.floor(rect.y));
+  const right = Math.min(viewport.width, Math.ceil(rect.x + rect.width));
+  const bottom = Math.min(viewport.height, Math.ceil(rect.y + rect.height));
+  if (right <= x || bottom <= top) return false;
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(x, viewport.height - bottom, right - x, bottom - top);
+  return true;
+}
+
+function setGpuScissor(pass, clip, viewport) {
+  const rect = physicalClip(clip, viewport) || {
+    x: 0,
+    y: 0,
+    width: viewport.width,
+    height: viewport.height,
+  };
+  const x = Math.max(0, Math.floor(rect.x));
+  const y = Math.max(0, Math.floor(rect.y));
+  const right = Math.min(viewport.width, Math.ceil(rect.x + rect.width));
+  const bottom = Math.min(viewport.height, Math.ceil(rect.y + rect.height));
+  if (right <= x || bottom <= y) return false;
+  pass.setScissorRect(x, y, right - x, bottom - y);
+  return true;
 }
 
 function colorFloat(color) {
@@ -565,6 +945,10 @@ function cssColor(color) {
 
 function colorKey(color) {
   return `${color.red},${color.green},${color.blue},${color.alpha}`;
+}
+
+function styleKey(style) {
+  return JSON.stringify(style || {});
 }
 
 function clamp(value, minimum, maximum) {
@@ -608,11 +992,13 @@ function createGpuPipeline(device, format, blend) {
       module: device.createShaderModule({ code: WEBGPU_SHADER }),
       entryPoint: "vs_main",
       buffers: [{
-        arrayStride: 32,
+        arrayStride: 52,
         attributes: [
           { shaderLocation: 0, offset: 0, format: "float32x2" },
           { shaderLocation: 1, offset: 8, format: "float32x2" },
           { shaderLocation: 2, offset: 16, format: "float32x4" },
+          { shaderLocation: 3, offset: 32, format: "float32x4" },
+          { shaderLocation: 4, offset: 48, format: "float32" },
         ],
       }],
     },
@@ -650,12 +1036,18 @@ const VERTEX_SHADER = `#version 300 es
 in vec2 a_position;
 in vec2 a_uv;
 in vec4 a_color;
+in vec4 a_sdf;
+in float a_shape_enabled;
 out vec2 v_uv;
 out vec4 v_color;
+out vec4 v_sdf;
+out float v_shape_enabled;
 void main() {
   gl_Position = vec4(a_position, 0.0, 1.0);
   v_uv = a_uv;
   v_color = a_color;
+  v_sdf = a_sdf;
+  v_shape_enabled = a_shape_enabled;
 }`;
 
 const FRAGMENT_SHADER = `#version 300 es
@@ -663,9 +1055,23 @@ precision mediump float;
 uniform sampler2D u_texture;
 in vec2 v_uv;
 in vec4 v_color;
+in vec4 v_sdf;
+in float v_shape_enabled;
 out vec4 out_color;
+float roundedBoxDistance(vec2 uv, vec2 extent, float radius) {
+  vec2 point = (uv - vec2(0.5)) * extent;
+  vec2 inner = extent * 0.5 - vec2(radius);
+  vec2 corner = abs(point) - inner;
+  return length(max(corner, vec2(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
+}
 void main() {
   out_color = texture(u_texture, v_uv) * v_color;
+  if (v_shape_enabled > 0.5) {
+    float distance = roundedBoxDistance(v_uv, v_sdf.xy, v_sdf.z);
+    float antiAlias = max(0.75, v_sdf.w);
+    float coverage = 1.0 - smoothstep(-antiAlias, antiAlias, distance);
+    out_color.a *= coverage;
+  }
 }`;
 
 const WEBGPU_SHADER = `
@@ -673,11 +1079,15 @@ struct VertexInput {
   @location(0) position: vec2<f32>,
   @location(1) uv: vec2<f32>,
   @location(2) color: vec4<f32>,
+  @location(3) sdf: vec4<f32>,
+  @location(4) shape_enabled: f32,
 };
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
   @location(0) uv: vec2<f32>,
   @location(1) color: vec4<f32>,
+  @location(2) sdf: vec4<f32>,
+  @location(3) shape_enabled: f32,
 };
 @group(0) @binding(0) var source_texture: texture_2d<f32>;
 @group(0) @binding(1) var source_sampler: sampler;
@@ -687,9 +1097,25 @@ fn vs_main(input: VertexInput) -> VertexOutput {
   output.position = vec4<f32>(input.position, 0.0, 1.0);
   output.uv = input.uv;
   output.color = input.color;
+  output.sdf = input.sdf;
+  output.shape_enabled = input.shape_enabled;
   return output;
+}
+fn rounded_box_distance(uv: vec2<f32>, extent: vec2<f32>, radius: f32) -> f32 {
+  let point = (uv - vec2<f32>(0.5, 0.5)) * extent;
+  let inner = extent * 0.5 - vec2<f32>(radius, radius);
+  let corner = abs(point) - inner;
+  return length(max(corner, vec2<f32>(0.0, 0.0)))
+    + min(max(corner.x, corner.y), 0.0) - radius;
 }
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-  return textureSample(source_texture, source_sampler, input.uv) * input.color;
+  var output = textureSample(source_texture, source_sampler, input.uv) * input.color;
+  if (input.shape_enabled > 0.5) {
+    let distance = rounded_box_distance(input.uv, input.sdf.xy, input.sdf.z);
+    let anti_alias = max(0.75, input.sdf.w);
+    let coverage = 1.0 - smoothstep(-anti_alias, anti_alias, distance);
+    output.a = output.a * coverage;
+  }
+  return output;
 }`;

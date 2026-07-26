@@ -1,4 +1,7 @@
-aria 3.1;
+aria;
+
+// Presentation layout belongs to the package's DOM/CSS frontend. This smoke
+// story exercises only the semantic screen route.
 entry start;
 
 scene start {

@@ -9,14 +9,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use accesskit::{Action, NodeId};
 use accesskit_winit::WindowEvent as AccessKitWindowEvent;
 use accesskit_winit::{Adapter as AccessKitAdapter, Event as AccessKitEvent};
-use aria_core::protocol::{AudioCommand, LogicalSize, RuntimeCommand, StepOutput, UiNode};
+use aria_core::protocol::{AudioCommand, LogicalSize, RuntimeCommand, StepOutput};
 use aria_core::{
-    CompiledProgram, InputSnapshot, SaveEnvelopeError, SaveEnvelopeV3, Vm, VmSnapshot,
+    CompiledProgram, InputSnapshot, SaveEnvelopeError, SaveEnvelopeV3, UiInsets, UiViewport, Vm,
+    VmSnapshot,
 };
-use aria_render::{BundledFont, RenderSurfaceSize, WgpuRenderer};
+use aria_render::{
+    BundledFont, RenderSurfaceSize, SafeAreaInsets, ViewportTransform, WgpuRenderer,
+};
 use thiserror::Error;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize as WindowLogicalSize;
@@ -25,7 +27,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use crate::accessibility::AccessTreeBuilder;
 use crate::assets::NativeAssetStore;
 use crate::audio::KiraAudioAdapter;
 use crate::controller::GilrsController;
@@ -46,6 +47,8 @@ pub struct NativePlayerConfig {
     /// Parent directory; `AtomicSaveStore` adds `save_namespace` beneath it.
     pub save_root: PathBuf,
     pub save_namespace: String,
+    /// Exact retired namespaces to clear before this Player opens a save.
+    pub legacy_save_namespaces: Vec<String>,
     /// Ordered, exact logical font assets from `aria.toml`/bundle metadata.
     /// No platform font discovery is permitted by the Native Player.
     pub font_assets: Vec<String>,
@@ -61,6 +64,7 @@ impl std::fmt::Debug for NativePlayerConfig {
             .field("logical_size", &self.logical_size)
             .field("save_root", &self.save_root)
             .field("save_namespace", &self.save_namespace)
+            .field("legacy_save_namespaces", &self.legacy_save_namespaces)
             .field("font_assets", &self.font_assets)
             .field("assets", &self.assets)
             .finish()
@@ -181,7 +185,6 @@ struct WindowState {
     audio: Option<KiraAudioAdapter>,
     output: StepOutput,
     access_adapter: AccessKitAdapter,
-    access_tree: AccessTreeBuilder,
     sequence: u64,
     last_tick: Instant,
     warned: BTreeSet<String>,
@@ -205,6 +208,7 @@ impl NativeApplication {
             logical_size,
             save_root,
             save_namespace,
+            legacy_save_namespaces,
             font_assets,
             assets,
         } = config;
@@ -276,9 +280,12 @@ impl NativeApplication {
         let mut vm = Vm::new(program, logical_size)?;
         let output = vm.step(&InputSnapshot::idle(1, 0))?;
         let viewport = renderer.viewport_transform(
-            &output.render,
+            &output.scene,
             RenderSurfaceSize::new(size.width.max(1), size.height.max(1), window.scale_factor()),
         );
+        for namespace in &legacy_save_namespaces {
+            AtomicSaveStore::purge_namespace(&save_root, namespace)?;
+        }
         let save_store = AtomicSaveStore::new(save_root, save_namespace)?;
         let audio = match KiraAudioAdapter::new(".") {
             Ok(audio) => Some(audio),
@@ -305,7 +312,15 @@ impl NativeApplication {
             surface,
             surface_config,
             renderer,
-            input: WinitInputAdapter::new(viewport),
+            input: WinitInputAdapter::new(
+                viewport,
+                UiViewport {
+                    width: size.width.max(1),
+                    height: size.height.max(1),
+                    scale_factor: window.scale_factor() as f32,
+                    safe_area: UiInsets::default(),
+                },
+            ),
             controller,
             vm,
             save_store,
@@ -313,7 +328,6 @@ impl NativeApplication {
             audio,
             output,
             access_adapter,
-            access_tree: AccessTreeBuilder,
             sequence: 1,
             last_tick: Instant::now(),
             warned: BTreeSet::new(),
@@ -444,10 +458,10 @@ impl ApplicationHandler<PlayerEvent> for NativeApplication {
         }
         match event.window_event {
             AccessKitWindowEvent::InitialTreeRequested => state.update_accessibility(),
-            AccessKitWindowEvent::ActionRequested(request) => {
-                state.apply_accessibility_action(request.action, request.target_node);
-                state.window.request_redraw();
-            }
+            // The React/Tauri player owns the production accessibility tree.
+            // This retired wgpu player still accepts the event loop contract,
+            // but it has no VM-drawn controls to activate.
+            AccessKitWindowEvent::ActionRequested(_) => {}
             AccessKitWindowEvent::AccessibilityDeactivated => {}
         }
     }
@@ -475,9 +489,21 @@ impl WindowState {
         self.surface_config.height = height;
         self.surface
             .configure(self.renderer.device(), &self.surface_config);
+        let ui_viewport = UiViewport {
+            width: width.max(1),
+            height: height.max(1),
+            scale_factor: self.window.scale_factor() as f32,
+            safe_area: UiInsets::default(),
+        };
         self.input.set_viewport(
-            self.renderer
-                .viewport_transform(&self.output.render, self.render_surface_size()),
+            ViewportTransform::fit(
+                logical_size_for_viewport(ui_viewport, self.output.scene.logical_size),
+                width.max(1),
+                height.max(1),
+                self.window.scale_factor() as f32,
+                SafeAreaInsets::default(),
+            ),
+            ui_viewport,
         );
     }
 
@@ -500,6 +526,11 @@ impl WindowState {
         self.poll_controller();
         let input = self.input.snapshot(self.sequence, delta_ms);
         self.output = self.vm.step(&input)?;
+        self.input.set_viewport(
+            self.renderer
+                .viewport_transform(&self.output.scene, self.render_surface_size()),
+            self.output.scene.viewport,
+        );
         self.apply_audio_commands()?;
         let disposition = self.process_runtime_commands()?;
         self.update_accessibility();
@@ -530,7 +561,7 @@ impl WindowState {
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.renderer
             .render(
-                &self.output.render,
+                &self.output.scene,
                 &view,
                 self.render_surface_size(),
                 &mut self.assets,
@@ -594,18 +625,24 @@ impl WindowState {
             match command {
                 RuntimeCommand::Save { slot } => self.save_slot(slot)?,
                 RuntimeCommand::Load { slot } => self.load_slot(slot)?,
-                RuntimeCommand::Unsupported { name, .. } => warn_once(
-                    &mut self.warned,
-                    format!("host-command:{name}"),
-                    format!("runtime skipped unsupported host command '{name}'"),
-                ),
+                RuntimeCommand::QuickSave => self.save_slot(0)?,
+                RuntimeCommand::QuickLoad => self.load_slot(0)?,
                 RuntimeCommand::Quit => return Ok(FrameDisposition::Quit),
-                RuntimeCommand::OpenMenu => warn_once(
+                RuntimeCommand::ReturnToTitle => warn_once(
                     &mut self.warned,
-                    "menu-request".to_owned(),
-                    "menu action was requested, but this game has no declarative menu scene"
+                    "title-request".to_owned(),
+                    "title return was requested; the host may reset the project entry scene"
                         .to_owned(),
                 ),
+                RuntimeCommand::PreloadAsset { asset } => {
+                    if let Err(error) = self.assets.read(&asset) {
+                        warn_once(
+                            &mut self.warned,
+                            format!("preload:{asset}"),
+                            format!("cannot preload asset '{asset}': {error}"),
+                        );
+                    }
+                }
             }
         }
         Ok(FrameDisposition::Continue)
@@ -647,20 +684,10 @@ impl WindowState {
     }
 
     fn update_accessibility(&mut self) {
-        let update = self.access_tree.build(&self.output.ui);
-        self.access_adapter.update_if_active(|| update);
-    }
-
-    fn apply_accessibility_action(&mut self, action: Action, target: NodeId) {
-        let Some(node) = self.output.ui.nodes.get(&target.0) else {
-            return;
-        };
-        let (x, y) = node_center(node);
-        match action {
-            Action::Focus => self.input.accessibility_hover(x, y),
-            Action::Click => self.input.accessibility_click(x, y),
-            _ => {}
-        }
+        let transform = self
+            .renderer
+            .viewport_transform(&self.output.scene, self.render_surface_size());
+        let _ = transform;
     }
 }
 
@@ -674,11 +701,18 @@ fn pressed_system_slot(event: &WindowEvent, key: KeyCode) -> Option<u32> {
     matches!(event.physical_key, PhysicalKey::Code(code) if code == key).then_some(1)
 }
 
-fn node_center(node: &UiNode) -> (f32, f32) {
-    (
-        node.bounds.x + node.bounds.width * 0.5,
-        node.bounds.y + node.bounds.height * 0.5,
-    )
+fn logical_size_for_viewport(viewport: UiViewport, fallback: LogicalSize) -> LogicalSize {
+    let dimension = |value: f32, fallback: u32| {
+        if value.is_finite() {
+            value.round().clamp(1.0, 16_384.0) as u32
+        } else {
+            fallback.max(1)
+        }
+    };
+    LogicalSize {
+        width: dimension(viewport.logical_width(), fallback.width),
+        height: dimension(viewport.logical_height(), fallback.height),
+    }
 }
 
 fn warn_once(warned: &mut BTreeSet<String>, key: String, message: String) {
@@ -695,33 +729,10 @@ fn now_unix_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use aria_core::InputAction;
-    use aria_core::protocol::{Rect, UiActivation, UiRole};
-
     use super::*;
 
     #[test]
     fn default_save_root_has_a_nonempty_fallback() {
         assert!(!default_save_root().as_os_str().is_empty());
-    }
-
-    #[test]
-    fn accessibility_target_uses_the_center_of_logical_ui_bounds() {
-        let node = UiNode {
-            id: 9,
-            role: UiRole::Button,
-            label: "続ける".to_owned(),
-            bounds: Rect {
-                x: 100.0,
-                y: 50.0,
-                width: 200.0,
-                height: 40.0,
-            },
-            focusable: true,
-            focused: true,
-            activation: Some(UiActivation::Input(InputAction::Confirm)),
-            children: Vec::new(),
-        };
-        assert_eq!(node_center(&node), (200.0, 70.0));
     }
 }

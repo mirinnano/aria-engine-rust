@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::presentation::UiIntent;
+use crate::presentation_state::UiViewport;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputAction {
@@ -14,6 +17,12 @@ pub enum InputAction {
     Menu,
     Advance,
     Skip,
+    ToggleAuto,
+    ToggleSkip,
+    OpenBacklog,
+    QuickSave,
+    QuickLoad,
+    ReturnToTitle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -33,6 +42,20 @@ pub struct InputSnapshot {
     #[serde(default)]
     pub held: BTreeSet<InputAction>,
     pub pointer: Option<PointerSnapshot>,
+    /// Logical vertical scroll delta for list slots. It is recorded with the
+    /// input rather than read from a host event queue so backlog/list replay
+    /// remains deterministic across native and web adapters.
+    #[serde(default)]
+    pub scroll_delta_y: f32,
+    /// Window/safe-area state recorded with each replay input.  The VM uses
+    /// this before layout, so a resize follows the same responsive branch on
+    /// Native and Web.
+    #[serde(default)]
+    pub viewport: Option<UiViewport>,
+    /// Semantic DOM/UI events. The engine validates IDs and transitions, but
+    /// never receives a host layout tree or pixel hit-test result.
+    #[serde(default)]
+    pub intents: Vec<UiIntent>,
 }
 
 impl InputSnapshot {
@@ -44,6 +67,9 @@ impl InputSnapshot {
             pressed: BTreeSet::new(),
             held: BTreeSet::new(),
             pointer: None,
+            scroll_delta_y: 0.0,
+            viewport: None,
+            intents: Vec::new(),
         }
     }
 
@@ -55,7 +81,16 @@ impl InputSnapshot {
             pressed: BTreeSet::from([action]),
             held: BTreeSet::new(),
             pointer: None,
+            scroll_delta_y: 0.0,
+            viewport: None,
+            intents: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_viewport(mut self, viewport: UiViewport) -> Self {
+        self.viewport = Some(viewport);
+        self
     }
 
     #[must_use]

@@ -3,7 +3,6 @@
 
 //! Native adapter for the Aria V3 core.
 
-pub mod accessibility;
 #[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
 pub mod assets;
 pub mod audio;

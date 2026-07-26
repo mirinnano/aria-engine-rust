@@ -13,6 +13,9 @@ const SHELL = [
   "./bundle.aria.json",
   "./game.ariac",
   "./game.ariapak",
+  "./game.hot.ariapak",
+  "./game.cold.ariapak",
+  "./game.overlay.ariapak",
   ...RUNTIME,
 ];
 

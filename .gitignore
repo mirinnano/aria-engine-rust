@@ -163,8 +163,17 @@ src/AriaEngine/aria_error_ai.*
 !src/AriaEngine/assets/bg/ui_save_load_ocean.png
 !src/AriaEngine/assets/bg/ui_chapter_select_ocean.png
 !tests/visual-regression/baseline/*.png
+!examples/umikaze/assets/**/*.png
 *.jpg
 *.jpeg
+
+# Project-owned React/Tauri source is tracked; its install, build, and test
+# products are not.
+**/node_modules/
+**/dist/
+**/test-results/
+**/playwright-report/
+**/src-tauri/target/
 
 # Keys and certificates
 *.pfx

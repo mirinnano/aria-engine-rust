@@ -1,0 +1,125 @@
+name: Umikaze release artifacts
+
+on:
+  push:
+    tags: ["umikaze-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  web:
+    name: Web static release
+    runs-on: ubuntu-latest
+    env:
+      ARIA_PAK_PROFILE: signed
+      ARIA_PAK_SIGNING_KEY: ${{ secrets.ARIA_PAK_SIGNING_KEY }}
+      ARIA_PAK_VERIFICATION_KEY_ID: ${{ secrets.ARIA_PAK_VERIFICATION_KEY_ID }}
+      ARIA_PAK_VERIFICATION_KEY_HEX: ${{ secrets.ARIA_PAK_VERIFICATION_KEY_HEX }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: examples/umikaze/ui/package-lock.json
+      - name: Install wasm-bindgen and frontend dependencies
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          npm ci --prefix examples/umikaze/ui
+          npx --prefix examples/umikaze/ui playwright install --with-deps chromium
+      - name: Verify Core and canonical scenario
+        run: |
+          cargo fmt --all -- --check
+          cargo test -p aria-core
+          cargo test -p aria-cli --no-default-features --test umikaze_sample
+      - name: Verify full and demo presentation bundles in Chromium
+        run: |
+          npm --prefix examples/umikaze/ui run prepare:desktop
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/web >/tmp/umikaze-http.log 2>&1 &
+          npm --prefix examples/umikaze/ui test
+          npm --prefix examples/umikaze/ui run prepare:demo
+          UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop'
+          npm --prefix examples/umikaze/ui run prepare:desktop
+      - name: Build static Web releases
+        run: |
+          npm --prefix examples/umikaze/ui run release:web
+          npm --prefix examples/umikaze/ui run release:demo:web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: umikaze-web
+          path: dist/releases/web/**
+      - uses: actions/upload-artifact@v4
+        with:
+          name: umikaze-demo-web
+          path: dist/releases/demo-web/**
+
+  desktop:
+    name: Desktop ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bundles: deb
+          - os: macos-latest
+            bundles: dmg
+          - os: windows-latest
+            bundles: nsis
+    env:
+      ARIA_PAK_PROFILE: signed
+      ARIA_PAK_SIGNING_KEY: ${{ secrets.ARIA_PAK_SIGNING_KEY }}
+      ARIA_PAK_VERIFICATION_KEY_ID: ${{ secrets.ARIA_PAK_VERIFICATION_KEY_ID }}
+      ARIA_PAK_VERIFICATION_KEY_HEX: ${{ secrets.ARIA_PAK_VERIFICATION_KEY_HEX }}
+      ARIA_TAURI_BUNDLES: ${{ matrix.bundles }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: examples/umikaze/ui/package-lock.json
+      - name: Install Linux WebKit/native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev
+      - name: Install frontend dependencies
+        run: npm ci --prefix examples/umikaze/ui
+      - name: Verify desktop save adapter
+        run: cargo test --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml
+      - name: Build full native installer
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/umikaze-full
+        run: npm --prefix examples/umikaze/ui run release:desktop
+      - name: Build demo native installer
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/umikaze-demo
+        run: npm --prefix examples/umikaze/ui run release:demo:desktop
+      - name: Write full installer checksums
+        shell: bash
+        run: node scripts/write-sha256-manifest.mjs target/umikaze-full/release/bundle
+      - name: Write demo installer checksums
+        shell: bash
+        run: node scripts/write-sha256-manifest.mjs target/umikaze-demo/release/bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: umikaze-${{ matrix.os }}
+          path: |
+            target/umikaze-full/release/bundle/**
+      - uses: actions/upload-artifact@v4
+        with:
+          name: umikaze-demo-${{ matrix.os }}
+          path: |
+            target/umikaze-demo/release/bundle/**

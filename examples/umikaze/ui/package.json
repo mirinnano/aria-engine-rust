@@ -1,0 +1,39 @@
+{
+  "name": "umikaze-presentation",
+  "private": true,
+  "version": "3.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "playwright test",
+    "prepare:desktop": "node scripts/prepare-desktop.mjs",
+    "prepare:demo": "node scripts/prepare-desktop.mjs --edition demo",
+    "release:desktop": "node scripts/build-release.mjs desktop",
+    "release:web": "node scripts/build-release.mjs web",
+    "release:demo:desktop": "node scripts/build-release.mjs demo-desktop",
+    "release:demo:web": "node scripts/build-release.mjs demo-web",
+    "tauri": "tauri",
+    "tauri:build": "tauri build",
+    "tauri:demo": "tauri dev --config src-tauri/tauri.demo.conf.json",
+    "tauri:demo:build": "tauri build --config src-tauri/tauri.demo.conf.json"
+  },
+  "dependencies": {
+    "@aria/ui-sdk": "file:../../../ui/packages/aria-ui-sdk",
+    "@tauri-apps/api": "^2.11.1",
+    "react": "^19.2.7",
+    "react-aria-components": "^1.19.0",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/node": "^24.10.1",
+    "@tauri-apps/cli": "^2.11.4",
+    "@playwright/test": "^1.61.1",
+    "@vitejs/plugin-react": "^6.0.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5"
+  }
+}

@@ -1,12 +1,12 @@
-//! Lossless syntax and AST support for the modern Aria 3.1 author language.
+//! Lossless syntax and AST support for the single, ownership-aware Aria author
+//! language.
 //!
-//! This module deliberately has no dependency on the legacy line-oriented
-//! compiler.  It is a front-end boundary: callers can retain the concrete
-//! source for formatting/migration while consuming the typed, structured AST
-//! for semantic analysis and lowering.
+//! This module deliberately has no dependency on a line-oriented compiler.
+//! It is a front-end boundary: callers can retain the concrete source for
+//! formatting while consuming the typed, structured AST for semantic analysis
+//! and lowering.
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
-
 /// A lossless parse result for one modern Aria source file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModernParse {
@@ -27,7 +27,7 @@ impl ModernParse {
     }
 }
 
-/// Concrete, lossless source data retained for formatters and migration tools.
+/// Concrete, lossless source data retained for formatters and source tools.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModernCst {
     pub source_id: String,
@@ -86,6 +86,7 @@ pub enum ModernTokenKind {
     GreaterEqual,
     AndAnd,
     OrOr,
+    Ampersand,
     Invalid,
     Eof,
 }
@@ -99,27 +100,36 @@ impl ModernTokenKind {
     }
 }
 
-/// Version written in an `aria 3.1;` header.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModernLanguageVersion {
-    pub major: u16,
-    pub minor: u16,
-}
-
-impl ModernLanguageVersion {
-    pub const V3_1: Self = Self { major: 3, minor: 1 };
-}
-
 /// A parsed modern source module.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModernModule {
     pub span: SourceSpan,
-    pub language_version: ModernLanguageVersion,
     pub name: Option<QualifiedName>,
     pub imports: Vec<ImportDecl>,
     pub entry: Option<EntryDecl>,
     pub states: Vec<StateDecl>,
     pub scenes: Vec<SceneDecl>,
+    /// Retired visual declarations retained only long enough to produce a
+    /// source-located retirement diagnostic. They are never lowered into a
+    /// program, a render protocol, or a VM layout tree.
+    pub retired_ui_syntax: Vec<RetiredUiDeclaration>,
+}
+
+/// A parsed occurrence of retired visual DSL syntax. The parser keeps only its
+/// span so the compiler can explain the break at the exact source location;
+/// it has no lowering path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetiredUiDeclaration {
+    pub kind: RetiredUiKind,
+    pub span: SourceSpan,
+}
+
+/// The former top-level visual DSL declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetiredUiKind {
+    Theme,
+    Screen,
+    Transition,
 }
 
 /// A dot-qualified module name.
@@ -154,6 +164,7 @@ pub struct EntryDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateDecl {
     pub span: SourceSpan,
+    pub mutable: bool,
     pub name: String,
     pub ty: ModernType,
     pub value: Literal,
@@ -165,6 +176,7 @@ pub enum ModernType {
     Int,
     Bool,
     String,
+    Node,
 }
 
 /// A named, structured visual-novel scene.
@@ -182,7 +194,7 @@ pub struct Statement {
     pub kind: StatementKind,
 }
 
-/// Structured statements in the modern 3.1 subset.
+/// Structured statements in the modern 3.x subset.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StatementKind {
     Say {
@@ -201,25 +213,32 @@ pub enum StatementKind {
         asset: AssetRef,
         transition: Option<Transition>,
     },
-    Show {
-        id: String,
+    /// Creates a scene node owned by the lexical binding. `drop`, a scene
+    /// transfer, or the binding's scope exit deterministically removes it.
+    Spawn {
+        mutable: bool,
+        name: String,
         content: ShowContent,
         z: i32,
     },
     Hide {
-        id: String,
+        node: NodeAccess,
     },
-    Remove {
-        id: String,
+    Reveal {
+        node: NodeAccess,
+    },
+    /// Consumes the owning node binding and releases the scene resource.
+    Drop {
+        name: String,
     },
     Move {
-        id: String,
+        node: NodeAccess,
         position: Position,
     },
     Declare {
         mutable: bool,
         name: String,
-        ty: ModernType,
+        ty: Option<ModernType>,
         value: Value,
     },
     Assign {
@@ -237,6 +256,15 @@ pub enum StatementKind {
     },
     While {
         condition: Expression,
+        body: Vec<Statement>,
+    },
+    /// Creates a lexical borrow alias. A mutable borrow exclusively loans the
+    /// owner until the block ends; an immutable borrow cannot be used by scene
+    /// mutation commands.
+    Borrow {
+        mutable: bool,
+        owner: String,
+        alias: String,
         body: Vec<Statement>,
     },
     Choice {
@@ -269,6 +297,68 @@ pub enum StatementKind {
     Load {
         slot: u32,
     },
+    SetFlag {
+        name: String,
+        value: bool,
+        persistent: bool,
+    },
+    SetTextSpeed {
+        speed_ms: u32,
+    },
+    SetAuto {
+        enabled: bool,
+    },
+    SetSkip {
+        mode: String,
+    },
+    SetLocale {
+        locale: String,
+    },
+    SetTheme {
+        theme: String,
+    },
+    SetTextBox {
+        bounds: RectSpec,
+        color: String,
+        opacity: u8,
+        mode: String,
+    },
+    Tween {
+        node: NodeAccess,
+        property: String,
+        value: f64,
+        duration_ms: u32,
+        easing: String,
+    },
+    Effect {
+        kind: String,
+        color: String,
+        amount: f64,
+        duration_ms: u32,
+        axis: String,
+    },
+    UnlockChapter {
+        id: String,
+        progress: u8,
+    },
+    SetChapterProgress {
+        id: String,
+        progress: u8,
+    },
+    UnlockCg {
+        id: String,
+    },
+    Preload {
+        asset: AssetRef,
+    },
+    OpenMenu {
+        kind: String,
+    },
+    /// Semantic screen routing. The named route is part of the presentation
+    /// contract; it never creates a VM-drawn menu.
+    OpenScreen {
+        screen: String,
+    },
     End,
 }
 
@@ -288,6 +378,16 @@ pub enum ShowContent {
         position: Position,
         size_px: i32,
     },
+}
+
+/// An explicit scene-node borrow. Scene mutation operations require `&mut`;
+/// a bare node name is intentionally never accepted as an implicit mutable
+/// borrow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeAccess {
+    pub span: SourceSpan,
+    pub name: String,
+    pub mutable: bool,
 }
 
 /// A project-relative asset reference.  Canonical path and hash validation are
@@ -433,7 +533,7 @@ pub enum BinaryOperator {
     GreaterEqual,
 }
 
-/// Parses a modern Aria 3.1 source file without touching the filesystem.
+/// Parses a modern Aria source file without touching the filesystem.
 ///
 /// The function is deliberately recovery-oriented: malformed input produces
 /// diagnostics and a best-effort AST rather than panicking.
@@ -614,6 +714,7 @@ impl<'a> Lexer<'a> {
             Some('+') => ModernTokenKind::Plus,
             Some('-') => ModernTokenKind::Minus,
             Some('!') => ModernTokenKind::Bang,
+            Some('&') => ModernTokenKind::Ampersand,
             Some('<') => ModernTokenKind::Less,
             Some('>') => ModernTokenKind::Greater,
             Some(_) => ModernTokenKind::Invalid,
@@ -755,38 +856,28 @@ impl Parser {
     fn parse_module(&mut self) -> Option<ModernModule> {
         let header_start = self.peek().clone();
         if !self.consume_keyword("aria") {
-            self.error_here("modern Aria source must start with 'aria 3.1;'");
+            self.error_here("Aria source must start with the single language marker 'aria;'");
             return None;
         }
-        let version_token = self.next();
-        let version = match version_token {
-            Some(token) if token.kind == ModernTokenKind::Number && token.text == "3.1" => {
-                ModernLanguageVersion::V3_1
-            }
-            Some(token) => {
-                self.error_at(
-                    &token,
-                    "modern Aria currently accepts only language version 3.1",
-                );
-                ModernLanguageVersion::V3_1
-            }
-            None => {
-                self.error_here("expected language version 3.1 after 'aria'");
-                ModernLanguageVersion::V3_1
-            }
-        };
+        if self.peek().kind == ModernTokenKind::Number {
+            let version = self.next().expect("peeked token exists");
+            self.error_at(
+                &version,
+                "Aria source is unversioned; write 'aria;' rather than a versioned language mode",
+            );
+        }
         let mut last = self.expect_kind(
             ModernTokenKind::Semicolon,
             "expected ';' after language header",
         );
         let mut module = ModernModule {
             span: header_start.span.clone(),
-            language_version: version,
             name: None,
             imports: Vec::new(),
             entry: None,
             states: Vec::new(),
             scenes: Vec::new(),
+            retired_ui_syntax: Vec::new(),
         };
 
         while !self.at_eof() {
@@ -805,7 +896,21 @@ impl Parser {
                     ModernTokenKind::Semicolon,
                     "expected ';' after module declaration",
                 )
+            } else if self.consume_keyword("use") {
+                let declaration = self.parse_import();
+                if let Some(declaration) = declaration {
+                    module.imports.push(declaration);
+                }
+                self.expect_kind(
+                    ModernTokenKind::Semicolon,
+                    "expected ';' after import declaration",
+                )
             } else if self.consume_keyword("import") {
+                let span = self.previous_or(&header_start).span.clone();
+                self.error_span(
+                    &span,
+                    "'import' was removed; use Rust-style 'use \"path.aria\";'",
+                );
                 let declaration = self.parse_import();
                 if let Some(declaration) = declaration {
                     module.imports.push(declaration);
@@ -846,8 +951,31 @@ impl Parser {
                     module.scenes.push(declaration);
                 }
                 Some(end)
+            } else if self.consume_keyword("ui_theme") {
+                if let Some(declaration) = self.parse_retired_ui_declaration(RetiredUiKind::Theme) {
+                    module.retired_ui_syntax.push(declaration);
+                }
+                let end = self.previous_or(&header_start).clone();
+                Some(end)
+            } else if self.consume_keyword("ui_screen") {
+                if let Some(declaration) = self.parse_retired_ui_declaration(RetiredUiKind::Screen)
+                {
+                    module.retired_ui_syntax.push(declaration);
+                }
+                let end = self.previous_or(&header_start).clone();
+                Some(end)
+            } else if self.consume_keyword("ui_transition") {
+                if let Some(declaration) =
+                    self.parse_retired_ui_declaration(RetiredUiKind::Transition)
+                {
+                    module.retired_ui_syntax.push(declaration);
+                }
+                let end = self.previous_or(&header_start).clone();
+                Some(end)
             } else {
-                self.error_here("expected module, import, entry, state, or scene declaration");
+                self.error_here(
+                    "expected module, use, entry, state, scene, ui_theme, ui_screen, or ui_transition declaration",
+                );
                 self.recover_top_level();
                 None
             };
@@ -918,6 +1046,7 @@ impl Parser {
 
     fn parse_state(&mut self) -> Option<StateDecl> {
         let start = self.peek().clone();
+        let mutable = self.consume_keyword("mut");
         let (name, _) = self.parse_identifier("expected state name")?;
         self.expect_kind(ModernTokenKind::Colon, "expected ':' after state name")?;
         let ty = self.parse_type()?;
@@ -931,6 +1060,7 @@ impl Parser {
         }
         Some(StateDecl {
             span: span_from_to(&start.span, value.span()),
+            mutable,
             name,
             ty,
             value,
@@ -946,6 +1076,56 @@ impl Parser {
             span: span_between(&start, &end),
             name,
             body,
+        })
+    }
+
+    /// Consumes retired visual DSL syntax without constructing a visual model.
+    /// Keeping only a source span is intentional: no retired declaration can
+    /// accidentally regain a lowering path while diagnostics remain precise
+    /// and useful.
+    fn parse_retired_ui_declaration(
+        &mut self,
+        kind: RetiredUiKind,
+    ) -> Option<RetiredUiDeclaration> {
+        let start = self
+            .tokens
+            .get(self.index.saturating_sub(1))
+            .map(|token| token.span.clone())
+            .unwrap_or_else(|| self.peek().span.clone());
+        let requires_block = !matches!(kind, RetiredUiKind::Transition);
+        let mut depth = 0_u32;
+        let mut saw_block = false;
+        let mut end = start.clone();
+
+        while !self.at_eof() {
+            let token = self.next()?;
+            end = token.span.clone();
+            match token.kind {
+                ModernTokenKind::LeftBrace => {
+                    saw_block = true;
+                    depth = depth.saturating_add(1);
+                }
+                ModernTokenKind::RightBrace if depth > 0 => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && requires_block {
+                        break;
+                    }
+                }
+                ModernTokenKind::Semicolon if depth == 0 && !requires_block => break,
+                ModernTokenKind::Semicolon if depth == 0 && requires_block && !saw_block => {
+                    self.error_span(&start, "expected '{' in retired visual UI declaration");
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        if requires_block && (!saw_block || depth != 0) {
+            self.error_span(&start, "unterminated retired visual UI declaration");
+        }
+        Some(RetiredUiDeclaration {
+            kind,
+            span: span_from_to(&start, &end),
         })
     }
 
@@ -989,30 +1169,39 @@ impl Parser {
             StatementKind::Wait { duration_ms }
         } else if self.consume_keyword("background") {
             self.parse_background()?
-        } else if self.consume_keyword("show") {
-            self.parse_show()?
         } else if self.consume_keyword("hide") {
-            let id = self.parse_identifier("expected node ID after hide")?.0;
+            let node = self.parse_node_access(true, "expected '&mut node' after hide")?;
             self.expect_statement_end("expected ';' after hide statement")?;
-            StatementKind::Hide { id }
-        } else if self.consume_keyword("remove") {
-            let id = self.parse_identifier("expected node ID after remove")?.0;
-            self.expect_statement_end("expected ';' after remove statement")?;
-            StatementKind::Remove { id }
+            StatementKind::Hide { node }
+        } else if self.consume_keyword("reveal") {
+            let node = self.parse_node_access(true, "expected '&mut node' after reveal")?;
+            self.expect_statement_end("expected ';' after reveal statement")?;
+            StatementKind::Reveal { node }
+        } else if self.consume_keyword("drop") {
+            let name = self.parse_identifier("expected owned node after drop")?.0;
+            self.expect_statement_end("expected ';' after drop statement")?;
+            StatementKind::Drop { name }
         } else if self.consume_keyword("move") {
-            let id = self.parse_identifier("expected node ID after move")?.0;
+            let node = self.parse_node_access(true, "expected '&mut node' after move")?;
             self.expect_keyword("to", "expected 'to' in move statement")?;
             let position = self.parse_position()?;
             self.expect_statement_end("expected ';' after move statement")?;
-            StatementKind::Move { id, position }
+            StatementKind::Move { node, position }
         } else if self.consume_keyword("let") {
-            self.parse_declaration(false)?
+            self.parse_let_declaration()?
         } else if self.consume_keyword("var") {
+            let span = self.previous_or(&start).span.clone();
+            self.error_span(
+                &span,
+                "'var' was removed; write 'let mut' for a mutable binding",
+            );
             self.parse_declaration(true)?
         } else if self.consume_keyword("if") {
             self.parse_if()?
         } else if self.consume_keyword("while") {
             self.parse_while()?
+        } else if self.consume_keyword("borrow") {
+            self.parse_borrow()?
         } else if self.consume_keyword("choice") {
             self.parse_choice()?
         } else if self.consume_keyword("jump") {
@@ -1032,6 +1221,65 @@ impl Parser {
             self.parse_stop()?
         } else if self.consume_keyword("volume") {
             self.parse_volume()?
+        } else if self.consume_keyword("flag") {
+            self.parse_flag(false)?
+        } else if self.consume_keyword("persistent") {
+            self.expect_keyword("flag", "expected 'flag' after 'persistent'")?;
+            self.parse_flag(true)?
+        } else if self.consume_keyword("text_speed") {
+            let speed_ms = self.parse_u32("expected non-negative text speed")?;
+            self.expect_statement_end("expected ';' after text speed")?;
+            StatementKind::SetTextSpeed { speed_ms }
+        } else if self.consume_keyword("auto") {
+            let enabled = self.parse_on_off("expected 'on' or 'off' after auto")?;
+            self.expect_statement_end("expected ';' after auto statement")?;
+            StatementKind::SetAuto { enabled }
+        } else if self.consume_keyword("skip") {
+            let mode = self.parse_word("expected skip mode read, all, or off")?;
+            self.expect_statement_end("expected ';' after skip statement")?;
+            StatementKind::SetSkip { mode }
+        } else if self.consume_keyword("locale") {
+            let locale = self.parse_string("expected locale string")?;
+            self.expect_statement_end("expected ';' after locale statement")?;
+            StatementKind::SetLocale { locale }
+        } else if self.consume_keyword("theme") {
+            let theme = if self.at_kind(ModernTokenKind::String) {
+                self.parse_string("expected theme name")?
+            } else {
+                self.parse_word("expected theme name")?
+            };
+            self.expect_statement_end("expected ';' after theme statement")?;
+            StatementKind::SetTheme { theme }
+        } else if self.consume_keyword("textbox") {
+            self.parse_textbox()?
+        } else if self.consume_keyword("tween") {
+            self.parse_tween()?
+        } else if self.consume_keyword("effect") {
+            self.parse_effect()?
+        } else if self.consume_keyword("unlock") {
+            self.parse_unlock()?
+        } else if self.consume_keyword("chapter") || self.consume_keyword("chapter_progress") {
+            self.parse_chapter_progress()?
+        } else if self.consume_keyword("preload") {
+            let asset = self.parse_asset_ref()?;
+            self.expect_statement_end("expected ';' after preload statement")?;
+            StatementKind::Preload { asset }
+        } else if self.consume_keyword("menu") {
+            let kind = if self.at_kind(ModernTokenKind::Semicolon) {
+                "pause".to_owned()
+            } else {
+                self.parse_word("expected menu kind")?
+            };
+            self.expect_statement_end("expected ';' after menu statement")?;
+            StatementKind::OpenMenu { kind }
+        } else if self.consume_keyword("open") {
+            let kind = self.parse_word("expected UI name after open")?;
+            self.expect_statement_end("expected ';' after open statement")?;
+            StatementKind::OpenMenu { kind }
+        } else if self.consume_keyword("screen") {
+            let screen = self.parse_word("expected screen name after screen")?;
+            self.expect_statement_end("expected ';' after screen statement")?;
+            StatementKind::OpenScreen { screen }
         } else if self.consume_keyword("save") {
             let slot = self.parse_u32("expected non-negative save slot")?;
             self.expect_statement_end("expected ';' after save statement")?;
@@ -1112,9 +1360,7 @@ impl Parser {
         })
     }
 
-    fn parse_show(&mut self) -> Option<StatementKind> {
-        let (id, _) = self.parse_identifier("expected node ID after show")?;
-        self.expect_kind(ModernTokenKind::Equals, "expected '=' after show node ID")?;
+    fn parse_show(&mut self, mutable: bool, name: String) -> Option<StatementKind> {
         let constructor = self.next()?;
         let content = match constructor.text.as_str() {
             "image" => {
@@ -1181,14 +1427,51 @@ impl Parser {
         self.expect_keyword("z", "expected 'z' after show content")?;
         let z = self.parse_i32("expected integer z value")?;
         self.expect_statement_end("expected ';' after show statement")?;
-        Some(StatementKind::Show { id, content, z })
+        Some(StatementKind::Spawn {
+            mutable,
+            name,
+            content,
+            z,
+        })
     }
 
+    fn parse_let_declaration(&mut self) -> Option<StatementKind> {
+        let mutable = self.consume_keyword("mut");
+        let (name, _) = self.parse_identifier("expected variable name after let")?;
+        let ty = if self.consume_kind(ModernTokenKind::Colon).is_some() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect_kind(ModernTokenKind::Equals, "expected '=' after let binding")?;
+        if self.consume_keyword("show") {
+            if ty.is_some_and(|ty| ty != ModernType::Node) {
+                self.error_here(
+                    "a 'show' expression creates a Node; omit the type or write ': Node'",
+                );
+            }
+            return self.parse_show(mutable, name);
+        }
+        let value = self.parse_value("expected a literal or binding after '='")?;
+        self.expect_statement_end("expected ';' after let declaration")?;
+        Some(StatementKind::Declare {
+            mutable,
+            name,
+            ty,
+            value,
+        })
+    }
+
+    /// Kept only for a precise diagnostic and parser recovery after the
+    /// removed `var` keyword. A successful parse still carries an error.
     fn parse_declaration(&mut self, mutable: bool) -> Option<StatementKind> {
         let (name, _) = self.parse_identifier("expected variable name")?;
-        self.expect_kind(ModernTokenKind::Colon, "expected ':' after variable name")?;
-        let ty = self.parse_type()?;
-        self.expect_kind(ModernTokenKind::Equals, "expected '=' after variable type")?;
+        let ty = if self.consume_kind(ModernTokenKind::Colon).is_some() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect_kind(ModernTokenKind::Equals, "expected '=' after variable name")?;
         let value = self.parse_value("expected a literal or identifier")?;
         self.expect_statement_end("expected ';' after variable declaration")?;
         Some(StatementKind::Declare {
@@ -1196,6 +1479,37 @@ impl Parser {
             name,
             ty,
             value,
+        })
+    }
+
+    fn parse_borrow(&mut self) -> Option<StatementKind> {
+        let mutable = self.consume_keyword("mut");
+        let (owner, _) = self.parse_identifier("expected owned node after borrow")?;
+        self.expect_keyword("as", "expected 'as' after borrowed node")?;
+        let (alias, _) = self.parse_identifier("expected borrow alias after 'as'")?;
+        let body = self.parse_block("expected '{' after borrow alias")?;
+        Some(StatementKind::Borrow {
+            mutable,
+            owner,
+            alias,
+            body,
+        })
+    }
+
+    fn parse_node_access(&mut self, require_mutable: bool, message: &str) -> Option<NodeAccess> {
+        let start = self.expect_kind(ModernTokenKind::Ampersand, message)?;
+        let mutable = self.consume_keyword("mut");
+        if require_mutable && !mutable {
+            self.error_span(
+                &start.span,
+                "scene mutation requires an explicit mutable borrow '&mut node'",
+            );
+        }
+        let (name, end) = self.parse_identifier("expected node name after '&'")?;
+        Some(NodeAccess {
+            span: span_between(&start, &end),
+            name,
+            mutable,
         })
     }
 
@@ -1322,6 +1636,144 @@ impl Parser {
         Some(StatementKind::Volume { bus, value })
     }
 
+    fn parse_flag(&mut self, persistent: bool) -> Option<StatementKind> {
+        let name = self.parse_string("expected flag name string")?;
+        let _ = self.consume_kind(ModernTokenKind::Equals);
+        let value = self.parse_on_off("expected boolean flag value")?;
+        self.expect_statement_end("expected ';' after flag statement")?;
+        Some(StatementKind::SetFlag {
+            name,
+            value,
+            persistent,
+        })
+    }
+
+    fn parse_textbox(&mut self) -> Option<StatementKind> {
+        let start = self.expect_kind(
+            ModernTokenKind::LeftParen,
+            "expected '(' before textbox bounds",
+        )?;
+        let x_px = self.parse_px()?;
+        self.expect_kind(ModernTokenKind::Comma, "expected ',' after textbox x")?;
+        let y_px = self.parse_px()?;
+        self.expect_kind(ModernTokenKind::Comma, "expected ',' after textbox y")?;
+        let width_px = self.parse_px()?;
+        self.expect_kind(ModernTokenKind::Comma, "expected ',' after textbox width")?;
+        let height_px = self.parse_px()?;
+        let end = self.expect_kind(
+            ModernTokenKind::RightParen,
+            "expected ')' after textbox bounds",
+        )?;
+        self.expect_keyword("color", "expected 'color' after textbox bounds")?;
+        let color = self.parse_string("expected textbox color")?;
+        self.expect_keyword("opacity", "expected 'opacity' after textbox color")?;
+        let opacity = self.parse_u32("expected textbox opacity")?.min(255) as u8;
+        let mode = if self.consume_keyword("mode") {
+            self.parse_word("expected textbox mode adv or nvl")?
+        } else {
+            "adv".to_owned()
+        };
+        self.expect_statement_end("expected ';' after textbox statement")?;
+        Some(StatementKind::SetTextBox {
+            bounds: RectSpec {
+                span: span_between(&start, &end),
+                x_px,
+                y_px,
+                width_px,
+                height_px,
+            },
+            color,
+            opacity,
+            mode,
+        })
+    }
+
+    fn parse_tween(&mut self) -> Option<StatementKind> {
+        let node = self.parse_node_access(true, "expected '&mut node' after tween")?;
+        self.expect_keyword("property", "expected 'property' after tween node")?;
+        let property = self.parse_string("expected tween property")?;
+        self.expect_keyword("to", "expected 'to' in tween statement")?;
+        let value = self.parse_f64("expected tween target value")?;
+        self.expect_keyword("over", "expected 'over' in tween statement")?;
+        let duration_ms = self.parse_duration_ms()?;
+        let easing = if self.consume_keyword("ease") {
+            self.parse_word("expected easing name")?
+        } else {
+            "linear".to_owned()
+        };
+        self.expect_statement_end("expected ';' after tween statement")?;
+        Some(StatementKind::Tween {
+            node,
+            property,
+            value,
+            duration_ms,
+            easing,
+        })
+    }
+
+    fn parse_effect(&mut self) -> Option<StatementKind> {
+        let kind = self.parse_word("expected effect kind")?;
+        let color = self.parse_string("expected effect color")?;
+        self.expect_keyword("amount", "expected 'amount' after effect color")?;
+        let amount = self.parse_f64("expected effect amount")?;
+        self.expect_keyword("over", "expected 'over' in effect statement")?;
+        let duration_ms = self.parse_duration_ms()?;
+        let axis = if self.consume_keyword("axis") {
+            self.parse_word("expected effect axis")?
+        } else {
+            String::new()
+        };
+        self.expect_statement_end("expected ';' after effect statement")?;
+        Some(StatementKind::Effect {
+            kind,
+            color,
+            amount,
+            duration_ms,
+            axis,
+        })
+    }
+
+    fn parse_unlock(&mut self) -> Option<StatementKind> {
+        if self.consume_keyword("cg") {
+            let id = self.parse_string("expected CG ID")?;
+            self.expect_statement_end("expected ';' after CG unlock")?;
+            return Some(StatementKind::UnlockCg { id });
+        }
+        self.expect_keyword("chapter", "expected 'chapter' or 'cg' after unlock")?;
+        let id = self.parse_string("expected chapter ID")?;
+        let progress = if self.consume_keyword("progress") {
+            self.parse_u32("expected chapter progress")?.min(100) as u8
+        } else {
+            0
+        };
+        self.expect_statement_end("expected ';' after chapter unlock")?;
+        Some(StatementKind::UnlockChapter { id, progress })
+    }
+
+    fn parse_chapter_progress(&mut self) -> Option<StatementKind> {
+        let id = self.parse_string("expected chapter ID")?;
+        self.expect_keyword("progress", "expected 'progress' after chapter ID")?;
+        let progress = self.parse_u32("expected chapter progress")?.min(100) as u8;
+        self.expect_statement_end("expected ';' after chapter progress")?;
+        Some(StatementKind::SetChapterProgress { id, progress })
+    }
+
+    fn parse_word(&mut self, message: &str) -> Option<String> {
+        self.parse_identifier(message).map(|(name, _)| name)
+    }
+
+    fn parse_on_off(&mut self, message: &str) -> Option<bool> {
+        let word = self.parse_word(message)?;
+        match word.to_ascii_lowercase().as_str() {
+            "on" | "true" | "1" => Some(true),
+            "off" | "false" | "0" => Some(false),
+            _ => {
+                self.error_here(message);
+                None
+            }
+        }
+    }
+
     fn parse_asset_ref(&mut self) -> Option<AssetRef> {
         let start = self.peek().clone();
         self.expect_keyword("asset", "expected asset(\"path\")")?;
@@ -1357,8 +1809,9 @@ impl Parser {
             "Int" => Some(ModernType::Int),
             "Bool" => Some(ModernType::Bool),
             "String" => Some(ModernType::String),
+            "Node" => Some(ModernType::Node),
             _ => {
-                self.error_at(&token, "expected Int, Bool, or String type");
+                self.error_at(&token, "expected Int, Bool, String, or Node type");
                 None
             }
         }
@@ -1730,7 +2183,15 @@ impl Parser {
             if self.peek().kind == ModernTokenKind::Identifier
                 && matches!(
                     self.peek().text.as_str(),
-                    "module" | "import" | "entry" | "state" | "scene"
+                    "module"
+                        | "use"
+                        | "import"
+                        | "entry"
+                        | "state"
+                        | "scene"
+                        | "ui_theme"
+                        | "ui_screen"
+                        | "ui_transition"
                 )
             {
                 break;
@@ -1812,14 +2273,14 @@ mod tests {
     #[test]
     fn parses_a_structured_japanese_scene_and_preserves_source() {
         let source = "// 海風\r\n\
-aria 3.1;\r\n\
+aria;\r\n\
 module 海風.main;\r\n\
-import \"./common.aria\";\r\n\
+use \"./common.aria\";\r\n\
 entry start;\r\n\
 state route: Int = 0;\r\n\
 scene start {\r\n\
   background asset(\"#07131f\") with fade(300ms);\r\n\
-  show ミオ = image(asset(\"ch/mio.webp\")) at (760px, 86px) z 20;\r\n\
+  let mut ミオ = show image(asset(\"ch/mio.webp\")) at (760px, 86px) z 20;\r\n\
   say ミオ: \"海へ行こう。\";\r\n\
   choice { \"海へ行く\" => sea; \"駅へ戻る\" => station; }\r\n\
 }\r\n";
@@ -1839,22 +2300,22 @@ scene start {\r\n\
 
     #[test]
     fn parses_all_show_forms_audio_and_control_flow() {
-        let source = "aria 3.1;\n\
+        let source = "aria;\n\
 entry start;\n\
 scene start {\n\
-  show panel = rect(0px, 0px, 1280px, 720px, \"#001122\") z -1;\n\
-  show title = text(\"海風\") at (40px, 60px) size 32px z 2;\n\
-  var seen: Bool = false;\n\
+  let mut panel = show rect(0px, 0px, 1280px, 720px, \"#001122\") z -1;\n\
+  let mut title = show text(\"海風\") at (40px, 60px) size 32px z 2;\n\
+  let mut seen: Bool = false;\n\
   if !seen || true { play bgm asset(\"audio/sea.ogg\") loop fade 250ms; } else { stop bgm fade 10ms; }\n\
   while seen == false { seen = true; }\n\
   volume bgm 0.75;\n\
-  move title to (80px, 60px);\n\
+  move &mut title to (80px, 60px);\n\
   end;\n\
 }\n";
         let parsed = parse("main.aria", source);
         assert!(!parsed.has_errors(), "{:#?}", parsed.diagnostics);
         let body = &parsed.module.unwrap().scenes[0].body;
-        assert!(matches!(body[0].kind, StatementKind::Show { .. }));
+        assert!(matches!(body[0].kind, StatementKind::Spawn { .. }));
         assert!(matches!(body[3].kind, StatementKind::If { .. }));
         assert!(
             matches!(body[5].kind, StatementKind::Volume { value, .. } if (value - 0.75).abs() < f64::EPSILON)
@@ -1869,7 +2330,7 @@ scene start {\n\
 
         let malformed = parse(
             "bad.aria",
-            "aria 3.1;\nentry start;\nscene start { state nope: Int = \"wrong\"; say \"unterminated\n",
+            "aria;\nentry start;\nscene start { state nope: Int = \"wrong\"; say \"unterminated\n",
         );
         assert!(malformed.has_errors());
         assert!(
@@ -1881,10 +2342,35 @@ scene start {\n\
     }
 
     #[test]
+    fn rejects_language_modes_and_compatibility_declarations_with_actionable_errors() {
+        let parsed = parse(
+            "bad.aria",
+            "aria 3.2;\nimport \"common.aria\";\nentry start;\nscene start { var count: Int = 0; end; }\n",
+        );
+        assert!(parsed.has_errors());
+        let messages = parsed
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("unversioned"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("Rust-style 'use"))
+        );
+        assert!(messages.iter().any(|message| message.contains("let mut")));
+    }
+
+    #[test]
     fn parses_an_importable_module_without_an_entry_point() {
         let parsed = parse(
             "scripts/common.aria",
-            "aria 3.1;\nmodule example.common;\nstate met: Bool = false;\nscene greet { return; }\n",
+            "aria;\nmodule example.common;\nstate met: Bool = false;\nscene greet { return; }\n",
         );
         assert!(!parsed.has_errors(), "{:#?}", parsed.diagnostics);
         let module = parsed.module.unwrap();

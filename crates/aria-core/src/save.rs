@@ -94,8 +94,37 @@ impl SaveEnvelopeV3 {
             timestamp_unix_ms: self.timestamp_unix_ms,
             payload: &self.payload,
         };
-        let bytes = serde_json::to_vec(&material).map_err(SaveEnvelopeError::Serialize)?;
+        // A save crosses storage and Web string boundaries before it is
+        // verified again. `serde_json::Value` can retain an f32's original
+        // decimal rendering while a decoded JSON number is represented as an
+        // f64 (and therefore has a different shortest rendering). Reparse
+        // once into the transport representation, then hash a canonical
+        // value rather than incidental number/map layouts.
+        let value = serde_json::to_value(material).map_err(SaveEnvelopeError::Serialize)?;
+        let transport = serde_json::to_vec(&value).map_err(SaveEnvelopeError::Serialize)?;
+        let value = serde_json::from_slice(&transport).map_err(SaveEnvelopeError::Deserialize)?;
+        let bytes =
+            serde_json::to_vec(&canonical_json(value)).map_err(SaveEnvelopeError::Serialize)?;
         Ok(blake3::hash(&bytes).to_hex().to_string())
+    }
+}
+
+fn canonical_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(canonical_json).collect())
+        }
+        serde_json::Value::Object(values) => {
+            let mut entries = values.into_iter().collect::<Vec<_>>();
+            entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+            serde_json::Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, canonical_json(value)))
+                    .collect(),
+            )
+        }
+        value => value,
     }
 }
 
@@ -131,6 +160,8 @@ pub enum SaveEnvelopeError {
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::{CompiledProgram, LogicalSize, Vm, VmSnapshot};
+
     use super::*;
 
     #[test]
@@ -158,5 +189,26 @@ mod tests {
             save.validate(),
             Err(SaveEnvelopeError::ChecksumMismatch)
         ));
+    }
+
+    #[test]
+    fn vm_snapshot_survives_json_string_transport() {
+        let vm = Vm::new(
+            CompiledProgram::empty("jp.example.game"),
+            LogicalSize {
+                width: 1_280,
+                height: 720,
+            },
+        )
+        .unwrap();
+        let envelope = SaveEnvelopeV3::new("jp.example.game", "3.0.0", 42, &vm.snapshot()).unwrap();
+        let transport = serde_json::to_string(&envelope).unwrap();
+        let decoded = SaveEnvelopeV3::decode(transport.as_bytes()).unwrap();
+        let restored: VmSnapshot = decoded.payload_as().unwrap();
+        assert_eq!(restored.schema_version, vm.snapshot().schema_version);
+        assert_eq!(restored.game_id, vm.snapshot().game_id);
+        assert_eq!(restored.ui.route, vm.snapshot().ui.route);
+        assert!(restored.ui.scroll_offsets.is_empty());
+        assert_eq!(restored.ui.route, "dialogue");
     }
 }

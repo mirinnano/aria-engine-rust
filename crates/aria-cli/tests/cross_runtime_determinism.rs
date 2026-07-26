@@ -5,14 +5,17 @@ use aria_web::PortableWebRuntime;
 
 const SCRIPT: &str = include_str!("../../../examples/v3-minimal/scripts/main.aria");
 const INPUTS: &str = include_str!("../../../compatibility/v3/vertical-slice-inputs.json");
-// This baseline is for the Aria 3.1 structured vertical slice.  It was
-// deliberately re-recorded when that source replaced the alpha 3.0 example;
-// ARIAC4 itself must preserve this replay after an encode/decode round trip.
-const ARIA_3_1_VERTICAL_SLICE_SNAPSHOT_HASH: &str =
-    "6e4a5ba002abba07997cd3ff23ea79ba09b38062851843c22b3764a560f5ef1c";
+// The story source remains the structured vertical slice, while its UI now
+// travels through ARIAC7 and snapshot schema 9. Deterministic subtitle
+// paging, replay targets, and semantic gallery state are part of the current
+// single-language surface, even when their collections are empty.
+// This baseline is updated only after Native/Web parity and bytecode
+// encode/decode equality are asserted above.
+const ARIA_SINGLE_LANGUAGE_VERTICAL_SLICE_SNAPSHOT_HASH: &str =
+    "35db88d1ec0c4299bf6f5ce1ba8f94a83ad5485c72ccc9ca9aa6bb7ca8124af3";
 
 #[test]
-fn native_and_web_replay_hashes_match_the_v3_golden_corpus() {
+fn native_and_web_replay_hashes_match_the_single_language_golden_corpus() {
     let compiled = compile(CompileInput {
         game_id: "jp.example.aria-v3-minimal".to_owned(),
         entry: "scripts/main.aria".to_owned(),
@@ -39,7 +42,7 @@ fn native_and_web_replay_hashes_match_the_v3_golden_corpus() {
         .unwrap();
     let mut web = PortableWebRuntime::new(program, size).unwrap();
     let web_hashes = tape
-        .inputs
+        .resolved_inputs()
         .iter()
         .map(|input| web.step(input).unwrap().digest())
         .collect::<Vec<_>>();
@@ -52,6 +55,6 @@ fn native_and_web_replay_hashes_match_the_v3_golden_corpus() {
     assert_eq!(ariac4_snapshot, native_snapshot);
     assert_eq!(
         native.final_snapshot_hash,
-        ARIA_3_1_VERTICAL_SLICE_SNAPSHOT_HASH
+        ARIA_SINGLE_LANGUAGE_VERTICAL_SLICE_SNAPSHOT_HASH
     );
 }

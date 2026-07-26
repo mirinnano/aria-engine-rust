@@ -195,7 +195,7 @@ pub(crate) fn copy_web_runtime(source: &Path, destination: &Path) -> Result<Vec<
     Ok(files)
 }
 
-fn validate_native_player(path: &Path, target: BuildTarget) -> Result<PathBuf> {
+pub(crate) fn validate_native_player(path: &Path, target: BuildTarget) -> Result<PathBuf> {
     let canonical = path
         .canonicalize()
         .with_context(|| format!("cannot resolve Player binary {}", path.display()))?;
@@ -229,7 +229,7 @@ fn validate_native_player(path: &Path, target: BuildTarget) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-fn validate_web_runtime_package(source: &Path) -> Result<()> {
+pub(crate) fn validate_web_runtime_package(source: &Path) -> Result<()> {
     let javascript_path = source.join("aria_web.js");
     let wasm_path = source.join("aria_web_bg.wasm");
     if !javascript_path.is_file() || !wasm_path.is_file() {

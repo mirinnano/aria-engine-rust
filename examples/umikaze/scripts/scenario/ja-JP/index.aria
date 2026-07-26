@@ -1,0 +1,40 @@
+aria;
+module umikaze.scenario.ja;
+
+// Generated from the canonical Day 0–10 Markdown source.
+// Each chapter remains its own reviewable Aria module.
+use "chapter-00.aria";
+use "chapter-01.aria";
+use "chapter-02.aria";
+use "chapter-03.aria";
+use "chapter-04.aria";
+use "chapter-05.aria";
+use "chapter-06.aria";
+use "chapter-07.aria";
+use "chapter-08.aria";
+use "chapter-09.aria";
+use "chapter-10.aria";
+
+scene chapter_select_ja {
+  screen chapter_select;
+  background asset("#102b38") with wipe(260ms);
+  choice {
+    "PROLOGUE" => novel_chapter_00;
+    "DAY 1" => novel_chapter_01;
+    "DAY 2" => novel_chapter_02;
+    "DAY 3" => novel_chapter_03;
+    "DAY 4" => novel_chapter_04;
+    "DAY 5" => novel_chapter_05;
+    "DAY 6" => novel_chapter_06;
+    "DAY 7" => novel_chapter_07;
+    "DAY 8" => novel_chapter_08;
+    "DAY 9" => novel_chapter_09;
+    "DAY 10" => novel_chapter_10;
+  }
+}
+
+// Full releases return to the catalogue after DAY 4. The demo entry imports
+// the same canonical chapter but supplies a closed endpoint instead.
+scene novel_chapter_04_complete {
+  jump chapter_select_ja;
+}

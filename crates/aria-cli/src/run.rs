@@ -6,14 +6,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use aria_core::pak::PakArchive;
-use aria_core::protocol::{DrawCommand, LogicalSize, RuntimeCommand, StepOutput, UiRole};
-use aria_core::{CompiledProgram, InputAction, InputSnapshot, SaveEnvelopeV3, Vm, VmSnapshot};
+use aria_core::protocol::{LogicalSize, RuntimeCommand, StepOutput};
+use aria_core::{CompiledProgram, InputSnapshot, SaveEnvelopeV3, UiIntent, Vm, VmSnapshot};
 use aria_native::{AtomicSaveStore, ReplayRunner, ReplayTape};
 use aria_protection::PakPackage;
 use fontdb::Database as FontDatabase;
 
 use crate::build::{
-    BuildManifest, BuildProfile, BuildTarget, BundleManifest, bundle_content_root, resolve_pak_keys,
+    BuildManifest, BuildProfile, BuildTarget, BundleManifest, BundlePakManifest,
+    bundle_content_root, resolve_pak_keys,
 };
 use crate::package_runtime::native_player_filename;
 use crate::project::{AssetInventory, LoadedProject};
@@ -24,8 +25,13 @@ use crate::project::{AssetInventory, LoadedProject};
     allow(dead_code)
 )]
 pub(crate) enum RuntimeAssetSource {
-    ProjectRoot { assets: AssetInventory },
-    Package { profile: BuildProfile },
+    ProjectRoot {
+        assets: AssetInventory,
+    },
+    Package {
+        profile: BuildProfile,
+        packs: Vec<BundlePakManifest>,
+    },
 }
 
 #[derive(Debug)]
@@ -34,6 +40,7 @@ pub(crate) struct RuntimeProject {
     pub(crate) program: CompiledProgram,
     pub(crate) logical_size: LogicalSize,
     pub(crate) save_namespace: String,
+    pub(crate) legacy_save_namespaces: Vec<String>,
     #[cfg_attr(
         any(not(feature = "desktop-player"), target_arch = "wasm32"),
         allow(dead_code)
@@ -63,7 +70,11 @@ pub fn command(path: &Path, headless: bool, replay: Option<&Path>, max_frames: u
     }
 
     let mut vm = Vm::new(project.program, project.logical_size)?;
-    let save_store = AtomicSaveStore::new(project.root.join("saves-v3"), project.save_namespace)?;
+    let save_root = project.root.join("saves-v3");
+    for namespace in &project.legacy_save_namespaces {
+        AtomicSaveStore::purge_namespace(&save_root, namespace)?;
+    }
+    let save_store = AtomicSaveStore::new(save_root, project.save_namespace)?;
     let interactive = !headless && io::stdin().is_terminal() && io::stdout().is_terminal();
     let mut sequence = 1;
     let mut output = vm.step(&InputSnapshot::idle(sequence, 16))?;
@@ -80,31 +91,37 @@ pub fn command(path: &Path, headless: bool, replay: Option<&Path>, max_frames: u
         let mut line = String::new();
         io::stdin().read_line(&mut line)?;
         let selected = line.trim().parse::<usize>().ok();
-        let focused = output
-            .ui
-            .nodes
-            .values()
-            .filter(|node| node.role == UiRole::Button)
-            .position(|node| node.focused)
-            .unwrap_or(0);
+        let targets = if output.view.choices.is_empty() {
+            output
+                .view
+                .actions
+                .iter()
+                .map(|action| action.id.clone())
+                .collect::<Vec<_>>()
+        } else {
+            output
+                .view
+                .choices
+                .iter()
+                .map(|choice| choice.id.clone())
+                .collect::<Vec<_>>()
+        };
 
         if let Some(selected) = selected.filter(|selected| *selected > 0) {
             let target = selected - 1;
-            let action = if target >= focused {
-                InputAction::NavigateDown
-            } else {
-                InputAction::NavigateUp
-            };
-            for _ in 0..target.abs_diff(focused) {
+            if let Some(id) = targets.get(target) {
                 sequence += 1;
-                drop(vm.step(&InputSnapshot::pressed(sequence, 16, action))?);
-                frames += 1;
+                let mut input = InputSnapshot::idle(sequence, 16);
+                input.intents.push(UiIntent::Activate { id: id.clone() });
+                output = vm.step(&input)?;
             }
-            sequence += 1;
-            output = vm.step(&InputSnapshot::pressed(sequence, 16, InputAction::Confirm))?;
         } else {
             sequence += 1;
-            output = vm.step(&InputSnapshot::pressed(sequence, 16, InputAction::Advance))?;
+            let mut input = InputSnapshot::idle(sequence, 16);
+            input.intents.push(UiIntent::Activate {
+                id: "dialogue.advance".to_owned(),
+            });
+            output = vm.step(&input)?;
         }
         frames += 1;
         process_runtime_commands(&mut vm, &save_store, &output.runtime)?;
@@ -142,26 +159,41 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
         {
             bail!("game.ariac metadata does not match bundle.aria.json");
         }
-        let pak_path = root.join("game.ariapak");
-        let pak =
-            fs::read(&pak_path).with_context(|| format!("cannot read {}", pak_path.display()))?;
-        if blake3::hash(&pak).to_hex().as_str() != bundle.pak_blake3 {
-            bail!("game.ariapak does not match bundle.aria.json");
-        }
-        if u64::try_from(pak.len())? != bundle.pak_size {
-            bail!("game.ariapak size does not match bundle.aria.json");
+        let packs = if bundle.pak_packs.is_empty() {
+            vec![BundlePakManifest {
+                pack_id: bundle.pack_id.clone(),
+                role: aria_protection::PakRole::Boot,
+                file: "game.ariapak".to_owned(),
+                blake3: bundle.pak_blake3.clone(),
+                size: bundle.pak_size,
+                content_root_blake3: bundle.pak_content_root_blake3.clone(),
+                assets: bundle.font_assets.clone(),
+            }]
+        } else {
+            bundle.pak_packs.clone()
+        };
+        if !packs.iter().any(|pack| pack.file == "game.ariapak") {
+            bail!("bundle.aria.json does not declare the primary game.ariapak");
         }
         let package_profile = bundle.pak_profile;
         match package_profile {
             BuildProfile::Dev => {
-                let archive = PakArchive::open(&pak)?;
-                if archive.game_id() != bundle.game_id
-                    || archive.content_root_hex() != bundle.pak_content_root_blake3
-                {
-                    bail!("game.ariapak metadata does not match bundle.aria.json");
+                let mut mounted = Vec::with_capacity(packs.len());
+                for pack in &packs {
+                    let bytes = read_declared_pack(&root, pack)?;
+                    let archive = PakArchive::open(&bytes)?;
+                    if archive.game_id() != bundle.game_id
+                        || archive.content_root_hex() != pack.content_root_blake3
+                    {
+                        bail!("{} metadata does not match bundle.aria.json", pack.file);
+                    }
+                    mounted.push(archive);
                 }
-                validate_packaged_fonts(&bundle, |path| {
-                    archive.read(path).map_err(|error| anyhow::anyhow!(error))
+                validate_packaged_fonts(&bundle, &packs, |path| {
+                    mounted
+                        .iter()
+                        .find_map(|archive| archive.read(path).ok())
+                        .ok_or_else(|| anyhow::anyhow!("missing asset '{path}'"))
                 })?;
             }
             BuildProfile::Signed | BuildProfile::Protected => {
@@ -173,16 +205,24 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
                 if let Some(key) = keys.encryption.as_ref() {
                     provider = provider.with_encryption_key(key);
                 }
-                let package = PakPackage::open(&pak, Some(&provider))?;
-                let manifest = package.manifest();
-                if manifest.game_id != bundle.game_id
-                    || manifest.pack_id != bundle.pack_id
-                    || package.content_root() != bundle.pak_content_root_blake3
-                {
-                    bail!("game.ariapak manifest does not match bundle.aria.json");
+                let mut mounted = Vec::with_capacity(packs.len());
+                for pack in &packs {
+                    let bytes = read_declared_pack(&root, pack)?;
+                    let package = PakPackage::open(&bytes, Some(&provider))?;
+                    let manifest = package.manifest();
+                    if manifest.game_id != bundle.game_id
+                        || manifest.pack_id != pack.pack_id
+                        || package.content_root() != pack.content_root_blake3
+                    {
+                        bail!("{} manifest does not match bundle.aria.json", pack.file);
+                    }
+                    mounted.push(package);
                 }
-                validate_packaged_fonts(&bundle, |path| {
-                    package.read(path).map_err(|error| anyhow::anyhow!(error))
+                validate_packaged_fonts(&bundle, &packs, |path| {
+                    mounted
+                        .iter()
+                        .find_map(|package| package.read(path).ok())
+                        .ok_or_else(|| anyhow::anyhow!("missing asset '{path}'"))
                 })?;
             }
         }
@@ -206,10 +246,12 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
                 height: bundle.logical_height,
             },
             save_namespace: bundle.save_namespace.clone(),
+            legacy_save_namespaces: bundle.legacy_save_namespaces.clone(),
             font_assets: bundle.font_assets.clone(),
             title: bundle.game_title.clone(),
             asset_source: RuntimeAssetSource::Package {
                 profile: bundle.pak_profile,
+                packs,
             },
         });
     }
@@ -231,6 +273,7 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
             height: project.manifest.runtime.logical_height,
         },
         save_namespace: project.manifest.runtime.save_namespace,
+        legacy_save_namespaces: project.manifest.runtime.legacy_save_namespaces,
         font_assets: project.manifest.runtime.fonts,
         title: project.manifest.game.title,
         asset_source: RuntimeAssetSource::ProjectRoot { assets },
@@ -266,9 +309,16 @@ fn validate_wrapper_files(root: &Path, manifest: &BuildManifest) -> Result<()> {
 
 fn validate_packaged_fonts(
     bundle: &BundleManifest,
+    packs: &[BundlePakManifest],
     mut read_asset: impl FnMut(&str) -> Result<Vec<u8>>,
 ) -> Result<()> {
     for logical_path in &bundle.font_assets {
+        if !packs
+            .iter()
+            .any(|pack| pack.assets.iter().any(|asset| asset == logical_path))
+        {
+            bail!("cannot read bundled font '{logical_path}': no declared pack contains it");
+        }
         let bytes = read_asset(logical_path)
             .with_context(|| format!("cannot read bundled font '{logical_path}'"))?;
         let mut database = FontDatabase::new();
@@ -300,6 +350,16 @@ fn validate_bundle(bundle: &BundleManifest) -> Result<()> {
     {
         bail!("bundle.aria.json has invalid game/runtime metadata");
     }
+    let mut legacy = BTreeSet::new();
+    for namespace in &bundle.legacy_save_namespaces {
+        if namespace.trim().is_empty()
+            || namespace.contains(['/', '\\'])
+            || namespace == &bundle.save_namespace
+            || !legacy.insert(namespace)
+        {
+            bail!("bundle.aria.json has invalid legacy save namespace metadata");
+        }
+    }
     if bundle.content_root_blake3 != bundle_content_root(bundle) {
         bail!("bundle.aria.json content root does not match its metadata");
     }
@@ -322,7 +382,57 @@ fn validate_bundle(bundle: &BundleManifest) -> Result<()> {
             bail!("bundle font assets collide on a case-insensitive filesystem: '{font}'");
         }
     }
+    if !bundle.pak_packs.is_empty() {
+        let mut pack_ids = BTreeSet::new();
+        let mut files = BTreeSet::new();
+        let mut assets = BTreeSet::new();
+        for pack in &bundle.pak_packs {
+            if pack.pack_id.trim().is_empty()
+                || !pack.file.ends_with(".ariapak")
+                || pack.file.contains('/')
+                || pack.file.contains('\\')
+                || pack.file.contains("..")
+            {
+                bail!("bundle contains an invalid PAK declaration");
+            }
+            if !pack_ids.insert(&pack.pack_id) || !files.insert(&pack.file) {
+                bail!("bundle repeats a PAK identifier or file");
+            }
+            for asset in &pack.assets {
+                let canonical =
+                    aria_core::compiler::normalize_logical_path(asset).map_err(|error| {
+                        anyhow::anyhow!("bundle pack asset '{asset}' is invalid: {error}")
+                    })?;
+                if canonical != *asset || !assets.insert(asset) {
+                    bail!("bundle repeats or misnames PAK asset '{asset}'");
+                }
+            }
+        }
+        if !bundle
+            .pak_packs
+            .iter()
+            .any(|pack| pack.pack_id == bundle.pack_id)
+            || !bundle
+                .pak_packs
+                .iter()
+                .any(|pack| pack.file == "game.ariapak")
+        {
+            bail!("bundle primary PAK is missing from pak_packs");
+        }
+    }
     Ok(())
+}
+
+fn read_declared_pack(root: &Path, pack: &BundlePakManifest) -> Result<Vec<u8>> {
+    let path = root.join(&pack.file);
+    let bytes = fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+    if blake3::hash(&bytes).to_hex().as_str() != pack.blake3 {
+        bail!("{} does not match bundle.aria.json", pack.file);
+    }
+    if u64::try_from(bytes.len())? != pack.size {
+        bail!("{} size does not match bundle.aria.json", pack.file);
+    }
+    Ok(bytes)
 }
 
 fn process_runtime_commands(
@@ -330,7 +440,6 @@ fn process_runtime_commands(
     store: &AtomicSaveStore,
     commands: &[RuntimeCommand],
 ) -> Result<()> {
-    let mut warned = BTreeSet::new();
     for command in commands {
         match command {
             RuntimeCommand::Save { slot } => {
@@ -355,45 +464,41 @@ fn process_runtime_commands(
                     }
                 }
             }
-            RuntimeCommand::Unsupported { name, .. } if warned.insert(name.clone()) => {
-                eprintln!("warning: runtime skipped vertical-slice host command '{name}'");
-            }
             RuntimeCommand::Quit => break,
-            RuntimeCommand::OpenMenu | RuntimeCommand::Unsupported { .. } => {}
+            RuntimeCommand::ReturnToTitle
+            | RuntimeCommand::QuickSave
+            | RuntimeCommand::QuickLoad
+            | RuntimeCommand::PreloadAsset { .. } => {}
         }
     }
     Ok(())
 }
 
 fn print_terminal_frame(output: &StepOutput) {
-    if let Some(DrawCommand::Text { text, speaker, .. }) =
-        output.render.commands.iter().find(
-            |command| matches!(command, DrawCommand::Text { id, .. } if id == "vn.textbox.text"),
-        )
-    {
-        if let Some(speaker) = speaker {
-            println!("{speaker}: {text}");
+    if let Some(dialogue) = &output.view.dialogue {
+        if let Some(speaker) = &dialogue.speaker {
+            println!("{speaker}: {}", dialogue.text);
         } else {
-            println!("{text}");
+            println!("{}", dialogue.text);
         }
     }
-    let choices = output
-        .ui
-        .nodes
-        .values()
-        .filter(|node| node.role == UiRole::Button)
-        .collect::<Vec<_>>();
-    for (index, choice) in choices.iter().enumerate() {
-        println!(
-            "{} {} {}",
-            if choice.focused { ">" } else { " " },
-            index + 1,
-            choice.label
-        );
+    if !output.view.choices.is_empty() {
+        for (index, choice) in output.view.choices.iter().enumerate() {
+            println!(
+                "{} {} {}",
+                if choice.selected { ">" } else { " " },
+                index + 1,
+                choice.label
+            );
+        }
+    } else {
+        for (index, action) in output.view.actions.iter().enumerate() {
+            println!("  {} {}", index + 1, action.id);
+        }
     }
     println!(
         "[Enter: advance{}]",
-        if choices.is_empty() {
+        if output.view.choices.is_empty() && output.view.actions.is_empty() {
             ""
         } else {
             ", number: choose"
@@ -417,7 +522,7 @@ mod tests {
         fs::create_dir_all(root.join("assets")).unwrap();
         fs::write(
             root.join("aria.toml"),
-            "schema = 3\n\
+            "schema = 4\n\
              [game]\n\
              id = \"jp.example.package-integrity\"\n\
              version = \"3.0.0\"\n\
@@ -428,12 +533,14 @@ mod tests {
              logical_height = 360\n\
              asset_roots = [\"assets\"]\n\
              fonts = []\n\
-             save_namespace = \"package-integrity\"\n",
+             save_namespace = \"package-integrity\"\n\
+             [presentation]\n\
+             frontend = \"ui\"\n",
         )
         .unwrap();
         fs::write(
             root.join("scripts/main.aria"),
-            "# aria-version: 3.0\nstrict on\nbg \"#111820\", 0\nend\n",
+            "aria;\nentry start;\nscene start { background asset(\"#111820\"); end; }\n",
         )
         .unwrap();
         fs::write(root.join("assets/placeholder.txt"), "asset").unwrap();

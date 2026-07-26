@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Stable diagnostic identifiers used by the V3 compiler and migration tool.
+/// Stable diagnostic identifiers used by the Aria compiler and toolchain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DiagnosticCode {
     InvalidManifest,
@@ -13,10 +13,18 @@ pub enum DiagnosticCode {
     InvalidOperand,
     MissingSource,
     InvalidControlFlow,
-    UnsupportedRuntimeCommand,
-    MigrationNotice,
-    UnknownCommand,
-    AmbiguousBareText,
+    DeprecatedUiSyntax,
+    InvalidUiBinding,
+    /// A resource was used after an ownership transfer or explicit drop.
+    UseAfterMove,
+    /// Two incompatible borrows would overlap, or an owner was used while
+    /// loaned to a lexical borrow scope.
+    BorrowConflict,
+    /// A source expression did not provide the required `&` / `&mut` access.
+    InvalidBorrow,
+    /// A Node was copied, dropped twice, or otherwise violated affine
+    /// ownership rules.
+    InvalidOwnership,
 }
 
 impl DiagnosticCode {
@@ -31,10 +39,12 @@ impl DiagnosticCode {
             Self::InvalidOperand => "E104",
             Self::MissingSource => "E105",
             Self::InvalidControlFlow => "E106",
-            Self::UnsupportedRuntimeCommand => "W300",
-            Self::MigrationNotice => "W301",
-            Self::UnknownCommand => "E107",
-            Self::AmbiguousBareText => "W302",
+            Self::DeprecatedUiSyntax => "E108",
+            Self::InvalidUiBinding => "E109",
+            Self::UseAfterMove => "E110",
+            Self::BorrowConflict => "E111",
+            Self::InvalidBorrow => "E112",
+            Self::InvalidOwnership => "E113",
         }
     }
 }

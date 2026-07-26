@@ -14,7 +14,9 @@ on:
       - "compatibility/v3/**"
       - "examples/v3-minimal/**"
       - "examples/v3-player-smoke/**"
+      - "examples/umikaze/**"
       - "scripts/build-v3-web.*"
+      - "scripts/classify-v3-legacy-tests.py"
       - "scripts/v3-web-smoke.mjs"
       - "scripts/v3-web-save-smoke.mjs"
       - ".github/workflows/aria-v3-rust.yml"
@@ -30,7 +32,9 @@ on:
       - "compatibility/v3/**"
       - "examples/v3-minimal/**"
       - "examples/v3-player-smoke/**"
+      - "examples/umikaze/**"
       - "scripts/build-v3-web.*"
+      - "scripts/classify-v3-legacy-tests.py"
       - "scripts/v3-web-smoke.mjs"
       - "scripts/v3-web-save-smoke.mjs"
       - ".github/workflows/aria-v3-rust.yml"
@@ -62,10 +66,20 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Install matching wasm-bindgen CLI for web-build coverage
+        # The CLI's web-build coverage intentionally exercises the automatic
+        # wasm runtime build, which requires the matching host-side bindgen
+        # binary. Keep this explicit rather than allowing a developer's PATH
+        # to decide whether the release test is meaningful.
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Test workspace and architecture boundary
         run: cargo test --workspace --locked
+      - name: Check legacy-test classification is current
+        run: python3 scripts/classify-v3-legacy-tests.py --check
       - name: Check release-compatible example project
         run: cargo run --locked -p aria-cli -- check examples/v3-minimal --release
+      - name: Check V3.2 umikaze UI sample
+        run: cargo run --locked -p aria-cli -- check examples/umikaze --release
 
   native:
     name: Native ${{ matrix.os }}
@@ -118,6 +132,15 @@ jobs:
         run: |
           cargo run --locked --release -p aria-cli -- build examples/v3-player-smoke --target linux-x64 --profile signed --release --out target/native-player-smoke
           timeout 30s xvfb-run -a target/native-player-smoke/aria-player
+      - name: Assert native player size budget
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then player="aria-player.exe"; else player="aria-player"; fi
+          size=$(stat -c%s target/package-*/$player 2>/dev/null || stat -f%z target/package-*/$player)
+          echo "player size: $size bytes"
+          # 25 MiB budget (current ~19.3MB); Phase E may tighten this further.
+          test "$size" -le 26214400
       - name: Upload native release package
         if: runner.os != 'macOS'
         uses: actions/upload-artifact@v4
@@ -137,7 +160,10 @@ jobs:
         with:
           key: wasm
       - name: Check the full workspace for wasm portability
-        run: cargo check --workspace --target wasm32-unknown-unknown --locked
+        # `aria-cli` enables its native desktop player by default. That is a
+        # host-only feature (and pulls ALSA on Linux), so turn it off while
+        # checking the portable Web/WASM surface.
+        run: cargo check --workspace --target wasm32-unknown-unknown --no-default-features --locked
       - name: Install matching wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Build runnable PWA
@@ -152,8 +178,24 @@ jobs:
       - name: Exercise WASM runtime in Chromium
         run: |
           python3 -m http.server 4173 --directory target/v3-web >/tmp/aria-v3-http.log 2>&1 &
-          node scripts/v3-web-smoke.mjs http://127.0.0.1:4173/
-          node scripts/v3-web-save-smoke.mjs http://127.0.0.1:4173/
+          ARIA_WEB_TEST_VERIFICATION_KEY=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c \
+            node scripts/v3-web-smoke.mjs http://127.0.0.1:4173/
+          ARIA_WEB_TEST_VERIFICATION_KEY=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c \
+            node scripts/v3-web-save-smoke.mjs http://127.0.0.1:4173/
+      - name: Build umikaze web package
+        run: |
+          npm --prefix examples/umikaze/ui ci
+          cargo run --locked --release -p aria-cli -- build examples/umikaze --target web --profile signed --release --out target/umikaze-web
+      - name: Assert web artifact size budgets
+        run: |
+          wasm_bytes=$(stat -c%s target/umikaze-web/pkg/aria_web_bg.wasm)
+          echo "wasm runtime: $wasm_bytes bytes"
+          # 2.5 MiB budget (current ~1.8MB); Phase E tightens this to 2.0MB.
+          test "$wasm_bytes" -le 2621440
+          total_bytes=$(du -sb target/umikaze-web | cut -f1)
+          echo "umikaze web package: $total_bytes bytes"
+          # Interim 31MB budget; Phase E tightens this to 20MB.
+          test "$total_bytes" -le 32505856
       - name: Upload PWA
         uses: actions/upload-artifact@v4
         with:
@@ -173,14 +215,23 @@ jobs:
           key: macos-universal
       - name: Build both Apple slices
         run: |
-          cargo build --locked --release -p aria-cli --target aarch64-apple-darwin
-          cargo build --locked --release -p aria-cli --target x86_64-apple-darwin
+          cargo build --locked --release -p aria-cli --features desktop-player --target aarch64-apple-darwin
+          cargo build --locked --release -p aria-cli --features desktop-player --target x86_64-apple-darwin
           mkdir -p target/macos-universal
           lipo -create \
             target/aarch64-apple-darwin/release/aria \
             target/x86_64-apple-darwin/release/aria \
             -output target/macos-universal/aria-player
           file target/macos-universal/aria-player
+      - name: Verify FAT Mach-O header
+        run: |
+          python3 - <<'EOF'
+          import struct
+          with open("target/macos-universal/aria-player", "rb") as handle:
+              magic = struct.unpack(">I", handle.read(4))[0]
+          assert magic in (0xCAFEBABE, 0xCAFEBABF), hex(magic)
+          print("FAT Mach-O verified:", hex(magic))
+          EOF
       - name: Build and launch universal package
         run: |
           ARIA_PLAYER_BINARY="$PWD/target/macos-universal/aria-player" \
@@ -202,6 +253,12 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # `rustsec/audit-check@v2` installs the newest cargo-audit without its
+      # lockfile. Pin the Rust-1.89-compatible CVSS 4-aware release and its
+      # reviewed dependency graph. The workspace uses thin LTO for shipped
+      # binaries; audit is a disposable CI utility, so disable it here to
+      # avoid tool-install linker failures on runner LLVM versions.
+      - name: Audit security advisories
+        run: |
+          CARGO_PROFILE_RELEASE_LTO=off cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit

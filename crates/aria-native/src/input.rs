@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use aria_core::{InputAction, InputSnapshot, PointerSnapshot};
+use aria_core::{InputAction, InputSnapshot, PointerSnapshot, UiViewport};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -15,6 +15,12 @@ pub enum RawControl {
     KeyEscape,
     KeyMenu,
     KeyControl,
+    KeyF5,
+    KeyF9,
+    KeyA,
+    KeyS,
+    KeyB,
+    KeyH,
     MousePrimary,
     TouchPrimary,
     GamepadDpadUp,
@@ -23,6 +29,7 @@ pub enum RawControl {
     GamepadDpadRight,
     GamepadSouth,
     GamepadEast,
+    GamepadNorth,
     GamepadStart,
     GamepadRightShoulder,
     SteamNavigateUp,
@@ -42,6 +49,7 @@ pub enum RawInputEvent {
     Press { control: RawControl },
     Release { control: RawControl },
     PointerMoved { x: f32, y: f32 },
+    Scroll { delta_y: f32 },
 }
 
 #[derive(Debug, Default)]
@@ -54,6 +62,7 @@ pub struct InputNormalizer {
     pointer_present: bool,
     pointer_pressed: bool,
     pointer_held: bool,
+    scroll_delta_y: f32,
 }
 
 impl InputNormalizer {
@@ -65,6 +74,11 @@ impl InputNormalizer {
                 self.pointer_present = true;
                 self.pointer_held = self.held_controls.contains(&RawControl::MousePrimary)
                     || self.held_controls.contains(&RawControl::TouchPrimary);
+            }
+            RawInputEvent::Scroll { delta_y } => {
+                if delta_y.is_finite() {
+                    self.scroll_delta_y += delta_y;
+                }
             }
             RawInputEvent::Press { control } => {
                 if self.held_controls.insert(control) {
@@ -125,7 +139,23 @@ impl InputNormalizer {
             pressed: std::mem::take(&mut self.pressed_actions),
             held: self.held_actions.clone(),
             pointer,
+            scroll_delta_y: std::mem::take(&mut self.scroll_delta_y),
+            viewport: None,
+            intents: Vec::new(),
         }
+    }
+
+    /// Produces a replay-ready snapshot with the exact viewport that was used
+    /// to normalize pointer coordinates. Keeping the viewport beside input is
+    /// what makes responsive UI branches deterministic across Native and Web.
+    #[must_use]
+    pub fn snapshot_with_viewport(
+        &mut self,
+        sequence: u64,
+        delta_ms: u32,
+        viewport: UiViewport,
+    ) -> InputSnapshot {
+        self.snapshot(sequence, delta_ms).with_viewport(viewport)
     }
 
     /// Drops held state when the window loses focus. Physical release events
@@ -164,6 +194,11 @@ fn semantic_action(control: RawControl) -> Option<InputAction> {
         RawControl::KeyControl | RawControl::GamepadRightShoulder | RawControl::SteamSkip => {
             InputAction::Skip
         }
+        RawControl::KeyF5 => InputAction::QuickSave,
+        RawControl::KeyF9 => InputAction::QuickLoad,
+        RawControl::KeyA => InputAction::ToggleAuto,
+        RawControl::KeyS => InputAction::ToggleSkip,
+        RawControl::KeyB | RawControl::KeyH | RawControl::GamepadNorth => InputAction::OpenBacklog,
         RawControl::MousePrimary | RawControl::TouchPrimary => return None,
     })
 }
@@ -256,5 +291,14 @@ mod tests {
             control: RawControl::MousePrimary,
         });
         assert!(normalizer.snapshot(1, 16).pointer.unwrap().primary_held);
+    }
+
+    #[test]
+    fn wheel_delta_is_preserved_for_the_deterministic_input_frame() {
+        let mut normalizer = InputNormalizer::default();
+        normalizer.push(RawInputEvent::Scroll { delta_y: 48.0 });
+        normalizer.push(RawInputEvent::Scroll { delta_y: 12.0 });
+        assert_eq!(normalizer.snapshot(1, 16).scroll_delta_y, 60.0);
+        assert_eq!(normalizer.snapshot(2, 16).scroll_delta_y, 0.0);
     }
 }
