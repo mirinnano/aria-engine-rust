@@ -148,6 +148,45 @@ jobs:
           name: aria-native-${{ matrix.os }}
           path: target/package-*/**
 
+  linux-appimage:
+    name: Linux distro-neutral AppImage shell
+    # This is the oldest Tauri/WebKit baseline we support, not an Ubuntu-only
+    # release. The resulting AppImage is the Linux download for every
+    # supported distribution family.
+    runs-on: ubuntu-22.04
+    env:
+      ARIA_PAK_PROFILE: signed
+      ARIA_PAK_VERIFICATION_KEY_ID: publisher
+      ARIA_PAK_VERIFICATION_KEY_HEX: ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c
+      ARIA_TAURI_BUNDLES: appimage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: examples/umikaze/ui/package-lock.json
+      - name: Install the portable Linux shell baseline
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev
+      - name: Install build tools and frontend dependencies
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          npm ci --prefix examples/umikaze/ui
+      - name: Stage content through the Aria CLI and wrap it as AppImage
+        run: npm --prefix examples/umikaze/ui run release:desktop
+      - name: Assert the distro-neutral artifact
+        shell: bash
+        run: |
+          appimage=$(find examples/umikaze/ui/src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' -print -quit)
+          test -n "$appimage"
+          test -x "$appimage"
+          file "$appimage"
+
   wasm-chromium:
     name: WASM Chromium offline shell
     runs-on: ubuntu-latest
