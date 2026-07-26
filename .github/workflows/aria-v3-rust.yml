@@ -228,6 +228,15 @@ jobs:
         run: |
           npm --prefix examples/umikaze/ui ci
           cargo run --locked --release -p aria-cli --no-default-features -- build examples/umikaze --target web --profile signed --release --out target/umikaze-web
+      - name: Exercise Umikaze demo PWA offline from a project subpath
+        # The generic V3 PWA smoke above owns a canvas presentation. Umikaze
+        # instead owns its stage in React, so its service-worker and delayed
+        # reader-pack contract needs one focused browser gate of its own.
+        run: |
+          npm --prefix examples/umikaze/ui run prepare:demo
+          python3 -m http.server 4174 --bind 127.0.0.1 --directory examples/umikaze/dist >/tmp/umikaze-v3-http.log 2>&1 &
+          ARIA_UI_URL=http://127.0.0.1:4174/web/ UMIKAZE_DEMO=true \
+            npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
       - name: Assert web artifact size budgets
         run: |
           wasm_bytes=$(stat -c%s target/umikaze-web/pkg/aria_web_bg.wasm)
