@@ -21,11 +21,16 @@ public verification key is safe to ship; the private key stays in CI):
 
 ```sh
 ARIA_PAK_PROFILE=signed \
-ARIA_PAK_SIGNING_KEY='publisher:<64-byte-hex-key>' \
+ARIA_PAK_SIGNING_KEY='publisher:<32-byte-secret-as-64-hex-characters>' \
 ARIA_PAK_VERIFICATION_KEY_ID=publisher \
-ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
+ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-as-64-hex-characters>' \
 npm --prefix examples/umikaze/ui run release:desktop
 ```
+
+Both values are exactly 32 bytes encoded as 64 hexadecimal characters. Keep
+the secret signing value in a recovery-backed secret manager: it is the stable
+publisher identity required to sign every future update. The derived public
+verification value is safe to embed in the Web and desktop presentations.
 
 The script selects a distro-neutral `AppImage` on Linux, `dmg` on macOS, and
 `nsis` on Windows. Linux is built from an Ubuntu 22.04 compatibility baseline,
@@ -67,9 +72,9 @@ system-integrated option for distributions that ship `dpkg-deb`.
 
 ```sh
 ARIA_PAK_PROFILE=signed \
-ARIA_PAK_SIGNING_KEY='publisher:<64-byte-hex-key>' \
+ARIA_PAK_SIGNING_KEY='publisher:<32-byte-secret-as-64-hex-characters>' \
 ARIA_PAK_VERIFICATION_KEY_ID=publisher \
-ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
+ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-as-64-hex-characters>' \
 npm --prefix examples/umikaze/ui run release:web
 ```
 
@@ -110,9 +115,9 @@ npm --prefix examples/umikaze/ui run prepare:demo
 
 # Signed static archive: dist/releases/demo-web
 ARIA_PAK_PROFILE=signed \
-ARIA_PAK_SIGNING_KEY='publisher:<64-byte-hex-key>' \
+ARIA_PAK_SIGNING_KEY='publisher:<32-byte-secret-as-64-hex-characters>' \
 ARIA_PAK_VERIFICATION_KEY_ID=publisher \
-ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
+ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-as-64-hex-characters>' \
 npm --prefix examples/umikaze/ui run release:demo:web
 
 # Signed native installer. Default: NSIS on Windows, AppImage on Linux, DMG on macOS.

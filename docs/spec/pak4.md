@@ -53,5 +53,5 @@ aria build my-game --target web --profile protected \
 ```
 
 Keys may also be supplied through `ARIA_PAK_SIGNING_KEY` and
-`ARIA_PAK_ENCRYPTION_KEY`. Values are 32-byte hexadecimal keys, optionally
-prefixed with `key-id:`.
+`ARIA_PAK_ENCRYPTION_KEY`. Values are 32-byte keys encoded as exactly 64
+hexadecimal characters, optionally prefixed with `key-id:`.

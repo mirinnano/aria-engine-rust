@@ -101,14 +101,18 @@ npm --prefix examples/umikaze/ui run tauri:demo
 
 ```sh
 ARIA_PAK_PROFILE=signed \
-ARIA_PAK_SIGNING_KEY='publisher:<64-byte-hex-key>' \
+ARIA_PAK_SIGNING_KEY='publisher:<32-byte-secret-as-64-hex-characters>' \
 ARIA_PAK_VERIFICATION_KEY_ID=publisher \
-ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
+ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-as-64-hex-characters>' \
 npm --prefix examples/umikaze/ui run release:demo:web
 
 # 各ホストでの既定形式: Windows=NSIS / Linux=AppImage / macOS=dmg
 npm --prefix examples/umikaze/ui run release:demo:desktop
 ```
+
+署名用の秘密値と検証用公開値は、ともに32バイトを16進64文字で表したものを使う。
+秘密値は将来の更新署名にも必要になるため、復旧可能な秘密管理へ保管し、リポジトリや
+CIログへは出さない。
 
 ### GitHub Pages
 
