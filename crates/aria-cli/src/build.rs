@@ -827,7 +827,99 @@ fn write_web_presentation(
     } else {
         Vec::new()
     };
+    write_service_worker_cache_manifest(destination)?;
     Ok(!runtime_files.is_empty())
+}
+
+/// Finalizes the optional PWA Service Worker after every Web artifact is staged.
+///
+/// Game-owned presentation sources may opt into an exact cache list with
+/// `__ARIA_WEB_SHELL__`. WASM output and optional PAK roles are copied after
+/// the frontend is built, so only the final staged directory knows which URLs
+/// exist. Expanding the token here keeps the service worker valid and avoids
+/// rejecting an otherwise complete package because an optional pack is absent.
+fn write_service_worker_cache_manifest(destination: &Path) -> Result<()> {
+    const SHELL_CACHE_TOKEN: &str = "__ARIA_WEB_SHELL__";
+    const CACHE_ID_TOKEN: &str = "__ARIA_WEB_CACHE_ID__";
+    let service_worker = destination.join("service-worker.js");
+    if !service_worker.is_file() {
+        return Ok(());
+    }
+    let contents = fs::read_to_string(&service_worker).with_context(|| {
+        format!(
+            "cannot read generated Service Worker {}",
+            service_worker.display()
+        )
+    })?;
+    let uses_shell_manifest = contents.contains(SHELL_CACHE_TOKEN);
+    let uses_cache_id = contents.contains(CACHE_ID_TOKEN);
+    if !uses_shell_manifest && !uses_cache_id {
+        return Ok(());
+    }
+    if !uses_shell_manifest || !uses_cache_id {
+        bail!(
+            "generated Service Worker {} must contain both {SHELL_CACHE_TOKEN} and {CACHE_ID_TOKEN}",
+            service_worker.display()
+        );
+    }
+    let mut shell_urls = vec!["./".to_owned()];
+    let mut staged_files = Vec::new();
+    for entry in WalkDir::new(destination).follow_links(false) {
+        let entry = entry?;
+        if entry.path() == destination || !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(destination)?;
+        if relative == Path::new("service-worker.js") {
+            continue;
+        }
+        let relative_url = relative.to_string_lossy().replace('\\', "/");
+        staged_files.push((relative_url, entry.into_path()));
+    }
+    staged_files.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut cache_id_hasher = blake3::Hasher::new();
+    for (relative, path) in staged_files {
+        // The exact staged payload, not merely the package schema, defines a
+        // cache generation. This changes for new scenes, WASM glue, or a
+        // fingerprinted game-owned frontend without a time-based cache name.
+        cache_id_hasher.update(relative.as_bytes());
+        cache_id_hasher.update(&[0]);
+        cache_id_hasher.update(
+            &fs::read(&path)
+                .with_context(|| format!("cannot hash staged Web asset {}", path.display()))?,
+        );
+        cache_id_hasher.update(&[0]);
+        // A first page load fetches the large game packs while the worker is
+        // installing. Pre-caching them at the same time races a second
+        // streaming request in some WebKit/Chromium builds. The fetch handler
+        // still caches each payload after use; pre-cache only the lightweight
+        // shell that lets an installed app boot deterministically.
+        if Path::new(&relative)
+            .extension()
+            .is_some_and(|extension| extension == "ariapak")
+        {
+            continue;
+        }
+        shell_urls.push(format!("./{relative}"));
+    }
+    shell_urls.sort();
+    shell_urls.dedup();
+    let serialized = serde_json::to_string(&shell_urls)
+        .context("cannot serialize Web Service Worker cache manifest")?;
+    let cache_id = cache_id_hasher.finalize().to_hex().to_string();
+    fs::write(
+        &service_worker,
+        contents
+            .replace(SHELL_CACHE_TOKEN, &serialized)
+            .replace(CACHE_ID_TOKEN, &cache_id),
+    )
+    .with_context(|| {
+        format!(
+            "cannot finalize generated Service Worker {}",
+            service_worker.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn copy_directory_contents(source: &Path, destination: &Path) -> Result<()> {
@@ -1311,7 +1403,7 @@ const output = process.env.ARIA_PRESENTATION_OUT_DIR;
 if (!output) throw new Error("ARIA_PRESENTATION_OUT_DIR is required");
 await mkdir(output, { recursive: true });
 await writeFile(`${output}/index.html`, "<!doctype html><title>test presentation</title>");
-await writeFile(`${output}/service-worker.js`, "self.addEventListener('fetch', () => {});");
+await writeFile(`${output}/service-worker.js`, "const CACHE = '__ARIA_WEB_CACHE_ID__';\nconst SHELL = __ARIA_WEB_SHELL__;\nself.addEventListener('fetch', () => {});");
 "#,
         )
         .unwrap();
@@ -1333,6 +1425,11 @@ await writeFile(`${output}/service-worker.js`, "self.addEventListener('fetch', (
             serde_json::from_slice(&fs::read(out.join("bundle.aria.json")).unwrap()).unwrap();
         assert_eq!(bundle.schema_version, 5);
         assert_eq!(bundle.content_root_blake3, bundle_content_root(&bundle));
+        let service_worker = fs::read_to_string(out.join("service-worker.js")).unwrap();
+        assert!(!service_worker.contains("__ARIA_WEB_SHELL__"));
+        assert!(!service_worker.contains("__ARIA_WEB_CACHE_ID__"));
+        assert!(service_worker.contains("./game.ariac"));
+        assert!(!service_worker.contains("./game.ariapak"));
         let manifest: BuildManifest =
             serde_json::from_slice(&fs::read(out.join("build-manifest.json")).unwrap()).unwrap();
         // C2: the web runtime auto-build completes the bundle, so no separate
@@ -1366,6 +1463,12 @@ await writeFile(`${output}/service-worker.js`, "self.addEventListener('fetch', (
         assert!(out.join("pkg/aria_web.js").is_file());
         assert!(out.join("web-renderer.js").is_file());
         assert!(out.join("save-store.js").is_file());
+        let service_worker = fs::read_to_string(out.join("service-worker.js")).unwrap();
+        assert!(!service_worker.contains("__ARIA_WEB_SHELL__"));
+        assert!(!service_worker.contains("__ARIA_WEB_CACHE_ID__"));
+        assert!(service_worker.contains("./index.html"));
+        assert!(service_worker.contains("./pkg/aria_web.js"));
+        assert!(service_worker.contains("./pkg/aria_web_bg.wasm"));
         assert!(
             fs::read_to_string(out.join("index.html"))
                 .unwrap()

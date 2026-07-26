@@ -185,6 +185,11 @@ canvas.addEventListener("wheel", (event) => {
 
 async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  // The first worker claims this page after its cache is ready. Reloading at
+  // that exact moment aborts the initial PAK streaming request, producing a
+  // spurious startup failure before the second load succeeds. Only a page
+  // that already had a controller should reload for a newly activated update.
+  const hadController = Boolean(navigator.serviceWorker.controller);
   const registration = await navigator.serviceWorker.register("./service-worker.js", {
     scope: "./",
   });
@@ -199,7 +204,9 @@ async function registerServiceWorker() {
   updateButton.addEventListener("click", () => {
     registration.waiting?.postMessage({ type: "SKIP_WAITING" });
   });
-  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload());
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) location.reload();
+  });
 }
 
 async function loadBundledFonts(fontAssets, readAsset) {
@@ -345,11 +352,11 @@ async function boot() {
     pointer.primary_pressed = false;
     scrollDeltaY = 0;
     const output = JSON.parse(runtime.step(JSON.stringify(input)));
-    logicalSize = output.frame.logical_size || logicalSize;
+    logicalSize = output.scene.logical_size || logicalSize;
     await audio.consume(output.audio);
-    await renderer.submit(output.frame);
-    globalThis.__ariaRenderedFrame = output.frame.frame_number;
-    window.dispatchEvent(new CustomEvent("aria-render-frame", { detail: output.frame }));
+    await renderer.submit(output.scene);
+    globalThis.__ariaRenderedFrame = output.scene.frame_number;
+    window.dispatchEvent(new CustomEvent("aria-render-frame", { detail: output.scene }));
 
     for (const command of output.runtime) {
       if (command.kind === "save") {

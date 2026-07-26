@@ -1,23 +1,12 @@
-const CACHE = "aria-v3-shell-1.0.0";
-const RUNTIME = __ARIA_WEB_RUNTIME_CACHE__;
-const SHELL = [
-  "./",
-  "./index.html",
-  "./app.css",
-  "./main.js",
-  "./web-audio.js",
-  "./web-renderer.js",
-  "./save-store.js",
-  "./manifest.webmanifest",
-  "./build-manifest.json",
-  "./bundle.aria.json",
-  "./game.ariac",
-  "./game.ariapak",
-  "./game.hot.ariapak",
-  "./game.cold.ariapak",
-  "./game.overlay.ariapak",
-  ...RUNTIME,
-];
+// The package builder derives this identifier from every staged game and
+// shell file. A later deployment therefore never combines a cached older PAK
+// with a newer bytecode bundle at the same public URL.
+const CACHE = "aria-v3-shell-__ARIA_WEB_CACHE_ID__";
+// The package builder expands this into the lightweight files that were
+// actually staged. PAK roles are optional and large, so payloads are cached
+// lazily by the fetch handler after use rather than racing a second download
+// while the first page is still booting.
+const SHELL = __ARIA_WEB_SHELL__;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
