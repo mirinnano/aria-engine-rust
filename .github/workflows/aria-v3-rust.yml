@@ -98,7 +98,7 @@ jobs:
           key: native-${{ matrix.os }}
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev xvfb mesa-vulkan-drivers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev libxkbcommon-x11-0 xvfb mesa-vulkan-drivers
       - name: Compile Winit/wgpu/Kira/AccessKit adapter
         run: cargo check -p aria-native --features desktop --locked
       - name: Test native adapter
