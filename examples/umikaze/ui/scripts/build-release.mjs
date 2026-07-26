@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -51,11 +50,11 @@ if (mode === "web") {
 const bundles = process.env.ARIA_TAURI_BUNDLES || (() => {
   if (process.platform === "darwin") return "dmg";
   if (process.platform === "win32") return "nsis";
-  return "deb";
+  // Debian packages are only useful on one family of distributions.  The
+  // game payload has already been staged by `aria build`; AppImage wraps that
+  // exact payload in one runnable file for the broad Linux download.
+  return "appimage";
 })();
-if (process.platform === "linux" && bundles.includes("appimage") && !existsSync("/usr/bin/appimagetool")) {
-  console.warn("appimage requested; Tauri will require appimagetool on this runner");
-}
 const tauriArgs = ["run", "tauri", "--", "build"];
 if (edition === "demo") tauriArgs.push("--config", "src-tauri/tauri.demo.conf.json");
 tauriArgs.push("--bundles", bundles);

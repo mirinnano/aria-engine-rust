@@ -70,12 +70,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            bundles: deb
+          # The runner is an old compatibility baseline, not the release
+          # format.  AppImage wraps the CLI-staged WebView payload for Linux
+          # distributions without depending on a Debian-family package tool.
+          - os: ubuntu-22.04
+            bundles: appimage
+            artifact: linux-universal
           - os: macos-latest
             bundles: dmg
+            artifact: macos
           - os: windows-latest
             bundles: nsis
+            artifact: windows
     env:
       ARIA_PAK_PROFILE: signed
       ARIA_PAK_SIGNING_KEY: ${{ secrets.ARIA_PAK_SIGNING_KEY }}
@@ -113,13 +119,26 @@ jobs:
       - name: Write demo installer checksums
         shell: bash
         run: node scripts/write-sha256-manifest.mjs target/umikaze-demo/release/bundle
+      - name: Assert portable Linux artifact
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          full=$(find target/umikaze-full/release/bundle -type f -name '*.AppImage' -print -quit)
+          demo=$(find target/umikaze-demo/release/bundle -type f -name '*.AppImage' -print -quit)
+          test -n "$full"
+          test -n "$demo"
+          test -x "$full"
+          test -x "$demo"
+          ! find target/umikaze-full/release/bundle target/umikaze-demo/release/bundle -type f -name '*.deb' -print -quit | grep -q .
+          file "$full"
+          file "$demo"
       - uses: actions/upload-artifact@v4
         with:
-          name: umikaze-${{ matrix.os }}
+          name: umikaze-${{ matrix.artifact }}
           path: |
             target/umikaze-full/release/bundle/**
       - uses: actions/upload-artifact@v4
         with:
-          name: umikaze-demo-${{ matrix.os }}
+          name: umikaze-demo-${{ matrix.artifact }}
           path: |
             target/umikaze-demo/release/bundle/**

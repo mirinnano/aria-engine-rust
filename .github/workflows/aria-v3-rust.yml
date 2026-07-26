@@ -185,7 +185,7 @@ jobs:
       - name: Build umikaze web package
         run: |
           npm --prefix examples/umikaze/ui ci
-          cargo run --locked --release -p aria-cli -- build examples/umikaze --target web --profile signed --release --out target/umikaze-web
+          cargo run --locked --release -p aria-cli --no-default-features -- build examples/umikaze --target web --profile signed --release --out target/umikaze-web
       - name: Assert web artifact size budgets
         run: |
           wasm_bytes=$(stat -c%s target/umikaze-web/pkg/aria_web_bg.wasm)

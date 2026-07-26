@@ -27,10 +27,19 @@ ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
 npm --prefix examples/umikaze/ui run release:desktop
 ```
 
-The script selects `deb` on Linux, `dmg` on macOS, and `nsis` on Windows. Set
-`ARIA_TAURI_BUNDLES` to override the platform default (for example,
-`deb,appimage` when `appimagetool` is installed). Platform signing and macOS
-notarization happen after the unsigned Tauri bundle is created.
+The script selects a distro-neutral `AppImage` on Linux, `dmg` on macOS, and
+`nsis` on Windows. Linux is built from an Ubuntu 22.04 compatibility baseline,
+but the published artifact is not an Ubuntu/Debian package: it runs across the
+supported Linux distribution families without a package-manager install. Set
+`ARIA_TAURI_BUNDLES` to override the platform default when an additional
+store-specific package is wanted. Platform signing and macOS notarization
+happen after the unsigned Tauri bundle is created.
+
+Before Tauri makes an OS shell, `prepare-desktop.mjs` invokes `aria build`.
+That CLI step compiles the scenario, creates the split signed PAKs, and copies
+the game-owned presentation into `examples/umikaze/dist/web`; Tauri only embeds
+that already staged directory. The same content boundary is therefore shared
+by Web, AppImage, DMG, and NSIS releases.
 
 ## CLI installers
 
@@ -106,7 +115,7 @@ ARIA_PAK_VERIFICATION_KEY_ID=publisher \
 ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
 npm --prefix examples/umikaze/ui run release:demo:web
 
-# Signed native installer. Default: NSIS on Windows, .deb on Linux, DMG on macOS.
+# Signed native installer. Default: NSIS on Windows, AppImage on Linux, DMG on macOS.
 npm --prefix examples/umikaze/ui run release:demo:desktop
 ```
 

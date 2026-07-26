@@ -106,7 +106,7 @@ ARIA_PAK_VERIFICATION_KEY_ID=publisher \
 ARIA_PAK_VERIFICATION_KEY_HEX='<32-byte-public-key-hex>' \
 npm --prefix examples/umikaze/ui run release:demo:web
 
-# 各ホストでの既定形式: Windows=NSIS / Linux=deb / macOS=dmg
+# 各ホストでの既定形式: Windows=NSIS / Linux=AppImage / macOS=dmg
 npm --prefix examples/umikaze/ui run release:demo:desktop
 ```
 

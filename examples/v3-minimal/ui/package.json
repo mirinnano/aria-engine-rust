@@ -1,0 +1,8 @@
+{
+  "name": "aria-v3-minimal-presentation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}
