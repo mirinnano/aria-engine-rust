@@ -40,14 +40,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           targets: wasm32-unknown-unknown
+      # This job owns the frequent public-demo deploy path.  Restore Rust
+      # artifacts before the content build so unchanged VM/WASM dependencies
+      # do not turn every small presentation change into a cold compilation.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: umikaze-pages
+      # wasm-bindgen is a separately installed, version-locked build tool.
+      # Caching just this binary removes its own Cargo compilation without
+      # reusing a signed game artifact or any secret material.
+      - name: Restore wasm-bindgen CLI
+        id: wasm-bindgen-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: umikaze-wasm-bindgen-cli-0.2.126-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: examples/umikaze/ui/package-lock.json
+      - name: Install matching wasm-bindgen CLI
+        if: steps.wasm-bindgen-cli.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Install build and browser dependencies
         run: |
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
           npm ci --prefix examples/umikaze/ui
           npx --prefix examples/umikaze/ui playwright install --with-deps chromium
       - name: Build and verify the content-limited demo
