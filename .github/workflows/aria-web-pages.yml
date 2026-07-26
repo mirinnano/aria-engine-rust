@@ -57,7 +57,7 @@ jobs:
           # https://<owner>.github.io/<repository>/ rather than only a local
           # origin root.  The presentation deliberately emits relative URLs.
           python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist >/tmp/umikaze-pages-http.log 2>&1 &
-          ARIA_UI_URL=http://127.0.0.1:4173/web/ UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop'
+          ARIA_UI_URL=http://127.0.0.1:4173/web/ UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
           cargo test -p aria-cli --no-default-features --test umikaze_sample demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four
       - name: Produce the signed static release
         run: |

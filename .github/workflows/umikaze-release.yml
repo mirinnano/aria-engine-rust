@@ -48,7 +48,7 @@ jobs:
           python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/web >/tmp/umikaze-http.log 2>&1 &
           npm --prefix examples/umikaze/ui test
           npm --prefix examples/umikaze/ui run prepare:demo
-          UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop'
+          UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
           npm --prefix examples/umikaze/ui run prepare:desktop
       - name: Build static Web releases
         run: |

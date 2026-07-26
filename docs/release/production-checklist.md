@@ -62,6 +62,7 @@ Windowsコード署名、macOS notarization、Linuxパッケージの署名、St
 - [ ] 体験版の`game.ariac`/PAK/source mapにDAY 5–10が含まれない。
 - [ ] 体験版はDAY 4後に`demo_end`へ到達し、再読/タイトル帰還だけを提示する。
 - [ ] 署名済みPAKとchecksumの検証が成功する。
+- [ ] GitHub Pages相当のサブパスで一度起動した後、オフライン再起動でもタイトルから読書面へ到達する。
 - [ ] NSIS/AppImage/DMGは各対象OSで新規インストール・起動・削除できる。
 - [ ] 手動保存、自動保存、破損世代回復、履歴復帰、設定、CG解放を実機で確認した。
 - [ ] 右クリック/Escape/H/Enter/Space/スクロール/ゲームパッドの操作を確認した。

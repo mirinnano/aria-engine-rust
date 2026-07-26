@@ -98,6 +98,39 @@ test("a settled title does not keep an animation-frame loop alive", async ({ pag
   expect(after - before).toBeLessThanOrEqual(1);
 });
 
+test("a warmed offline PWA reopens the reader from its static-host subpath", async ({ page, context }) => {
+  test.setTimeout(45_000);
+  // Reach one subtitle before disconnecting. This makes the assertion cover
+  // the actual reader contract: its WASM runtime, hot PAK, and delayed text
+  // face must all have a recoverable cache entry, not merely the title DOM.
+  await beginJapaneseRecord(page);
+  await page.getByRole("button", { name: "START" }).click();
+  const catalogue = page.getByRole("dialog", { name: "CHAPTERS" });
+  await catalogue.getByRole("button", { name: /PROLOGUE/ }).click();
+  await page.locator(".day-card").getByRole("button", { name: "次へ" }).click();
+  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+
+  // The first navigation installs the worker; a reload gives it control of
+  // the document before network access is withdrawn.
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
+
+  await context.setOffline(true);
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+    await page.getByRole("button", { name: "START" }).click();
+    await page.getByRole("dialog", { name: "CHAPTERS" })
+      .getByRole("button", { name: /PROLOGUE/ }).click();
+    await page.locator(".day-card").getByRole("button", { name: "次へ" }).click();
+    await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
 test("automatic checkpoint stays invisible while LOAD exposes only manual records", async ({ page }) => {
   await beginJapaneseRecord(page);
   await page.getByRole("button", { name: "LOAD" }).click();
