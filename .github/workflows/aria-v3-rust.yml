@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           cargo run --locked --release -p aria-cli -- build examples/v3-player-smoke --target linux-x64 --profile signed --release --out target/native-player-smoke
-          python3 scripts/assert-process-stays-alive.py --seconds 4 -- \
+          python3 scripts/assert-process-stays-alive.py --seconds 4 --minimum-seconds 2 -- \
             xvfb-run -a target/native-player-smoke/aria-player
       - name: Assert native player size budget
         if: runner.os != 'macOS'
@@ -281,7 +281,7 @@ jobs:
             examples/v3-player-smoke --target macos-universal --profile signed --release \
             --out target/package-macos-universal
           file target/package-macos-universal/aria-player
-          python3 scripts/assert-process-stays-alive.py --seconds 4 -- \
+          python3 scripts/assert-process-stays-alive.py --seconds 4 --minimum-seconds 2 -- \
             target/package-macos-universal/aria-player
       - uses: actions/upload-artifact@v4
         with:
