@@ -1010,29 +1010,9 @@ fn build_native_player(target: BuildTarget, release: bool) -> Result<PathBuf> {
 
     let cargo = if cfg!(windows) { "cargo.exe" } else { "cargo" };
 
-    // Check that the required cargo target(s) are installed.
-    for triple in triples {
-        let mut cmd = Command::new(cargo);
-        cmd.args([
-            "build",
-            "-p",
-            "aria-cli",
-            "--features",
-            "desktop-player",
-            "--target",
-            triple,
-        ]);
-        if release {
-            cmd.arg("--release");
-        }
-        cmd.arg("--dry-run")
-            .current_dir(&engine_root)
-            .status()
-            .with_context(|| format!("cannot run cargo to check target {triple}"))?;
-        // --dry-run may fail for other reasons; we just want to check if the target is recognized.
-        // A more reliable check: try `rustc --print target-spec-json --target <triple>`.
-    }
-    // Build each slice.
+    // Build each slice. `cargo build` is the authoritative availability check
+    // for a Rust target: Cargo has no `build --dry-run`, and probing it first
+    // emitted a misleading error before every otherwise successful package.
     let mut built_binaries = Vec::new();
     for triple in triples {
         println!("  Building Player for {triple}...");
