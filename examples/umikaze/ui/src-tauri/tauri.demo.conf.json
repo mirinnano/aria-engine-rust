@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "npm run prepare:demo",
     "beforeBuildCommand": "npm run prepare:demo",
-    "frontendDist": "../../dist/web"
+    "frontendDist": "../../dist/build/demo/web"
   },
   "app": {
     "windows": [

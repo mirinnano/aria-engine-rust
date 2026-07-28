@@ -10,6 +10,8 @@
     "test": "playwright test",
     "prepare:desktop": "node scripts/prepare-desktop.mjs",
     "prepare:demo": "node scripts/prepare-desktop.mjs --edition demo",
+    "verify:release:web": "node scripts/verify-release.mjs --edition full",
+    "verify:release:demo:web": "node scripts/verify-release.mjs --edition demo",
     "release:desktop": "node scripts/build-release.mjs desktop",
     "release:web": "node scripts/build-release.mjs web",
     "release:demo:desktop": "node scripts/build-release.mjs demo-desktop",

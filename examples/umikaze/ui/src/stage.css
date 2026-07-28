@@ -74,67 +74,118 @@
   transform: rotate(-4deg);
 }
 
-/* The home stage carries only three real, public-domain fragments. They are
-   distant weather in the image, not a collage of references or a second
-   layer of UI copy. */
-.record-stage-fragments {
+/* The title is overprinted with sourced language, not a block of copy.  Three
+   hundred and sixty stable fragments overlap as strata on an asymmetric ridge. This
+   has the density of a contour map without becoming a moving noise field. */
+.record-stage-quotations {
   position: absolute;
   z-index: 2;
-  inset: 0;
+  inset: 0 -1.5vw;
   overflow: hidden;
-  color: rgb(215 232 223 / 54%);
-  font-family: var(--font-record);
   pointer-events: none;
 }
 
-.record-stage-fragment {
+.record-stage-quotation {
   position: absolute;
+  top: calc(var(--quotation-y) * 1%);
+  left: calc(var(--quotation-x) * 1%);
+  width: max-content;
+  max-width: min(16vw, 14rem);
   margin: 0;
-  font-size: clamp(0.48rem, 0.28vw + 0.38rem, 0.72rem);
+  color: rgb(143 169 171);
+  font-family: var(--font-record);
+  font-size: calc(0.22vw + 0.32rem + var(--quotation-size) * 0.12rem);
   font-weight: 400;
-  letter-spacing: 0.055em;
-  line-height: 1.85;
-  text-shadow: 0 1px 1px rgb(3 7 14 / 84%);
+  letter-spacing: 0.045em;
+  line-height: 1.3;
+  opacity: var(--quotation-opacity);
+  text-shadow: 0 1px 0 rgb(2 5 11 / 84%), 0 0 0.72rem rgb(14 43 49 / 33%);
+  transform: rotate(var(--quotation-lean));
+  transform-origin: left center;
+  white-space: nowrap;
 }
 
-.record-stage-fragment--tractatus-silence {
-  top: 52%;
-  left: 42%;
-  width: min(24rem, 29vw);
-  color: rgb(207 216 209 / 46%);
-  transform: rotate(-2deg);
+.record-stage-quotation.is-anchor {
+  max-width: min(17vw, 15rem);
+  color: rgb(169 192 191);
+  font-size: calc(0.25vw + 0.34rem + var(--quotation-size) * 0.14rem);
+  line-height: 1.4;
+  white-space: normal;
 }
 
-.record-stage-fragment--yodaka {
-  top: 30%;
-  left: 47%;
-  width: min(17rem, 22vw);
-  color: rgb(230 215 220 / 58%);
-  letter-spacing: 0.12em;
-  transform: rotate(-4deg);
+.record-stage-quotation[class*="record-stage-quotation--source-tractatus"],
+.record-stage-quotation[class*="record-stage-quotation--source-notebook"] {
+  color: rgb(118 159 162);
+  font-family: var(--font-record);
+  letter-spacing: 0.095em;
 }
 
-.record-stage-fragment--galaxy {
-  left: 37%;
-  bottom: 4%;
-  width: min(23rem, 29vw);
-  color: rgb(195 228 222 / 48%);
-  letter-spacing: 0.075em;
+.record-stage-quotation[class*="record-stage-quotation--source-yodaka"],
+.record-stage-quotation[class*="record-stage-quotation--source-galaxy"] {
+  color: rgb(142 112 138);
+  font-family: var(--font-title);
+  font-size: calc(0.22vw + 0.33rem + var(--quotation-size) * 0.13rem);
+  letter-spacing: 0.09em;
+  line-height: 1.38;
+}
+
+.record-stage-quotation.is-fragment:nth-child(5n + 2) {
+  color: rgb(117 155 159);
+}
+
+.record-stage-quotation.is-fragment:nth-child(7n + 4) {
+  color: rgb(145 96 128);
+  text-shadow: 0 1px 0 rgb(18 5 18 / 82%), 0 0 0.9rem rgb(86 28 64 / 22%);
+}
+
+.record-stage-quotation--tractatus-silence,
+.record-stage-quotation--galaxy-happiness {
+  color: rgb(202 213 201);
+  text-shadow: 0 1px 0 rgb(1 5 10 / 92%), 0 0 1.05rem rgb(177 221 216 / 20%);
 }
 
 .record-stage-backdrop--title {
-  background: #110916;
+  background: #060911;
 }
 
 .record-stage-backdrop--title::before {
-  background: linear-gradient(106deg, rgb(31 8 26 / 92%) 0%, rgb(21 12 31 / 73%) 43%, rgb(2 18 24 / 45%) 100%);
+  background: linear-gradient(106deg, rgb(25 7 23 / 91%) 0%, rgb(19 10 29 / 78%) 43%, rgb(4 12 22 / 61%) 100%);
+}
+
+/* A static, faint wine-purple exposure leak: it only stains the night record,
+   never becomes a loop, a flashing alert, or an extra compositing surface. */
+.record-stage-backdrop--title::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 48% 25% at 57% 42%, rgb(148 235 229 / 18%), transparent 72%),
+    radial-gradient(ellipse 66% 78% at 3% 88%, rgb(128 20 53 / 22%), transparent 69%),
+    linear-gradient(90deg, rgb(87 21 58 / 14%), transparent 46%, rgb(18 16 39 / 12%)),
+    repeating-linear-gradient(0deg, rgb(220 244 237 / 4%) 0 1px, transparent 1px 4px);
+}
+
+/* A single, static optical softening pushes the photograph behind the
+   quotation-terrain.  It is deliberately not a backdrop filter and never
+   animates, so it carries no ongoing compositor cost while the title rests. */
+.record-stage-backdrop--title .record-stage-photograph {
+  filter: blur(0.8px) saturate(0.72) contrast(1.08) brightness(0.68);
+  transform: scale(1.018);
 }
 
 .record-stage-backdrop--setup::before {
   background: linear-gradient(106deg, rgb(5 11 13 / 91%) 0%, rgb(10 27 25 / 72%) 46%, rgb(5 18 18 / 48%) 100%);
 }
 
-.record-stage-backdrop--title .record-stage-signal--one { top: 24%; right: -8%; opacity: 0.7; }
+.record-stage-backdrop--title .record-stage-signal--one {
+  top: 24%;
+  right: -8%;
+  width: min(74vw, 68rem);
+  opacity: 0.88;
+  box-shadow: 0 0 1.15rem rgb(145 244 237 / 38%);
+}
 
 /* One command list, used on the title, language screen, and transparent
    RMenu. It is a list of physical labels rather than a group of cards. */
@@ -496,6 +547,16 @@
   text-shadow: 0 1px 2px rgb(0 0 0 / 94%), 0 0 0.9rem rgb(167 220 218 / 16%);
 }
 
+/* These command fields use the lit vertical signal as their focus indicator.
+   Keeping the browser's rectangular outline here would turn a floating word
+   into a small web card, while the signal still gives keyboard focus a clear
+   non-colour-only shape. */
+.title-command-list .focus-menu-item:focus-visible,
+.rmenu-command-list .focus-menu-item:focus-visible,
+.demo-end-command-list .focus-menu-item:focus-visible {
+  outline: 0;
+}
+
 .title-command-list .focus-menu-item:hover::before,
 .title-command-list .focus-menu-item.is-focused::before,
 .title-command-list .focus-menu-item:focus-visible::before {
@@ -555,6 +616,12 @@
   font-size: clamp(4.4rem, 9.6vw, 10.2rem);
   letter-spacing: 0.16em;
   line-height: 0.84;
+  text-shadow:
+    0 1px 0 rgb(255 251 239 / 34%),
+    1px 0 0 rgb(125 45 78 / 22%),
+    -1px 0 0 rgb(112 217 212 / 18%),
+    0 4px 8px rgb(3 4 12 / 78%),
+    0 0 2.8rem rgb(98 178 183 / 17%);
 }
 
 .record-title-screen--home .title-selection { margin-top: clamp(4.5rem, 15vh, 10rem); }
@@ -624,6 +691,53 @@
 @keyframes interlude-line-arrive {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/*
+ * An automatic statement is even plainer than an interlude: no photograph,
+ * grain, panel, button, or fake quotation card.  Its face borrows the
+ * reader's subtitle role so the sentence still belongs to the novel, while
+ * the empty central field lets one rare line arrive without competing with a
+ * location.  Opacity is the only moving property.
+ */
+.route-statement { background: #6d706f; }
+.route-statement.scene-tone-blue { background: #244e5a; }
+.route-statement.scene-tone-stillness { background: #6d706f; }
+
+.route-statement .presentation-layer {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+.statement-screen {
+  display: grid;
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: max(2rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right)) max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.statement-line {
+  max-width: min(42rem, 84vw);
+  margin: 0;
+  color: rgb(246 247 241 / 96%);
+  font-family: var(--font-reading);
+  font-size: clamp(1.08rem, 0.72vw + 0.88rem, 1.72rem);
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  line-height: 2;
+  text-align: center;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 44%);
+  opacity: 0;
+  animation: statement-line-cycle 1600ms linear both;
+}
+
+@keyframes statement-line-cycle {
+  0% { opacity: 0; }
+  14% { opacity: 0.96; }
+  78% { opacity: 0.96; }
+  100% { opacity: 0; }
 }
 
 .opening-record {
@@ -1488,8 +1602,10 @@
 
 :where(.high-contrast, html.umikaze-high-contrast) .record-stage-scanlines { opacity: 0; }
 :where(.high-contrast, html.umikaze-high-contrast) .record-stage-vignette { background: rgb(0 0 0 / 82%); }
-:where(.high-contrast, html.umikaze-high-contrast) .interlude-screen { background: #000; }
-:where(.high-contrast, html.umikaze-high-contrast) .interlude-line { color: #fff; text-shadow: none; }
+:where(.high-contrast, html.umikaze-high-contrast) .record-stage-backdrop--title .record-stage-photograph { filter: none; transform: none; }
+:where(.high-contrast, html.umikaze-high-contrast) .record-stage-quotation { color: rgb(255 255 255 / 76%); text-shadow: 0 1px 0 #000; }
+:where(.high-contrast, html.umikaze-high-contrast) :is(.interlude-screen, .route-statement) { background: #000; }
+:where(.high-contrast, html.umikaze-high-contrast) :is(.interlude-line, .statement-line) { color: #fff; text-shadow: none; }
 :where(.high-contrast, html.umikaze-high-contrast) .focus-menu-item,
 :where(.high-contrast, html.umikaze-high-contrast) .settings-index-item,
 :where(.high-contrast, html.umikaze-high-contrast) .chapter-index-row,
@@ -1507,6 +1623,7 @@
 :where(.reduce-motion, html.umikaze-reduced-motion) .stage-sheet-content,
 :where(.reduce-motion, html.umikaze-reduced-motion) .day-card,
 :where(.reduce-motion, html.umikaze-reduced-motion) .interlude-line,
+:where(.reduce-motion, html.umikaze-reduced-motion) .statement-line,
 :where(.reduce-motion, html.umikaze-reduced-motion) .demo-end-screen {
   animation: stage-fade 120ms linear both;
 }
@@ -1548,6 +1665,7 @@
   .stage-sheet-content,
   .day-card,
   .interlude-line,
+  .statement-line,
   .demo-end-screen { animation: stage-fade 120ms linear both; }
   .interlude-screen--first .interlude-line { animation-delay: 120ms; }
   .record-title-screen--home .title-identity,
@@ -1560,6 +1678,27 @@
 }
 
 @media (max-width: 760px) {
+  .record-stage-quotations {
+    inset: 0 -2vw;
+    height: auto;
+  }
+
+  .record-stage-quotation {
+    top: calc(var(--quotation-mobile-y) * 1%);
+    left: calc(var(--quotation-mobile-x) * 1%);
+    width: 23%;
+    font-size: clamp(0.4rem, 1.42vw, 0.55rem);
+    letter-spacing: 0.025em;
+    line-height: 1.28;
+    white-space: normal;
+  }
+
+  .record-stage-quotation.is-anchor { max-width: 23%; }
+
+  /* Keep the same all-screen geography on a phone, but cap it before the
+     fragment dust turns the actual controls into a field of subpixels. */
+  .record-stage-quotation:nth-child(n + 31) { display: none; }
+
   .record-title-screen {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) auto;
@@ -1612,10 +1751,16 @@
     bottom: max(1.35rem, calc(env(safe-area-inset-bottom) + 0.7rem));
   }
 
-  .record-stage-fragment { font-size: clamp(0.43rem, 1.8vw, 0.61rem); line-height: 1.7; }
-  .record-stage-fragment--tractatus-silence { top: 62%; left: -5%; width: min(15rem, 58vw); }
-  .record-stage-fragment--yodaka { top: 19%; left: 1%; width: min(13rem, 56vw); }
-  .record-stage-fragment--galaxy { right: -6%; bottom: 30%; width: min(16rem, 63vw); }
+  .record-stage-quotations {
+    top: max(0.85rem, env(safe-area-inset-top));
+    right: max(1rem, env(safe-area-inset-right));
+    left: max(1rem, env(safe-area-inset-left));
+    height: 31vh;
+    column-count: 2;
+    column-gap: 1rem;
+  }
+  .record-stage-quotation { font-size: clamp(0.42rem, 1.65vw, 0.59rem); line-height: 1.52; }
+  .record-stage-quotation:nth-child(n + 23) { display: none; }
 
   .rmenu-modal {
     top: max(48px, calc(env(safe-area-inset-top) + 24px));
@@ -1659,4 +1804,6 @@
   .record-title-screen--home .title-selection { margin-top: 2.75rem; }
   .rmenu-command-list .focus-menu-item { min-height: 35px; }
   .rmenu-command-list .focus-menu-description { margin-top: 0.45rem; }
+  .record-stage-quotations { bottom: auto; height: 34vh; }
+  .record-stage-quotation:nth-child(n + 25) { display: none; }
 }

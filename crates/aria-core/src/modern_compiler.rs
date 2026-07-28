@@ -1748,7 +1748,13 @@ impl ModernCompiler {
                     );
                     return;
                 }
-                (binding.operand, "==", Operand::Boolean(true))
+                // Bool storage uses the integer register file.  Comparing
+                // that register to a Boolean literal would otherwise fall
+                // through the VM's string comparison ("1" != "true"),
+                // making every stored Bool look false at a branch. Keep the
+                // source type Bool while lowering its runtime truth value to
+                // the 0/1 representation used by SetInt.
+                (binding.operand, "==", Operand::Integer(1))
             }
             ExpressionKind::Binary { left, op, right }
                 if matches!(
@@ -1789,6 +1795,14 @@ impl ModernCompiler {
                     );
                     return;
                 }
+                let (left_operand, right_operand) = if left_ty == ModernType::Bool {
+                    (
+                        Self::bool_runtime_operand(left_operand),
+                        Self::bool_runtime_operand(right_operand),
+                    )
+                } else {
+                    (left_operand, right_operand)
+                };
                 (left_operand, comparator_name(*op), right_operand)
             }
             _ => {
@@ -1807,6 +1821,16 @@ impl ModernCompiler {
             false_label,
             &expression.span,
         );
+    }
+
+    /// Runtime Bool bindings live in the integer register file (0 / 1).
+    /// Literals retain their semantic Boolean form until a typed comparison
+    /// needs to lower them beside such a binding.
+    fn bool_runtime_operand(operand: Operand) -> Operand {
+        match operand {
+            Operand::Boolean(value) => Operand::Integer(i64::from(value)),
+            operand => operand,
+        }
     }
 
     fn expression_value(
@@ -2309,6 +2333,10 @@ fn is_presentation_route(route: &str) -> bool {
             // remains layout-free in Core, but is a standard semantic route
             // so strict scripts can save, log, and replay its silence.
             | "interlude"
+            // A statement is a story-owned, automatic central line. It is
+            // deliberately distinct from an interlude because ordinary
+            // advance input must not release its authored duration.
+            | "statement"
             // A chapter day card is a semantic presentation checkpoint. It
             // remains project-rendered, but is deliberately whitelisted so a
             // saved game can return to the same card rather than falling back

@@ -32,9 +32,3 @@ scene chapter_select_ja {
     "DAY 10" => novel_chapter_10;
   }
 }
-
-// Full releases return to the catalogue after DAY 4. The demo entry imports
-// the same canonical chapter but supplies a closed endpoint instead.
-scene novel_chapter_04_complete {
-  jump chapter_select_ja;
-}

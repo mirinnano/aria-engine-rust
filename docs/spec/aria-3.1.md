@@ -1,4 +1,8 @@
-# Aria 3.1 author language
+# Historical: Aria 3.1 author language
+
+> **Retired.** The current compiler accepts only the unversioned
+> [`aria;` language](aria.md). This document is retained as design history;
+> its headers, `import`, `var`, and Node syntax are not accepted.
 
 Aria 3.1 is the author language required by a V3 1.0 release build. It is a
 structured, UTF-8 visual-novel language that compiles completely to portable
@@ -183,7 +187,7 @@ storage transport saves outside the language with two valid generations.
 
 ~~~sh
 aria check my-game --release
-ARIA_PAK_SIGNING_KEY=publisher:<32-byte-key-as-64-hex-characters> \
+ARIA_PAK_SIGNING_KEY=publisher:<64-hex-characters> \
   aria build my-game --target windows-x64 --profile signed --release
 ~~~
 

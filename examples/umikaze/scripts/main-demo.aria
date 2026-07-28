@@ -12,5 +12,5 @@ scene start {
   background asset("#264450") with fade(240ms);
   persistent flag "umikaze_demo_setup_complete" = true;
   screen title;
-  choice { "体験版をはじめる" => chapter_select_ja; }
+  choice { "体験版をはじめる" => demo_chapter_select; }
 }

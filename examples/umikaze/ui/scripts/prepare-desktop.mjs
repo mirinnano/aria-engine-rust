@@ -17,14 +17,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const uiRoot = resolve(here, "..");
 const gameRoot = resolve(uiRoot, "..");
 const repository = resolve(gameRoot, "../..");
-const runtime = resolve(repository, "target/aria-web-runtime-tauri");
-const output = resolve(gameRoot, "dist/web");
-const runtimeStamp = resolve(repository, "target/aria-web-runtime-tauri.fingerprint");
-const presentationCache = resolve(repository, "target/aria-presentation-tauri");
-const presentationStamp = resolve(repository, "target/aria-presentation-tauri.fingerprint");
-const release = process.env.ARIA_RELEASE === "true";
-const profile = process.env.ARIA_PAK_PROFILE || (release ? "signed" : "dev");
-const force = process.env.ARIA_FORCE_REBUILD === "true";
 const editionArgument = process.argv.indexOf("--edition");
 const edition = editionArgument >= 0
   ? process.argv[editionArgument + 1]
@@ -33,6 +25,25 @@ const edition = editionArgument >= 0
 if (!['full', 'demo'].includes(edition)) {
   throw new Error("edition must be 'full' or 'demo'");
 }
+
+const outputArgument = process.argv.indexOf("--out");
+if (outputArgument >= 0 && !process.argv[outputArgument + 1]) {
+  throw new Error("--out requires a directory");
+}
+
+// A full game and its demo are distinct distributable products.  Keep their
+// generated Web bundles side by side instead of making local testing or a
+// Tauri build silently replace the other edition's output.
+const output = outputArgument >= 0
+  ? resolve(process.argv[outputArgument + 1])
+  : resolve(gameRoot, "dist", "build", edition, "web");
+const runtime = resolve(repository, "target/aria-web-runtime-tauri");
+const runtimeStamp = resolve(repository, "target/aria-web-runtime-tauri.fingerprint");
+const presentationCache = resolve(repository, "target", "aria-presentation-tauri", edition);
+const presentationStamp = resolve(repository, "target", `aria-presentation-tauri-${edition}.fingerprint`);
+const release = process.env.ARIA_RELEASE === "true";
+const profile = process.env.ARIA_PAK_PROFILE || (release ? "signed" : "dev");
+const force = process.env.ARIA_FORCE_REBUILD === "true";
 
 // npm does not necessarily retain ~/.cargo/bin on PATH. Prefer the user's
 // rustup proxies so this script honors rust-toolchain.toml and can find the
@@ -64,7 +75,16 @@ function sourceFiles(root, relativeRoot = "") {
   if (stat.isFile()) return [absolute];
   const files = [];
   for (const entry of readdirSync(absolute, { withFileTypes: true })) {
-    if (["node_modules", "dist", "target", ".git", ".aria-presentation"].includes(entry.name)) continue;
+    if ([
+      "node_modules",
+      "dist",
+      "target",
+      ".git",
+      ".aria-presentation",
+      "test-results",
+      "playwright-report",
+      ".vite",
+    ].includes(entry.name)) continue;
     const child = relativeRoot ? `${relativeRoot}/${entry.name}` : entry.name;
     if (entry.isDirectory()) files.push(...sourceFiles(root, child));
     else if (entry.isFile()) files.push(resolve(root, child));
@@ -132,19 +152,29 @@ function assertDemoPresentationBoundary() {
   const files = sourceFiles(presentationCache);
   const contains = (text) => files.some((file) => readFileSync(file).includes(Buffer.from(text)));
   const forbiddenText = [
+    "DAY 5",
+    "DAY 6",
+    "DAY 7",
+    "DAY 8",
+    "DAY 9",
+    "DAY 10",
     "強い雨が、進む理由を足止めする。",
     "終点を知らない列車",
   ];
-  const forbiddenAssets = [
-    "blue-twilight-v1-",
-    "bridge-understructure-v1-",
-    "mist-window-rail-v1-",
-    "neon-alley-v1-",
-    "night-window-motion-v1-",
-    "passage-sunset-v1-",
-    "rail-platform-dawn-v1-",
-    "rain-street-evening-v1-",
-    "understructure-evening-v1-",
+  // Treat the demo as an allowlisted product. A blacklist eventually misses
+  // a newly added late-game photograph; this list makes a new visual an
+  // explicit publishing decision before it can enter the public archive.
+  const allowedAssetPrefixes = [
+    "coast-road-dawn-v1-",
+    "hospital-corridor-overcast-v1-",
+    "rain-window-dusk-v1-",
+    "train-window-summer-v1-",
+    "train-motion-summer-v1-",
+    "station-night-pass-v1-",
+    "rail-window-sunset-v1-",
+    "shore-storm-sunset-v1-",
+    "platform-sea-dawn-v1-",
+    "hotel-corridor-blue-v1-",
   ];
   for (const text of forbiddenText) {
     if (contains(text)) throw new Error(`demo presentation leaks later chapter text: ${text}`);
@@ -153,9 +183,9 @@ function assertDemoPresentationBoundary() {
     throw new Error("demo presentation omitted the final playable chapter preview");
   }
   const assetNames = existsSync(assets) ? readdirSync(assets) : [];
-  for (const prefix of forbiddenAssets) {
-    if (assetNames.some((name) => name.startsWith(prefix))) {
-      throw new Error(`demo presentation leaks later chapter asset: ${prefix}`);
+  for (const name of assetNames.filter((name) => /\.(?:avif|jpe?g|png|webp)$/i.test(name))) {
+    if (!allowedAssetPrefixes.some((prefix) => name.startsWith(prefix))) {
+      throw new Error(`demo presentation contains an unapproved scene asset: ${name}`);
     }
   }
 }
@@ -179,7 +209,7 @@ if (stampMatches(runtimeStamp, runtimeFingerprint) && runtimeReady) {
 } else {
   rmSync(runtime, { recursive: true, force: true });
   mkdirSync(runtime, { recursive: true });
-  run(cargo, ["build", "--release", "-p", "aria-web", "--target", "wasm32-unknown-unknown"], {
+  run(cargo, ["build", "--release", "--locked", "-p", "aria-web", "--target", "wasm32-unknown-unknown"], {
     env: ariaCargoEnvironment,
   });
   run(wasmBindgen, [
@@ -194,11 +224,13 @@ if (stampMatches(runtimeStamp, runtimeFingerprint) && runtimeReady) {
 ensureFrontend();
 assertDemoPresentationBoundary();
 
+console.log(`  Preparing ${edition} Web bundle: ${relative(repository, output)}`);
+
 const buildArgs = [
   // The Tauri shell consumes a Web data bundle, not Aria's standalone native
   // Player. Avoid linking WGPU/audio/windowing just to compile scripts and
   // package a PAK; it makes local iteration and CI materially slower.
-  "run", "--release", "--no-default-features", "-p", "aria-cli", "--", "build", gameRoot,
+  "run", "--release", "--locked", "--no-default-features", "-p", "aria-cli", "--", "build", gameRoot,
   "--target", "web", "--out", output, "--profile", profile,
 ];
 if (edition === "demo") {

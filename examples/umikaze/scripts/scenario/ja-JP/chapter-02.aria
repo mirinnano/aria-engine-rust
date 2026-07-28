@@ -3,12 +3,12 @@
 aria;
 module umikaze.scenario.ja.chapter_02;
 
-// Source: 02_day2.md — 208 player-visible beats
+// Source: 02_day2.md — 202 player-visible beats
 scene novel_chapter_02 {
   locale "ja-JP";
   persistent flag "canonical_chapter_02_seen" = true;
   unlock chapter "canonical_chapter_02" progress 1;
-  background asset("#1f3b4d") with fade(260ms);
+  background asset("#4f4b53") with fade(260ms);
   screen day_card;
   choice {
     "DAY 2\n9月22日・三ノ宮\n雨の気配が近づく街で、二人は次の行き先を探している。" => novel_chapter_02_story;
@@ -17,7 +17,7 @@ scene novel_chapter_02 {
 
 scene novel_chapter_02_story {
   screen dialogue;
-  background asset("#1f3b4d") with fade(360ms);
+  background asset("#4f4b53") with fade(360ms);
   wait 180ms;
   clear dialogue;
   screen interlude;
@@ -100,10 +100,9 @@ scene novel_chapter_02_story {
   await advance;
   narrate "秋の風が俺たちを刺し、汗塗れの制服が蒸れる。";
   await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  background asset("#0f2f39") with fade(360ms);
+  wait 280ms;
   narrate "ただ歩くことに集中していた頃。";
   await advance;
   narrate "不意に、ゴミの匂いが途切れ、焼き立ての小麦の香りが鼻を突いた。";
@@ -168,12 +167,9 @@ scene novel_chapter_02_story {
   await advance;
   narrate "俺も黙ってその背中を追い、表通りへと向かった。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#163d4a") with fade(360ms);
-
+  background asset("#244e5a") with fade(360ms);
+  wait 280ms;
   narrate "海からの風に煽られながら歩き、目当てのユニクロを見つける。";
   await advance;
   narrate "だが、まだ開いていない。営業時間は10時からだった。";
@@ -204,8 +200,15 @@ scene novel_chapter_02_story {
   await advance;
   narrate "小さなマイクを海へ向け、録音ボタンを押す。";
   await advance;
+  clear dialogue;
+  screen statement;
+  background asset("#244e5a") with fade(260ms);
   narrate "マイクの先で、風が鳴った。";
-  await advance;
+  wait 1600ms;
+  background asset("#244e5a") with fade(360ms);
+  screen dialogue;
+  clear dialogue;
+  wait 180ms;
   narrate "「……これでいい」";
   await advance;
   narrate "腕時計のデジタル数字が、無機質に9:59から10:00へと跳ねた。";
@@ -216,10 +219,8 @@ scene novel_chapter_02_story {
   await advance;
   narrate "潮の香りはどんどんと薄れてゆく。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 240ms;
   narrate "ユニクロで適当に安い服を選んだ。";
   await advance;
   narrate "ミオは白いカットソーとベージュのスカート。俺は無地のTシャツとカーゴパンツ。";
@@ -234,10 +235,8 @@ scene novel_chapter_02_story {
   await advance;
   narrate "風に揺れる新しい服の裾を、ミオは少しだけ目を細めて見つめていた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 440ms;
   narrate "往来の人々からの視線が変わっていた。";
   await advance;
   narrate "制服を脱いだ途端、誰も俺たちに目線すらくれない。";
@@ -276,12 +275,9 @@ scene novel_chapter_02_story {
   await advance;
   narrate "誰も俺たちを知らない遠い街へと続く、穏やかな海景色をただ無言で眺め続けた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
   background asset("#766e61") with fade(360ms);
-
+  wait 280ms;
   narrate "『まもなく、終点 岡山です』";
   await advance;
   narrate "「降りる準備、しとけよ」";
@@ -382,12 +378,9 @@ scene novel_chapter_02_story {
   await advance;
   narrate "テレビの音だけが、狭い部屋に流れていた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#0f2f39") with fade(360ms);
-
+  background asset("#4f4b53") with fade(360ms);
+  wait 280ms;
   narrate "「ねえ、君ってば。ご飯はどうするの」";
   await advance;
   narrate "激しく肩を揺さぶられ、俺は重い瞼をこじ開けた。";
@@ -460,6 +453,7 @@ scene novel_chapter_02_story {
   await advance;
   chapter "canonical_chapter_02" progress 100;
   clear dialogue;
-  wait 180ms;
+  background asset("#05070b") with fade(480ms);
+  wait 480ms;
   jump chapter_select_ja;
 }

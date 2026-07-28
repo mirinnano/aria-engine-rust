@@ -6,5 +6,5 @@ export type SceneAsset = {
 
 export type StagePhoto = {
   source: string;
-  name: "window" | "motion" | "understructure";
+  name: "window" | "motion" | "night-motion" | "understructure";
 };

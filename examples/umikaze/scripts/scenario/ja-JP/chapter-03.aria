@@ -3,12 +3,12 @@
 aria;
 module umikaze.scenario.ja.chapter_03;
 
-// Source: 03_day3.md — 125 player-visible beats
+// Source: 03_day3.md — 121 player-visible beats
 scene novel_chapter_03 {
   locale "ja-JP";
   persistent flag "canonical_chapter_03_seen" = true;
   unlock chapter "canonical_chapter_03" progress 1;
-  background asset("#3e4c5c") with fade(260ms);
+  background asset("#4f4b53") with fade(260ms);
   screen day_card;
   choice {
     "DAY 3\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03_story;
@@ -17,7 +17,7 @@ scene novel_chapter_03 {
 
 scene novel_chapter_03_story {
   screen dialogue;
-  background asset("#3e4c5c") with fade(360ms);
+  background asset("#4f4b53") with fade(360ms);
   wait 180ms;
   clear dialogue;
   screen interlude;
@@ -100,16 +100,18 @@ scene novel_chapter_03_story {
   await advance;
   narrate "部屋に戻ると、重苦しい沈黙が落ちた。";
   await advance;
+  clear dialogue;
+  background asset("#6d706f") with fade(260ms);
+  wait 720ms;
+  background asset("#4f4b53") with fade(360ms);
+  wait 180ms;
   narrate "チェックアウトの時間は迫っている。";
   await advance;
   narrate "俺たちは無言で荷物をまとめ、部屋を出た。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#1e2937") with fade(360ms);
-
+  background asset("#766e61") with fade(360ms);
+  wait 280ms;
   narrate "薄暗いロビー。";
   await advance;
   narrate "昨夜からいたフロントの男に鍵を差し出す。";
@@ -146,12 +148,9 @@ scene novel_chapter_03_story {
   await advance;
   narrate "それだけが、俺たちを現実から遠ざけてくれていた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#2f4555") with fade(360ms);
-
+  background asset("#244e5a") with fade(360ms);
+  wait 280ms;
   narrate "松江に到着したのは、午後五時を回った頃だった。";
   await advance;
   narrate "駅の外に出ると、空はすでに茜色に染まりつつあった。";
@@ -176,12 +175,9 @@ scene novel_chapter_03_story {
   await advance;
   narrate "俺は肩に伝わる小さな頭の重みを感じながら、陽が完全に沈みきるまで、ただ無言で湖を眺めていた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#0f2f39") with fade(360ms);
-
+  background asset("#4f4b53") with fade(360ms);
+  wait 280ms;
   narrate "すっかり暗くなった街を歩き、今夜の宿を探す。";
   await advance;
   narrate "駅から数分歩いた路地裏に、『ビジネスホテル〇〇』というネオンが一部切れかけた看板を見つけた。";
@@ -262,12 +258,8 @@ scene novel_chapter_03_story {
   await advance;
   narrate "俺たちはそれ以上語らず、無言のままビジネスホテルへと歩いた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#3e4c5c") with fade(360ms);
-
+  wait 520ms;
   narrate "405号室。";
   await advance;
   narrate "煙草の匂いが染み付いた狭いダブルベッドに、並んで身を横たえる。";
@@ -292,6 +284,7 @@ scene novel_chapter_03_story {
   await advance;
   chapter "canonical_chapter_03" progress 100;
   clear dialogue;
-  wait 180ms;
+  background asset("#05070b") with fade(480ms);
+  wait 480ms;
   jump chapter_select_ja;
 }

@@ -40,14 +40,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
         with:
           targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: umikaze-pages-v3
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: examples/umikaze/ui/package-lock.json
+      - name: Restore wasm-bindgen CLI
+        id: wasm-bindgen-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}
+      - name: Install wasm-bindgen CLI
+        if: steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Install build and browser dependencies
         run: |
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
           npm ci --prefix examples/umikaze/ui
           npx --prefix examples/umikaze/ui playwright install --with-deps chromium
       - name: Build and verify the content-limited demo
@@ -56,9 +67,11 @@ jobs:
           # Exercise the same project-subdirectory semantics as
           # https://<owner>.github.io/<repository>/ rather than only a local
           # origin root.  The presentation deliberately emits relative URLs.
-          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist >/tmp/umikaze-pages-http.log 2>&1 &
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/build/demo >/tmp/umikaze-pages-http.log 2>&1 &
+          for attempt in {1..40}; do curl -fsS http://127.0.0.1:4173/web/ >/dev/null && break; sleep 0.25; done
+          curl -fsS http://127.0.0.1:4173/web/ >/dev/null
           ARIA_UI_URL=http://127.0.0.1:4173/web/ UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
-          cargo test -p aria-cli --no-default-features --test umikaze_sample demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four
+          cargo test --locked -p aria-cli --no-default-features --test umikaze_sample demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four
       - name: Produce the signed static release
         run: |
           npm --prefix examples/umikaze/ui run release:demo:web

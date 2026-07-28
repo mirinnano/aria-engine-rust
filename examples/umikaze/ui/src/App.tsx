@@ -20,6 +20,11 @@ import { languageNames, localeFor, strings } from "./copy";
 import { bootPresentation, type PresentationRuntime, type SaveSlotSummary } from "./runtime";
 import { chapterPreviewByLabel } from "#chapter-preview";
 import {
+  dayCardThemeByHeading,
+  dayCardToneByHeading,
+  sceneToneByColor,
+} from "#stage-mapping";
+import {
   chapterFallbackSources,
   gallerySources,
   sceneAssetByTone,
@@ -31,6 +36,10 @@ import "./app.css";
 import "./stage.css";
 
 const isDemoEdition = import.meta.env.VITE_UMIKAZE_EDITION === "demo";
+// Kept in lockstep with the importer. A statement owns one authored hold;
+// the negative animation delay makes a save restored halfway through it pick
+// up the same opacity phase without a render clock.
+const STATEMENT_HOLD_MS = 1600;
 
 type Dispatch = (intent: UiIntent) => void;
 
@@ -46,70 +55,6 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : null;
   return Boolean(element?.closest("button, input, textarea, select, [contenteditable=true], [data-aria-action]"));
 }
-
-const sceneToneByColor: Record<string, string> = {
-  "16,43,56": "tide",
-  "40,75,89": "school",
-  "31,59,77": "motion",
-  "61,70,85": "ward",
-  "36,78,90": "blue",
-  "57,72,87": "rain",
-  "23,37,59": "blue",
-  "49,85,101": "shore",
-  "55,90,97": "blue",
-  "109,107,87": "clear",
-  "5,7,11": "blackout",
-  "222,215,201": "whiteout",
-  "34,60,76": "station",
-  "62,76,92": "hotel",
-  "38,62,71": "harbor",
-  "23,45,66": "night",
-  "82,107,124": "platform",
-  "83,109,120": "mist",
-  "118,110,97": "rail-sunset",
-  "15,47,57": "city",
-  "48,74,87": "rain-city",
-  "30,41,55": "bridge",
-  "47,69,85": "passage",
-  "22,61,74": "shore",
-  "64,84,105": "night",
-};
-
-// Day cards have their own environmental reading.  A chapter opens on the
-// weather of *that* day rather than inheriting a generic menu photograph.
-// The story stays declarative: its first choice is the source of this tiny
-// presentation hint, so saving on a card and restoring it remains exact.
-const dayCardToneByHeading: Record<string, string> = {
-  PROLOGUE: "ward",
-  "DAY 1": "station",
-  "DAY 2": "rain",
-  "DAY 3": "hotel",
-  "DAY 4": "blue",
-  "DAY 5": "rain",
-  "DAY 6": "clear",
-  "DAY 7": "shore",
-  "DAY 8": "harbor",
-  "DAY 9": "night",
-  "DAY 10": "blue",
-  "DAY 14": "passage",
-  EPILOGUE: "clear",
-};
-
-const dayCardThemeByHeading: Record<string, string> = {
-  PROLOGUE: "ward",
-  "DAY 1": "departure",
-  "DAY 2": "rain",
-  "DAY 3": "rail",
-  "DAY 4": "shore",
-  "DAY 5": "rain",
-  "DAY 6": "clear",
-  "DAY 7": "island",
-  "DAY 8": "harbor",
-  "DAY 9": "north",
-  "DAY 10": "terminus",
-  "DAY 14": "shore",
-  EPILOGUE: "spring",
-};
 
 function dayCardHeading(view: UiViewModel | null | undefined): string | null {
   if (!view || routeName(view.route) !== "day_card") return null;
@@ -315,6 +260,369 @@ type FocusMenuItem = {
   accessibleLabel?: string;
 };
 
+// The title is a field of source fragments rather than invented atmosphere.
+// Miyazawa's Japanese is from public-domain originals. Wittgenstein's lines
+// are project translations made directly from the public-domain German text;
+// no commercial Japanese translation is reproduced here.
+const titleQuotations = [
+  {
+    id: "tractatus-world",
+    text: "世界は、起こっていることの総体である。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 1（プロジェクト訳）",
+  },
+  {
+    id: "notebook-logic",
+    text: "論理は、自分で自分のことを引き受けなければならない。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-plain",
+    text: "よだかは、実にみにくい鳥です。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-happiness",
+    text: "なにがしあわせかわからないです。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-sense",
+    text: "世界の意味は、世界の外にある。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 6.41（プロジェクト訳）",
+  },
+  {
+    id: "notebook-art",
+    text: "芸術の驚異は、世界があることだ。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-cry",
+    text: "夜だかは大声をあげて泣き出しました。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-steps",
+    text: "ほんとうの幸福に近づく一あしずつですから。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "notebook-ethics",
+    text: "倫理と美学とは一つである。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "tractatus-silence",
+    text: "語ることのできないものについては、沈黙しなければならない。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 7（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-thought",
+    text: "一たい僕は、なぜこうみんなにいやがられるのだろう。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "notebook-world",
+    text: "幸福な人の世界は、不幸な人の世界とは別の世界である。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "tractatus-facts",
+    text: "世界は、事実の総体であって、物の総体ではない。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 1.1（プロジェクト訳）",
+  },
+  {
+    id: "notebook-report",
+    text: "私は世界を、見いだされたままに報告したい。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-thinks",
+    text: "よだかは、じっと目をつぶって考えました。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-train",
+    text: "ごとごとごとごと汽車はきらびやかな燐光の川の岸を進みました。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-language",
+    text: "私の言語の限界は、私の世界の限界を意味する。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 5.6（プロジェクト訳）",
+  },
+  {
+    id: "notebook-eternity",
+    text: "芸術作品は、永遠の相のもとに見られた対象である。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-sky",
+    text: "夜だかが思い切って飛ぶときは、そらがまるで二つに切れたように思われます。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "tractatus-death",
+    text: "死は人生の出来事ではない。人は死を生きない。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 6.4311（プロジェクト訳）",
+  },
+  {
+    id: "notebook-life",
+    text: "生は世界である。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-name",
+    text: "私の名前は私が勝手につけたのではありません。神さまから下さったのです。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-river",
+    text: "おや、あの河原は月夜だろうか。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-mine",
+    text: "世界は、私の世界である。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 5.62（プロジェクト訳）",
+  },
+  {
+    id: "notebook-will",
+    text: "世界は私の意志から独立している。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-cloud",
+    text: "夜だかはまるで雲とすれすれになって、音なく空を飛びまわりました。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-kindness",
+    text: "ぼくはそのひとのさいわいのためにいったいどうしたらいいのだろう。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-aesthetics",
+    text: "倫理と美学とは一つである。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 6.421（プロジェクト訳）",
+  },
+  {
+    id: "notebook-god",
+    text: "神を信じるとは、人生に意味があると見ることである。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-die",
+    text: "そんなことをする位なら、私はもう死んだ方がましです。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-sorrow",
+    text: "ああそうです。ただいちばんのさいわいに至るためにいろいろのかなしみもみんなおぼしめしです。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-divides",
+    text: "世界は、事実のうちに分かれる。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 1.2（プロジェクト訳）",
+  },
+  {
+    id: "notebook-world-is",
+    text: "私は、この世界があることを知っている。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-sun",
+    text: "どうぞ私をあなたの所へ連れてって下さい。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-ticket",
+    text: "どこでも勝手にあるける通行券です。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-thought",
+    text: "思考とは、有意味な命題である。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 4（プロジェクト訳）",
+  },
+  {
+    id: "notebook-prayer",
+    text: "祈りは、人生の意味を思うことである。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-climb",
+    text: "夜だかは、どこまでも、どこまでも、まっすぐに空へのぼって行きました。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-path",
+    text: "ほんとうにどんなつらいことでも、それがただしいみちを進む中でのできごとなら。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "tractatus-mystical",
+    text: "世界があることが、神秘的なのだ。",
+    source: "Ludwig Wittgenstein, Tractatus Logico-Philosophicus, 6.44（プロジェクト訳）",
+  },
+  {
+    id: "notebook-powerless",
+    text: "私は世界の出来事を、自分の意志どおりには導けない。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-star",
+    text: "そしてよだかの星は燃えつづけました。",
+    source: "宮沢賢治『よだかの星』",
+  },
+  {
+    id: "galaxy-wind",
+    text: "じつにそのすきとおった奇麗な風は、ばらの匂でいっぱいでした。",
+    source: "宮沢賢治『銀河鉄道の夜』",
+  },
+  {
+    id: "notebook-life-art",
+    text: "真剣なのは生、晴れやかなのは芸術。",
+    source: "Ludwig Wittgenstein, Tagebücher 1914–1916（プロジェクト訳）",
+  },
+  {
+    id: "yodaka-still-burning",
+    text: "今でもまだ燃えています。",
+    source: "宮沢賢治『よだかの星』",
+  },
+] as const;
+
+type TitleQuotation = typeof titleQuotations[number];
+
+type TitleQuotationFragment = {
+  id: string;
+  sourceId: string;
+  source: string;
+  text: string;
+  anchor: boolean;
+};
+
+const titleQuotationFragmentCount = 360;
+
+function splitCitation(text: string, count: number): string[] {
+  const glyphs = Array.from(text);
+  const fragments: string[] = [];
+  let start = 0;
+
+  for (let fragment = 0; fragment < count; fragment += 1) {
+    const remainingFragments = count - fragment;
+    const remainingGlyphs = glyphs.length - start;
+    const minimumEnd = start + 1;
+    const maximumEnd = glyphs.length - (remainingFragments - 1);
+    const idealEnd = Math.min(maximumEnd, Math.max(minimumEnd, Math.round(start + remainingGlyphs / remainingFragments)));
+    let end = idealEnd;
+
+    // Break near a Japanese clause boundary when one is close.  These are
+    // deliberately fragments, but they must still carry the grain of the
+    // source rather than look like arbitrary character slices.
+    for (let distance = 0; distance <= 3; distance += 1) {
+      const candidates = [idealEnd - distance, idealEnd + distance];
+      const punctuationEnd = candidates.find((candidate) =>
+        candidate >= minimumEnd
+        && candidate <= maximumEnd
+        && "、。！？…".includes(glyphs[candidate - 1] || ""));
+      if (punctuationEnd !== undefined) {
+        end = punctuationEnd;
+        break;
+      }
+    }
+
+    fragments.push(glyphs.slice(start, end).join(""));
+    start = end;
+  }
+
+  return fragments;
+}
+
+function fragmentCounts(quotations: readonly TitleQuotation[], target: number): number[] {
+  // One fragment per source is the baseline.  The remaining allocation fills
+  // the target only after the forty-five intact anchor quotations are set
+  // aside.
+  const fragmentTarget = target - quotations.length;
+  const extraTarget = fragmentTarget - quotations.length;
+  const totalLength = quotations.reduce((sum, quotation) => sum + Array.from(quotation.text).length, 0);
+  const rawExtras = quotations.map((quotation) => Array.from(quotation.text).length / totalLength * extraTarget);
+  const counts = rawExtras.map((raw) => 1 + Math.floor(raw));
+  let remaining = fragmentTarget - counts.reduce((sum, count) => sum + count, 0);
+  const order = rawExtras
+    .map((raw, index) => ({ index, remainder: raw - Math.floor(raw) }))
+    .sort((left, right) => right.remainder - left.remainder)
+    .map(({ index }) => index);
+
+  for (let index = 0; remaining > 0; index += 1, remaining -= 1) {
+    counts[order[index % order.length]] += 1;
+  }
+
+  return counts;
+}
+
+function createTitleQuotationFragments(quotations: readonly TitleQuotation[]): TitleQuotationFragment[] {
+  const anchors = quotations.map((quotation) => ({
+    id: `${quotation.id}-anchor`,
+    sourceId: quotation.id,
+    source: quotation.source,
+    text: quotation.text,
+    anchor: true,
+  }));
+  const counts = fragmentCounts(quotations, titleQuotationFragmentCount);
+  const fragments = quotations.flatMap((quotation, quotationIndex) =>
+    splitCitation(quotation.text, counts[quotationIndex]).map((text, fragmentIndex) => ({
+      id: `${quotation.id}-fragment-${fragmentIndex + 1}`,
+      sourceId: quotation.id,
+      source: quotation.source,
+      text,
+      anchor: false,
+    })));
+  const terrain = [...anchors, ...fragments];
+
+  if (terrain.length !== titleQuotationFragmentCount) {
+    throw new Error(`Expected ${titleQuotationFragmentCount} title quotation fragments, received ${terrain.length}.`);
+  }
+
+  return terrain;
+}
+
+const titleQuotationFragments = createTitleQuotationFragments(titleQuotations);
+
+function fractional(value: number): number {
+  return value - Math.floor(value);
+}
+
+/*
+ * This is controlled irregularity, never runtime randomness.  A golden-ratio
+ * walk distributes fragments across the frame; their y value is then sampled
+ * from a shallow central ridge and seven overlapping sediment layers.  The
+ * output reads as a terrain, but opening the title twice leaves it unchanged.
+ */
+function quotationTerrain(index: number, anchor: boolean): React.CSSProperties {
+  const cluster = Math.floor(index / 3);
+  const member = index % 3;
+  const clusterX = -0.5 + fractional((cluster + 1) * 0.61803398875) * 99;
+  const x = clusterX + [-1.8, 0.25, 1.55][member];
+  const horizon = 1 + 20 * Math.pow((x - 46) / 46, 2);
+  const stratum = cluster % 13;
+  const jitter = fractional((cluster + 1) * 0.41421356237) * 2.2 - 1.1 + [-1.1, 0.2, 1.15][member];
+  const y = Math.min(96, horizon + stratum * 5.45 + jitter);
+  const depth = fractional((index + 1) * 0.75487766625);
+  const mobileLane = index % 5;
+  const mobileLayer = Math.floor(index / 5) % 6;
+
+  return {
+    "--quotation-x": x,
+    "--quotation-y": y,
+    "--quotation-lean": `${(depth - 0.5) * 1.4}deg`,
+    "--quotation-opacity": anchor ? 0.39 + depth * 0.14 : 0.16 + depth * 0.24,
+    "--quotation-size": anchor ? 1.02 + depth * 0.34 : 0.56 + depth * 0.54,
+    "--quotation-mobile-x": [0, 20, 40, 60, 80][mobileLane],
+    "--quotation-mobile-y": [10, 1, 12, 4, 16][mobileLane] + mobileLayer * 15,
+  } as React.CSSProperties;
+}
+
 /**
  * Static visual material for every non-reading screen.  It is intentionally
  * CSS-only: the game already owns the photograph underneath, so this only
@@ -328,16 +636,16 @@ function StageBackdrop({ kind = "record" }: { kind?: string }) {
     <div className={`record-stage-backdrop record-stage-backdrop--${kind}`} aria-hidden="true">
       <img className={`record-stage-photograph record-stage-photograph--${photo.name}`} src={photo.source} alt="" decoding="async" />
       {isTitle && (
-        <div className="record-stage-fragments">
-          <span className="record-stage-fragment record-stage-fragment--tractatus-silence" lang="de">
-            7&nbsp; Wovon man nicht sprechen kann, darüber muß man schweigen.
-          </span>
-          <span className="record-stage-fragment record-stage-fragment--yodaka" lang="ja">
-            よだかは、実にみにくい鳥です。
-          </span>
-          <span className="record-stage-fragment record-stage-fragment--galaxy" lang="ja">
-            ではみなさんは、そういうふうに川だと云われたり、乳の流れたあとだと云われたりしていたこのぼんやりと白いものがほんとうは何かご承知ですか。
-          </span>
+        <div className="record-stage-quotations" lang="ja">
+          {titleQuotationFragments.map((quotation, index) => (
+            <p
+              key={quotation.id}
+              className={`record-stage-quotation record-stage-quotation--source-${quotation.sourceId}${quotation.anchor ? ` record-stage-quotation--${quotation.sourceId} is-anchor` : " is-fragment"}`}
+              style={quotationTerrain(index, quotation.anchor)}
+            >
+              {quotation.text}
+            </p>
+          ))}
         </div>
       )}
       <span className="record-stage-signal record-stage-signal--one" />
@@ -362,6 +670,7 @@ function FocusMenu({
   onAction,
   className = "",
   initialFocusId,
+  focusInitially = false,
   descriptionPlacement = "after-list",
 }: {
   label: string;
@@ -369,14 +678,14 @@ function FocusMenu({
   onAction: (id: string) => void;
   className?: string;
   initialFocusId?: string;
+  /** Give keyboard players the same initial command as the visual selection. */
+  focusInitially?: boolean;
   descriptionPlacement?: "after-list" | "under-focused-item";
 }) {
   const descriptionId = useId();
-  const menuRef = useRef<HTMLElement | null>(null);
+  const menu = useRef<HTMLElement>(null);
+  const initialFocusScheduled = useRef(false);
   const firstAvailable = items.find((item) => !item.disabled)?.id ?? "";
-  const initialFocusableId = items.some((item) => item.id === initialFocusId && !item.disabled)
-    ? initialFocusId
-    : firstAvailable;
   const [focusedActionId, setFocusedActionId] = useState(initialFocusId ?? firstAvailable);
   const focused = items.find((item) => item.id === focusedActionId)
     ?? items.find((item) => !item.disabled)
@@ -389,18 +698,33 @@ function FocusMenu({
       : firstAvailable);
   }, [firstAvailable, focusedActionId, initialFocusId, items]);
 
-  // Opening a command surface must make it immediately usable with a d-pad
-  // or arrow keys. React Aria's focus scope intentionally has no opinion
-  // about our visual command order, so place focus on the deterministic first
-  // command exactly once for each newly mounted (or reconfigured) menu.
-  // This is deliberately not driven by hover/state updates: pointer preview
-  // remains a preview and never steals a keyboard player's focus.
-  useEffect(() => {
-    if (!initialFocusableId) return;
-    const target = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>("[data-stage-menu-item]") ?? [])]
-      .find((control) => control.dataset.ariaAction === initialFocusableId && !control.disabled);
-    target?.focus({ preventScroll: true });
-  }, [initialFocusableId]);
+  const attachMenu = (node: HTMLElement | null) => {
+    menu.current = node;
+    if (!node || !focusInitially || initialFocusScheduled.current) return;
+    initialFocusScheduled.current = true;
+    // A command can look selected while React Aria's modal shell still owns
+    // DOM focus.  This mount-only handoff happens after that shell settles;
+    // it is neither a polling loop nor an ambient animation.
+    window.setTimeout(() => {
+      // Never let the delayed initial handoff overwrite a real player (or
+      // assistive-technology) focus move that happened while the modal was
+      // opening.  Besides preserving intent, this keeps the explanatory
+      // line tied to the actual command rather than snapping back to RESUME.
+      const active = document.activeElement instanceof HTMLElement
+        ? document.activeElement.closest<HTMLButtonElement>("[data-stage-menu-item]")
+        : null;
+      if (active && node.contains(active)) {
+        const action = active.getAttribute("data-aria-action");
+        if (action) setFocusedActionId(action);
+        return;
+      }
+      const controls = [...node.querySelectorAll<HTMLButtonElement>("[data-stage-menu-item]")]
+        .filter((control) => !control.disabled);
+      const target = controls.find((control) => control.getAttribute("data-aria-action") === (initialFocusId ?? firstAvailable))
+        ?? controls[0];
+      if (target?.isConnected) target.focus({ preventScroll: true });
+    }, 24);
+  };
 
   const moveFocus = (container: HTMLElement, direction: -1 | 1) => {
     const controls = [...container.querySelectorAll<HTMLButtonElement>("[data-stage-menu-item]")]
@@ -415,16 +739,18 @@ function FocusMenu({
 
   return (
     <nav
-      ref={menuRef}
+      ref={attachMenu}
       className={`focus-menu ${className}`.trim()}
       aria-label={label}
-      onKeyDown={(event) => {
+      onKeyDownCapture={(event) => {
         if (event.key === "ArrowUp") {
           event.preventDefault();
+          event.stopPropagation();
           moveFocus(event.currentTarget, -1);
         }
         if (event.key === "ArrowDown") {
           event.preventDefault();
+          event.stopPropagation();
           moveFocus(event.currentTarget, 1);
         }
       }}
@@ -680,7 +1006,7 @@ function RMenu({ view, copy, onAction, dispatch }: {
     <ModalOverlay className="rmenu-overlay" isOpen isDismissable onOpenChange={(open) => { if (!open) dispatch({ kind: "dismiss" }); }}>
       <Modal className="rmenu-modal">
         <Dialog className="pause-ledger stage-rmenu" aria-label={copy.menu}>
-          <FocusMenu label={copy.menu} items={items} initialFocusId="dismiss" descriptionPlacement="under-focused-item" className="rmenu-command-list"
+          <FocusMenu label={copy.menu} items={items} initialFocusId="dismiss" focusInitially descriptionPlacement="under-focused-item" className="rmenu-command-list"
             onAction={(id) => {
               if (id === "dismiss") dispatch({ kind: "dismiss" });
               else onAction(id);
@@ -1148,6 +1474,34 @@ function Interlude({ view, copy, onAction }: {
 }
 
 /**
+ * A statement is not a title card and not a clickable subtitle. It is one
+ * existing sentence, delivered automatically over a plain field. The UI
+ * deliberately has no button: ordinary reading input must leave the story's
+ * authored duration intact, while Escape, H, and the top-level RMenu remain
+ * available through the runtime's normal reading controls.
+ */
+function Statement({ view, copy }: {
+  view: UiViewModel;
+  copy: ReturnType<typeof strings>;
+}) {
+  const text = view.dialogue?.full_page_text || "";
+  const remaining = view.timed_hold_remaining_ms ?? STATEMENT_HOLD_MS;
+  const elapsed = Math.min(STATEMENT_HOLD_MS, Math.max(0, STATEMENT_HOLD_MS - remaining));
+  return (
+    <section className="statement-screen" aria-label={copy.reading}>
+      <p
+        className="statement-line"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{ animationDelay: `-${elapsed}ms` }}
+      >
+        {text}
+      </p>
+    </section>
+  );
+}
+
+/**
  * The demo closes as a place in the record, not a sales modal. Its only
  * exits remain inside the installed story: replay the available arc or go
  * back to the title. Store and social links belong to a configured release,
@@ -1177,6 +1531,7 @@ function DemoEnd({ view, copy, onAction }: {
         onAction={onAction}
         className="demo-end-command-list"
         initialFocusId={items[0]?.id}
+        focusInitially
         descriptionPlacement="under-focused-item"
       />
     </section>
@@ -1204,7 +1559,6 @@ function Title({ view, copy, onAction }: {
       <header className="title-identity">
         <div className="title-masthead">
           <h1>{copy.title}</h1>
-          <p className="title-subtitle">{copy.subtitle}</p>
           {isDemoEdition && <p className="title-edition">DEMO</p>}
         </div>
       </header>
@@ -1215,6 +1569,7 @@ function Title({ view, copy, onAction }: {
           onAction={onAction}
           className="title-command-list"
           initialFocusId={begin?.id}
+          focusInitially
           descriptionPlacement="under-focused-item"
         />
       </div>
@@ -1302,6 +1657,7 @@ function Setup({ view, copy, onAction }: {
           onAction={onAction}
           className="title-command-list setup-command-list"
           initialFocusId={items[0]?.id}
+          focusInitially
           descriptionPlacement="under-focused-item"
         />
       </div>
@@ -1322,6 +1678,7 @@ function Screen({ view, dispatch, chromeVisible, onRevealChrome, saveSlots }: {
   if (route === "setup") return <Setup view={view} copy={copy} onAction={onAction} />;
   if (route === "title") return <Title view={view} copy={copy} onAction={onAction} />;
   if (route === "interlude") return <Interlude view={view} copy={copy} onAction={onAction} />;
+  if (route === "statement") return <Statement view={view} copy={copy} />;
   if (route === "demo_end") return <DemoEnd view={view} copy={copy} onAction={onAction} />;
   if (route === "day_card") return <DayCard view={view} copy={copy} onAction={onAction} />;
   if (route === "pause") return <RMenu view={view} copy={copy} onAction={onAction} dispatch={dispatch} />;
@@ -1397,7 +1754,7 @@ export default function App() {
   const view = output?.view;
   const fallbackCopy = strings(view?.game.locale ?? navigator.language);
   const route = view ? routeName(view.route) : "loading";
-  const isInterlude = route === "interlude";
+  const isTextOnlyRoute = route === "interlude" || route === "statement";
   const tone = toneForScene(output);
   const dayCardTheme = dayCardThemeFor(view);
   const isReadingStage = route === "dialogue"
@@ -1612,7 +1969,7 @@ export default function App() {
       }}
     >
       <canvas ref={canvas} className="scene-canvas" data-aria-stage="dom" aria-hidden="true" />
-      {view && !isInterlude && <>
+      {view && !isTextOnlyRoute && <>
         <ScenePhotograph output={output} transform={sceneDirection.transform} />
         <div className="atmosphere" style={sceneDirection.transform ? { transform: sceneDirection.transform } : undefined} aria-hidden="true" />
         <SceneDirectionLayer overlays={sceneDirection.overlays} />

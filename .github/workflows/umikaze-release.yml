@@ -27,29 +27,50 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
           components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: umikaze-web-v3
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: examples/umikaze/ui/package-lock.json
-      - name: Install wasm-bindgen and frontend dependencies
+      - name: Restore wasm-bindgen CLI
+        id: wasm-bindgen-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}
+      - name: Install wasm-bindgen CLI
+        if: steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Install frontend and browser dependencies
         run: |
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
           npm ci --prefix examples/umikaze/ui
           npx --prefix examples/umikaze/ui playwright install --with-deps chromium
       - name: Verify Core and canonical scenario
         run: |
           cargo fmt --all -- --check
-          cargo test -p aria-core
-          cargo test -p aria-cli --no-default-features --test umikaze_sample
-      - name: Verify full and demo presentation bundles in Chromium
+          cargo test --locked -p aria-core
+          cargo test --locked -p aria-cli --no-default-features --test umikaze_sample
+      - name: Verify full presentation bundle in Chromium
         run: |
           npm --prefix examples/umikaze/ui run prepare:desktop
-          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/web >/tmp/umikaze-http.log 2>&1 &
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/build/full/web >/tmp/umikaze-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..40}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && break; sleep 0.25; done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
           npm --prefix examples/umikaze/ui test
+      - name: Verify demo presentation bundle in Chromium
+        run: |
           npm --prefix examples/umikaze/ui run prepare:demo
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/build/demo/web >/tmp/umikaze-demo-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..40}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && break; sleep 0.25; done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
           UMIKAZE_DEMO=true npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
-          npm --prefix examples/umikaze/ui run prepare:desktop
       - name: Build static Web releases
         run: |
           npm --prefix examples/umikaze/ui run release:web
@@ -58,10 +79,12 @@ jobs:
         with:
           name: umikaze-web
           path: dist/releases/web/**
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: umikaze-demo-web
           path: dist/releases/demo-web/**
+          if-no-files-found: error
 
   desktop:
     name: Desktop ${{ matrix.os }}
@@ -70,9 +93,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The runner is an old compatibility baseline, not the release
-          # format.  AppImage wraps the CLI-staged WebView payload for Linux
-          # distributions without depending on a Debian-family package tool.
+          # Linux distribution is the universal AppImage candidate. Debian
+          # packaging remains available locally, but is not the release gate.
           - os: ubuntu-22.04
             bundles: appimage
             artifact: linux-universal
@@ -91,6 +113,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: umikaze-desktop-v3
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -104,7 +129,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix examples/umikaze/ui
       - name: Verify desktop save adapter
-        run: cargo test --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml
       - name: Build full native installer
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target/umikaze-full
@@ -113,32 +138,56 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target/umikaze-demo
         run: npm --prefix examples/umikaze/ui run release:demo:desktop
-      - name: Write full installer checksums
-        shell: bash
-        run: node scripts/write-sha256-manifest.mjs target/umikaze-full/release/bundle
-      - name: Write demo installer checksums
-        shell: bash
-        run: node scripts/write-sha256-manifest.mjs target/umikaze-demo/release/bundle
-      - name: Assert portable Linux artifact
-        if: runner.os == 'Linux'
+      - name: Verify native installer manifests
         shell: bash
         run: |
-          full=$(find target/umikaze-full/release/bundle -type f -name '*.AppImage' -print -quit)
-          demo=$(find target/umikaze-demo/release/bundle -type f -name '*.AppImage' -print -quit)
-          test -n "$full"
-          test -n "$demo"
-          test -x "$full"
-          test -x "$demo"
-          ! find target/umikaze-full/release/bundle target/umikaze-demo/release/bundle -type f -name '*.deb' -print -quit | grep -q .
-          file "$full"
-          file "$demo"
+          test -s target/umikaze-full/release/bundle/release-manifest.json
+          test -s target/umikaze-full/release/bundle/checksums.sha256
+          test -s target/umikaze-demo/release/bundle/release-manifest.json
+          test -s target/umikaze-demo/release/bundle/checksums.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: umikaze-${{ matrix.artifact }}
           path: |
             target/umikaze-full/release/bundle/**
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: umikaze-demo-${{ matrix.artifact }}
           path: |
             target/umikaze-demo/release/bundle/**
+          if-no-files-found: error
+
+  publish:
+    name: Prepare draft GitHub Release
+    if: startsWith(github.ref, 'refs/tags/umikaze-v')
+    needs: [web, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: umikaze-*
+          path: release-assets
+      - name: Verify release payload
+        shell: bash
+        run: |
+          test -n "$(find release-assets -type f \( -name '*.zip' -o -name '*.exe' -o -name '*.deb' -o -name '*.dmg' -o -name '*.AppImage' \) -print -quit)"
+          find release-assets -type f -name checksums.sha256 -print | grep -q .
+      - name: Create reviewable draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 海風 ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            release-assets/**/*.zip
+            release-assets/**/*.exe
+            release-assets/**/*.deb
+            release-assets/**/*.dmg
+            release-assets/**/*.AppImage
+            release-assets/**/checksums.sha256
+            release-assets/**/release-manifest.json
+            release-assets/**/web-release.json

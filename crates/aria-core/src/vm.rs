@@ -670,10 +670,10 @@ impl Vm {
         }
 
         // A custom story surface can be either a choice checkpoint (the day
-        // card) or a timed reading beat (the interlude). Only presentation
-        // overlays bypass the ordinary waiting-state update. Treating every
-        // non-dialogue route as UI used to freeze a `wait` authored on a
-        // story-owned surface indefinitely.
+        // card) or a timed reading beat (an interlude or an automatic
+        // statement). Only presentation overlays bypass the ordinary
+        // waiting-state update. Treating every non-dialogue route as UI used
+        // to freeze a `wait` authored on a story-owned surface indefinitely.
         if !route_changed
             && (self.state.execution == ExecutionState::WaitingForChoice
                 || (self.state.ui.route != DEFAULT_ROUTE && !self.is_reading_surface()))
@@ -776,12 +776,16 @@ impl Vm {
                 // A cinematic beat may be skipped by the player's normal
                 // skip mode as well as a physically held skip input. Its text
                 // is already complete and recorded, so this never drops
-                // unread prose on the floor.
+                // unread prose on the floor. An interlude is intentionally
+                // reader-releasable; a statement is not. Its normal advance,
+                // confirm, pointer, and gamepad-A inputs are ignored until
+                // the authored duration has elapsed.
                 if remaining == 0
                     || input.is_held(InputAction::Skip)
+                    || ((self.state.ui.route == "interlude" || self.state.ui.route == "statement")
+                        && self.state.skip_mode != SkipMode::Off)
                     || (self.state.ui.route == "interlude"
-                        && (self.state.skip_mode != SkipMode::Off
-                            || input.is_pressed(InputAction::Advance)
+                        && (input.is_pressed(InputAction::Advance)
                             || input.is_pressed(InputAction::Confirm)
                             || input.pointer.is_some_and(|pointer| pointer.primary_pressed)))
                 {
@@ -1099,12 +1103,12 @@ impl Vm {
     fn present_screen(&mut self, requested: &str) {
         let previous = self.state.ui.route.clone();
         self.state.ui.route = self.resolve_screen(requested);
-        // An interlude owns its one complete line.  Do not let that line
+        // Atomic story fields own their one complete line. Do not let it
         // briefly masquerade as a subtitle while a following day card,
-        // transition, or authored delay is being prepared.  Besides being a
+        // transition, or authored delay is being prepared. Besides being a
         // visual leak, retaining its text id would make a prose backlog
         // target ambiguous during deterministic replay.
-        if previous == "interlude" && self.state.ui.route != "interlude" {
+        if is_atomic_story_route(&previous) && previous != self.state.ui.route {
             self.clear_text();
         }
         self.state.ui.route_stack.clear();
@@ -1298,7 +1302,7 @@ impl Vm {
                 && (matches!(
                     replay.state.execution,
                     ExecutionState::WaitingForAdvance { .. }
-                ) || (replay.state.ui.route == "interlude"
+                ) || (is_atomic_story_route(&replay.state.ui.route)
                     && matches!(
                         replay.state.execution,
                         ExecutionState::WaitingForDelay { .. }
@@ -1388,9 +1392,11 @@ impl Vm {
             // Cancel exactly like the dialogue surface so it opens RMenu and
             // never dismisses the chapter checkpoint by accident.
             || self.state.ui.route == "day_card"
-            // Interludes are story time, not an overlay. Cancel therefore
-            // opens RMenu and save/restore retains the exact held beat.
+            // Interludes and statements are story time, not overlays. Cancel
+            // therefore opens RMenu and save/restore retains their exact
+            // held beat.
             || self.state.ui.route == "interlude"
+            || self.state.ui.route == "statement"
             || (self.state.ui.route == "chapter_select"
                 && self.state.choice.is_none()
                 && !self.state.text.full_text.is_empty())
@@ -1766,11 +1772,11 @@ impl Vm {
                     ),
                     page_index: 0,
                 };
-                // Unlike a subtitle, an interlude is a complete short
-                // statement over a still frame. Reveal it atomically so it
-                // never starts a typewriter rAF loop, then place that exact
-                // page in the backlog before the authored hold begins.
-                if self.state.ui.route == "interlude" {
+                // Unlike a subtitle, an atomic story field is a complete
+                // short statement over a still frame. Reveal it atomically
+                // so it never starts a typewriter rAF loop, then place that
+                // exact page in the backlog before the authored hold begins.
+                if is_atomic_story_route(&self.state.ui.route) {
                     self.state.text.visible_graphemes = self.current_page_grapheme_count();
                     self.record_current_page_if_needed();
                     self.mark_current_text_read();
@@ -2496,6 +2502,10 @@ impl Vm {
 
     fn build_view_model(&self) -> UiViewModel {
         let route = UiRoute::parse(&self.state.ui.route);
+        let timed_hold_remaining_ms = match &self.state.execution {
+            ExecutionState::WaitingForDelay { remaining_ms } => Some(*remaining_ms),
+            _ => None,
+        };
         let dialogue_pages = self.subtitle_pages();
         let dialogue_page_index = self
             .state
@@ -2603,6 +2613,7 @@ impl Vm {
                 locale: self.state.locale.clone(),
             },
             dialogue,
+            timed_hold_remaining_ms,
             choices,
             actions: self.presentation_actions(&route),
             settings: self.state.settings.clone(),
@@ -2744,6 +2755,16 @@ impl Vm {
                 action("menu.auto", self.state.auto_mode == AutoMode::On),
                 action("menu.skip", self.state.skip_mode != SkipMode::Off),
                 action("interlude.advance", false),
+            ],
+            // A statement is intentionally not a button disguised as a
+            // cinematic screen. It exposes only the same escape hatches as
+            // reading (RMenu, backlog, auto/skip) and lets its authored wait
+            // determine when the next subtitle may begin.
+            UiRoute::Custom(route) if route == "statement" => vec![
+                action("chrome.menu", false),
+                action("chrome.backlog", false),
+                action("menu.auto", self.state.auto_mode == AutoMode::On),
+                action("menu.skip", self.state.skip_mode != SkipMode::Off),
             ],
             UiRoute::Custom(_) => vec![action("dismiss", false)],
         }
@@ -2901,6 +2922,8 @@ fn normalize_screen_name(value: &str) -> &str {
         "title" => "title",
         "chapter" | "chapter_select" => "chapter_select",
         "gallery" | "cg" => "gallery",
+        "interlude" => "interlude",
+        "statement" => "statement",
         _ => value,
     }
 }
@@ -2932,7 +2955,12 @@ fn is_standard_route(value: &str) -> bool {
             | "confirm"
             | "day_card"
             | "interlude"
+            | "statement"
     )
+}
+
+fn is_atomic_story_route(route: &str) -> bool {
+    matches!(route, "interlude" | "statement")
 }
 
 fn is_setting_name(value: &str) -> bool {
@@ -3206,6 +3234,42 @@ mod tests {
     }
 
     #[test]
+    fn a_dialogue_hold_exposes_its_exact_wake_deadline_without_a_render_clock() {
+        let mut runtime = vm("aria;\n\
+             entry start;\n\
+             scene start {\n\
+               screen dialogue;\n\
+               narrate \"前の文。\";\n\
+               await advance;\n\
+               clear dialogue;\n\
+               wait 170ms;\n\
+               narrate \"次の文。\";\n\
+               await advance;\n\
+               end;\n\
+             }\n");
+
+        runtime.step(&InputSnapshot::idle(1, 0)).unwrap();
+        let opening = runtime.step(&InputSnapshot::idle(2, 1_000)).unwrap();
+        assert!(opening.view.dialogue.expect("opening prose").complete);
+
+        let mut advance = InputSnapshot::idle(3, 16);
+        advance.intents.push(UiIntent::Activate {
+            id: "dialogue.advance".to_owned(),
+        });
+        let hold = runtime.step(&advance).unwrap();
+        assert_eq!(hold.view.schema_version, UI_VIEW_MODEL_SCHEMA);
+        assert_eq!(hold.view.timed_hold_remaining_ms, Some(170));
+        assert!(hold.view.dialogue.is_none());
+
+        let resumed = runtime.step(&InputSnapshot::idle(4, 170)).unwrap();
+        assert_eq!(resumed.view.timed_hold_remaining_ms, None);
+        assert_eq!(
+            resumed.view.dialogue.expect("following prose").full_text,
+            "次の文。"
+        );
+    }
+
+    #[test]
     fn interlude_is_logged_saveable_and_can_be_released_early() {
         let mut runtime = vm("aria;\n\
              entry start;\n\
@@ -3256,6 +3320,86 @@ mod tests {
         assert_eq!(
             prose.view.dialogue.expect("following subtitle").full_text,
             "次の文章。"
+        );
+    }
+
+    #[test]
+    fn statement_is_atomic_saveable_and_ignores_ordinary_advance_input() {
+        let mut runtime = vm("aria;\n\
+             entry start;\n\
+             scene start {\n\
+               screen statement;\n\
+               narrate \"白い。\";\n\
+               wait 1600ms;\n\
+               screen dialogue;\n\
+               clear dialogue;\n\
+               narrate \"次の文章。\";\n\
+               await advance;\n\
+               end;\n\
+             }\n");
+
+        let opening = runtime.step(&InputSnapshot::idle(1, 0)).unwrap();
+        assert_eq!(opening.view.route, UiRoute::Custom("statement".to_owned()));
+        let dialogue = opening.view.dialogue.expect("statement text");
+        assert!(dialogue.complete);
+        assert_eq!(dialogue.full_page_text, "白い。");
+        assert_eq!(opening.view.timed_hold_remaining_ms, Some(1600));
+        assert_eq!(runtime.backlog().len(), 1);
+        assert!(
+            !opening
+                .view
+                .actions
+                .iter()
+                .any(|action| action.id == "interlude.advance")
+        );
+
+        // The normal reading key never turns a statement into a disguised
+        // button. Its duration belongs to the script, not the player.
+        let held = runtime
+            .step(&InputSnapshot::pressed(2, 40, InputAction::Advance))
+            .unwrap();
+        assert_eq!(held.view.route, UiRoute::Custom("statement".to_owned()));
+        assert_eq!(held.view.timed_hold_remaining_ms, Some(1560));
+
+        let snapshot = runtime.snapshot();
+        let mut restored = Vm::new(runtime.program.clone(), SIZE).unwrap();
+        restored.restore(snapshot).unwrap();
+        let restored_hold = restored.step(&InputSnapshot::idle(3, 100)).unwrap();
+        assert_eq!(
+            restored_hold.view.route,
+            UiRoute::Custom("statement".to_owned())
+        );
+        assert_eq!(restored_hold.view.timed_hold_remaining_ms, Some(1460));
+
+        let prose = restored.step(&InputSnapshot::idle(4, 1460)).unwrap();
+        assert_eq!(prose.view.route, UiRoute::Dialogue);
+        assert_eq!(
+            prose.view.dialogue.expect("following subtitle").full_text,
+            "次の文章。"
+        );
+    }
+
+    #[test]
+    fn stored_boolean_branches_follow_true_false_and_literal_comparisons() {
+        let mut runtime = vm("aria;\n\
+             entry start;\n\
+             state mut gate: Bool = false;\n\
+             scene start {\n\
+               if gate { narrate \"wrong initial branch\"; await advance; } else { gate = true; }\n\
+               if gate {\n\
+                 if gate == true { narrate \"opened\"; await advance; } else { narrate \"wrong equality branch\"; await advance; }\n\
+               } else { narrate \"wrong stored branch\"; await advance; }\n\
+               end;\n\
+             }\n");
+
+        let output = runtime.step(&InputSnapshot::idle(1, 16)).unwrap();
+        assert_eq!(
+            output
+                .view
+                .dialogue
+                .expect("boolean branch prose")
+                .full_text,
+            "opened"
         );
     }
 

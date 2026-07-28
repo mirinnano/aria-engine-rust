@@ -3,12 +3,12 @@
 aria;
 module umikaze.scenario.ja.chapter_01;
 
-// Source: 01_start.md — 284 player-visible beats
+// Source: 01_start.md — 273 player-visible beats
 scene novel_chapter_01 {
   locale "ja-JP";
   persistent flag "canonical_chapter_01_seen" = true;
   unlock chapter "canonical_chapter_01" progress 1;
-  background asset("#223c4c") with fade(260ms);
+  background asset("#506473") with fade(260ms);
   screen day_card;
   choice {
     "DAY 1\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01_story;
@@ -17,7 +17,7 @@ scene novel_chapter_01 {
 
 scene novel_chapter_01_story {
   screen dialogue;
-  background asset("#223c4c") with fade(360ms);
+  background asset("#506473") with fade(360ms);
   wait 180ms;
   clear dialogue;
   screen interlude;
@@ -110,6 +110,11 @@ scene novel_chapter_01_story {
   await advance;
   narrate "聞いたところで、俺にできることなんて何もないしな。";
   await advance;
+  clear dialogue;
+  background asset("#6d706f") with fade(260ms);
+  wait 680ms;
+  background asset("#506473") with fade(360ms);
+  wait 180ms;
   narrate "列車はどんどん進み、小田原に着いた。";
   await advance;
   narrate "ここらへんから、人がどっと増える。";
@@ -200,12 +205,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "俺は箸を止めて、それから何も言えずに、また鯛を口に運んだ。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#526b7c") with fade(360ms);
-
+  wait 620ms;
   narrate "静岡で乗り換え。浜松で乗り換え。";
   await advance;
   narrate "ただただ、レールの上を西へ向かって滑っていく。";
@@ -282,10 +283,9 @@ scene novel_chapter_01_story {
   await advance;
   narrate "俺もいつの間にか、うとうとと船を漕いでいた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  background asset("#766e61") with fade(360ms);
+  wait 280ms;
   narrate "「ねえ。起きてよ」";
   await advance;
   narrate "肩を揺すられて、ハッと目を覚ます。";
@@ -308,12 +308,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "俺たちは急いで荷物をまとめ、列車を降りた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#536d78") with fade(360ms);
-
+  wait 260ms;
   narrate "愛知県に入ってからも、無機質な移動は続いた。";
   await advance;
   narrate "豊橋で特別快速に乗り換え、名古屋という馬鹿でかいターミナルを通過する。";
@@ -372,10 +368,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "列車は、真っ暗な関ヶ原を越えて米原へと向かい始めた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 480ms;
   narrate "米原。新快速に乗り換え。";
   await advance;
   narrate "ここからはJR西日本だ。";
@@ -402,12 +396,9 @@ scene novel_chapter_01_story {
   await advance;
   narrate "ドアが閉まる直前に飛び降り、改札を抜ける。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#3e4c5c") with fade(360ms);
-
+  background asset("#4f4b53") with fade(360ms);
+  wait 280ms;
   narrate "普通のホテルには泊まれない。";
   await advance;
   narrate "身分証を出せば終わりだ。";
@@ -436,10 +427,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "靴を脱ぐことすら忘れて。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 360ms;
   narrate "俺はミオの靴をそっと脱がせ、ベッドの下に置いた。";
   await advance;
   narrate "足が細い。";
@@ -450,12 +439,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "時計は、夜の九時半を回っていた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#405469") with fade(360ms);
-
+  wait 560ms;
   narrate "静寂を切り裂くように、ポケットから着信音が鳴った。";
   await advance;
   narrate "J-PHONEのデフォルト設定のままの、和音のチープな電子音。";
@@ -474,10 +459,11 @@ scene novel_chapter_01_story {
   await advance;
   narrate "俺は小さく息を吐き、終話ボタンを長押しして、電源を切った。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  background asset("#6d706f") with fade(260ms);
+  wait 720ms;
+  background asset("#4f4b53") with fade(360ms);
+  wait 180ms;
   narrate "3時間ほど経った頃、ミオがゆっくりと起き上がった。";
   await advance;
   narrate "「……まだ、逃げてるんだよね、私たち」";
@@ -508,10 +494,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "案外、何も聞かれなかった。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 480ms;
   narrate "20分ほど経った頃。";
   await advance;
   narrate "ドアの前に何かが置かれた音がした。";
@@ -564,10 +548,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "けばけばしい壁紙の密室。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 260ms;
   narrate "飯を食い終わり、俺はミオに脱衣所のハンガーに掛かっていたガウンを渡した。";
   await advance;
   narrate "「ええ……これ大人用じゃん……絶対ぶかぶかだよ……」";
@@ -610,10 +592,8 @@ scene novel_chapter_01_story {
   await advance;
   narrate "ミオは布団を頭の高さまでかけ、そのまま眠りについた。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 640ms;
   narrate "布団にくるまって、財布の中の茶封筒を思い出した。";
   await advance;
   narrate "けばけばしい照明。安っぽい壁紙。";
@@ -624,6 +604,7 @@ scene novel_chapter_01_story {
   await advance;
   chapter "canonical_chapter_01" progress 100;
   clear dialogue;
-  wait 180ms;
+  background asset("#05070b") with fade(480ms);
+  wait 480ms;
   jump chapter_select_ja;
 }

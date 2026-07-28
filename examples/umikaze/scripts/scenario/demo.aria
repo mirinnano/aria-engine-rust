@@ -10,7 +10,13 @@ use "ja-JP/chapter-02.aria";
 use "ja-JP/chapter-03.aria";
 use "ja-JP/chapter-04.aria";
 
-scene chapter_select_ja {
+// The imported canonical chapters all return to `chapter_select_ja`.  Keep
+// their prose single-sourced, but remember when that return is specifically
+// the end of the trial's final day.  A normal (non-persistent) state is
+// intentional: reopening the game must begin at its title, not its endpoint.
+state mut demo_day4_in_progress: Bool = false;
+
+scene demo_chapter_select {
   screen chapter_select;
   background asset("#102b38") with wipe(260ms);
   choice {
@@ -18,8 +24,21 @@ scene chapter_select_ja {
     "DAY 1" => novel_chapter_01;
     "DAY 2" => novel_chapter_02;
     "DAY 3" => novel_chapter_03;
-    "DAY 4" => novel_chapter_04;
+    "DAY 4" => demo_day4;
   }
+}
+
+scene demo_day4 {
+  demo_day4_in_progress = true;
+  jump novel_chapter_04;
+}
+
+scene chapter_select_ja {
+  if demo_day4_in_progress {
+    demo_day4_in_progress = false;
+    jump novel_chapter_04_complete;
+  }
+  jump demo_chapter_select;
 }
 
 // The close lands after the rain-room scene, before the later escalation.
@@ -29,7 +48,7 @@ scene novel_chapter_04_complete {
   background asset("#0f2f39") with fade(720ms);
   screen demo_end;
   choice {
-    "もう一度読む" => chapter_select_ja;
+    "もう一度読む" => demo_chapter_select;
     "タイトルへ戻る" => start;
   }
 }

@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 
 const edition = process.env.VITE_UMIKAZE_EDITION === "demo" ? "demo" : "full";
-const editionModule = (name: "scene-assets" | "chapter-preview") => fileURLToPath(
+const editionModule = (name: "scene-assets" | "chapter-preview" | "stage-mapping") => fileURLToPath(
   new URL(`./src/${name}.${edition}.ts`, import.meta.url),
 );
 
@@ -17,6 +17,7 @@ export default defineConfig({
     alias: {
       "#scene-assets": editionModule("scene-assets"),
       "#chapter-preview": editionModule("chapter-preview"),
+      "#stage-mapping": editionModule("stage-mapping"),
     },
   },
   server: {

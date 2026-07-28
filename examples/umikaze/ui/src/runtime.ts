@@ -780,10 +780,13 @@ export async function bootPresentation(
     // they do not turn a static VM into a perpetual render clock.
     if (sceneIsAnimating(output.scene)) return 16;
     if (output.view.dialogue && !output.view.dialogue.complete) return 16;
-    // An interlude is the one non-typewriter surface with an authored VM
-    // delay. Keep its clock deliberately coarse and bounded; once it moves to
-    // the next route this branch disappears and the static UI sleeps again.
-    if (routeName(output.view.route) === "interlude") return 32;
+    // A blank dialogue field can itself be an authored wait. Core exposes the
+    // exact remaining duration, so one timeout wakes the VM after the hold;
+    // do not turn the entire hold into a rAF / 32ms polling loop. Input wakes
+    // earlier and cancels this timeout through `wake()`.
+    if (output.view.timed_hold_remaining_ms !== null) {
+      return Math.max(17, output.view.timed_hold_remaining_ms);
+    }
     if (output.view.actions.some((action) => (
       action.active && (action.id === "menu.auto" || action.id === "menu.skip")
     ))) return 32;
@@ -855,13 +858,15 @@ export async function bootPresentation(
   window.addEventListener("gamepaddisconnected", onGamepadConnection);
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || isEditableTarget(event.target)) return;
+    if (event.defaultPrevented || event.isComposing || isEditableTarget(event.target)) return;
     const view = activeOutput?.view;
     const activeRoute = view ? routeName(view.route) : "";
     const dayCardRoute = activeRoute === "day_card";
     const interludeRoute = activeRoute === "interlude";
+    const statementRoute = activeRoute === "statement";
     const readingRoute = dayCardRoute
       || interludeRoute
+      || statementRoute
       || activeRoute === "dialogue"
       || (activeRoute === "chapter_select" && Boolean(view?.dialogue) && view?.choices.length === 0);
     const galleryViewer = activeRoute === "gallery" && Boolean(view?.gallery_viewer);
@@ -873,10 +878,16 @@ export async function bootPresentation(
       event.stopPropagation();
       return;
     }
-    if (
-      (event.key === "Enter" || (event.key === " " && !visibleChromeControl))
-      && readingRoute
-    ) {
+    const advanceKey = event.key === "Enter"
+      || (!visibleChromeControl && (
+        event.code === "Space"
+        || event.key === " "
+        // Older WebKit builds still report this legacy value. Treat it as
+        // the same physical Space key so the desktop player never becomes
+        // keyboard-layout dependent.
+        || event.key === "Spacebar"
+      ));
+    if (advanceKey && readingRoute) {
       // A click can leave focus on a now-hidden chrome button. Own the
       // advance key at capture phase so Enter never accidentally activates
       // that stale DOM control instead of turning the next line. Space still
@@ -884,6 +895,11 @@ export async function bootPresentation(
       // an accessible keyboard route to the top-edge tools.
       event.preventDefault();
       event.stopPropagation();
+      // A statement has no implicit "next" affordance. It is a rare line
+      // that the story finishes delivering itself; keyboard input remains
+      // available for H/Escape below, but Enter and Space must not shorten
+      // its authored hold.
+      if (statementRoute) return;
       if (!event.repeat) {
         // A day card is deliberately a choice-shaped pause, not a dialogue
         // page. Its sole action enters the chapter; sending dialogue.advance
@@ -900,7 +916,10 @@ export async function bootPresentation(
       }
       return;
     }
-    if (command === "h" && readingRoute) {
+    // KeyH is the physical key. `key` is retained for virtual keyboards,
+    // while `code` keeps the LOG shortcut usable in native WebKit with a
+    // Japanese IME or a non-Latin keyboard layout selected.
+    if ((command === "h" || event.code === "KeyH") && readingRoute) {
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) {
@@ -951,7 +970,13 @@ export async function bootPresentation(
       }
       return null;
     };
-    const isReadingRoute = () => readingAdvanceAction() !== null;
+    const isReadingRoute = () => {
+      const view = activeOutput?.view;
+      if (!view) return false;
+      const route = routeName(view.route);
+      return route === "statement"
+        || readingAdvanceAction() !== null;
+    };
     const galleryViewerActive = () => {
       const view = activeOutput?.view;
       return Boolean(view && routeName(view.route) === "gallery" && view.gallery_viewer);
@@ -973,7 +998,10 @@ export async function bootPresentation(
     for (const pad of pads) {
       const commands: Array<[number, () => void]> = [
         [0, () => {
-          const id = readingAdvanceAction() ?? focusedAction();
+          // Gamepad A follows the exact same contract as Enter: it may enter
+          // a day card or advance a subtitle/interlude, but does nothing on
+          // a story-owned automatic statement.
+          const id = readingAdvanceAction() ?? (isReadingRoute() ? null : focusedAction());
           if (id) queued.push({ kind: "activate", id });
         }],
         [1, () => queued.push({ kind: "activate", id: isReadingRoute() ? "chrome.menu" : "dismiss" })],
@@ -1154,11 +1182,14 @@ export async function bootPresentation(
         }
         if (nextDelay === null && needsBlankDialogueBootstrap(output) && !blankDialogueBootstrapQueued) {
           blankDialogueBootstrapQueued = true;
-          // `scheduleTick(0)` is one rAF at a semantic transition, never a
-          // standing animation loop. It lets the following `narrate` or
-          // interlude instruction become visible without asking the reader
-          // for an accidental second click.
-          nextDelay = 0;
+          // This is a semantic VM turn, not a visual frame.  Scheduling it
+          // just above the rAF threshold makes it a one-shot timer instead
+          // of depending on a paint callback: WebKit can defer rAF while a
+          // newly opened native window is settling or briefly obscured.
+          // The following `narrate` or interlude therefore appears without
+          // an accidental second click, while a genuine authored timed hold
+          // remains governed by its exact timeout above.
+          nextDelay = 17;
         }
       }
       else hooks.onStatus("The record has ended.");

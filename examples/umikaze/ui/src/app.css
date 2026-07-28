@@ -108,8 +108,12 @@ button { -webkit-tap-highlight-color: transparent; }
 .scene-photograph--rain::after { background: rgb(3 10 16 / 22%); }
 .scene-photograph--tone-night::after { background: rgb(1 8 15 / 48%); }
 .scene-photograph--tone-autumn::after { background: rgb(23 18 10 / 34%); }
+.scene-photograph--ferry-fog::after { background: rgb(12 23 25 / 20%); }
+.scene-photograph--hotel-blue::after { background: rgb(9 12 19 / 31%); }
+.scene-photograph--train-grey::after { background: rgb(7 12 16 / 30%); }
 .scene-photograph--tone-blackout::after,
-.scene-photograph--tone-whiteout::after { background: transparent; }
+.scene-photograph--tone-whiteout::after,
+.scene-photograph--tone-stillness::after { background: transparent; }
 
 .atmosphere {
   z-index: 2;
@@ -150,7 +154,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .scene-tone-photograph .atmosphere, .scene-tone-platform .atmosphere { background: rgb(2 7 10 / 29%); }
 .scene-tone-rain .atmosphere, .scene-tone-night .atmosphere { background: rgb(2 7 10 / 34%); }
 .scene-tone-blackout .atmosphere,
-.scene-tone-whiteout .atmosphere { display: none; }
+.scene-tone-whiteout .atmosphere,
+.scene-tone-stillness .atmosphere { display: none; }
 
 /* Title and first-light own their tonal treatment in StageBackdrop. Keeping
    the generic photograph wash beneath it creates two unnecessary full-screen

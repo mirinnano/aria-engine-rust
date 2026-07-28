@@ -3,7 +3,7 @@
 aria;
 module umikaze.scenario.ja.chapter_04;
 
-// Source: 04_day4.md — 121 player-visible beats
+// Source: 04_day4.md — 117 player-visible beats
 scene novel_chapter_04 {
   locale "ja-JP";
   persistent flag "canonical_chapter_04_seen" = true;
@@ -26,6 +26,9 @@ scene novel_chapter_04_story {
   screen dialogue;
   clear dialogue;
   wait 220ms;
+  clear dialogue;
+  background asset("#4f4b53") with fade(360ms);
+  wait 280ms;
   narrate "肩を揺すられて、目を開けた。";
   await advance;
   narrate "黄ばんだ天井の下に、ミオの顔があった。";
@@ -80,12 +83,9 @@ scene novel_chapter_04_story {
   await advance;
   narrate "最後に、蓋のロックが外れる音だけがした。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#526b7c") with fade(360ms);
-
+  background asset("#766e61") with fade(360ms);
+  wait 280ms;
   narrate "洗濯を終え、駅へ向かう。";
   await advance;
   narrate "自販機で温かいミルクティーを二つ買い、一つをミオに渡した。";
@@ -118,6 +118,9 @@ scene novel_chapter_04_story {
   await advance;
   narrate "「おい、着いたぞ」";
   await advance;
+  clear dialogue;
+  background asset("#244e5a") with fade(360ms);
+  wait 280ms;
   narrate "田儀駅のホームに降りる。";
   await advance;
   narrate "ホームの先には砂浜があり、その向こうで海が鈍く光っていた。";
@@ -164,12 +167,11 @@ scene novel_chapter_04_story {
   await advance;
   narrate "砂浜から階段へ上がっても、手はそのままだった。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#536d78") with fade(360ms);
-
+  wait 620ms;
+  clear dialogue;
+  background asset("#766e61") with fade(360ms);
+  wait 280ms;
   narrate "やってきた気動車に乗り込み、西へ向かう。";
   await advance;
   narrate "車内の暖房で、指の間に汗が溜まった。それでも、どちらからともなく手を外さなかった。";
@@ -186,10 +188,8 @@ scene novel_chapter_04_story {
   await advance;
   narrate "俺は窓の外を見た。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 480ms;
   narrate "『次は、益田――』";
   await advance;
   narrate "気動車がブレーキ音を立て、車掌の声が車内に流れた。";
@@ -238,12 +238,9 @@ scene novel_chapter_04_story {
   await advance;
   narrate "雨はすぐに、髪と袖を重くした。";
   await advance;
-  narrate "……";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#304a57") with fade(360ms);
-
+  background asset("#394857") with fade(360ms);
+  wait 280ms;
   narrate "ホテルへ戻る頃には、二人とも濡れていた。";
   await advance;
   narrate "「先、風呂入れ」";
@@ -282,9 +279,7 @@ scene novel_chapter_04_story {
   await advance;
   chapter "canonical_chapter_04" progress 100;
   clear dialogue;
-  wait 180ms;
-  // The full record and the content-limited trial supply this project-owned
-  // continuation separately. Keeping the handoff outside the prose lets the
-  // trial stop here without changing a single manuscript beat.
-  jump novel_chapter_04_complete;
+  background asset("#05070b") with fade(480ms);
+  wait 480ms;
+  jump chapter_select_ja;
 }

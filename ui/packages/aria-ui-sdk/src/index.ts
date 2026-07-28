@@ -6,7 +6,7 @@
  * consume the deterministic WASM VM without recreating a renderer DSL.
  */
 
-export const UI_VIEW_MODEL_SCHEMA = 6 as const;
+export const UI_VIEW_MODEL_SCHEMA = 7 as const;
 
 export type StandardRoute =
   | "setup"
@@ -115,6 +115,8 @@ export interface UiViewModel {
   route_stack: UiRoute[];
   game: { id: string; locale: string };
   dialogue: DialogueView | null;
+  /** Remaining VM-owned story hold, or null when the surface may sleep. */
+  timed_hold_remaining_ms: number | null;
   choices: ChoiceView[];
   actions: ActionView[];
   settings: SettingsView;

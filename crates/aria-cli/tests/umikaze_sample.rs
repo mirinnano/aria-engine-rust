@@ -212,9 +212,18 @@ fn demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four() {
     let card = activate(&mut vm, 3, "choice:4");
     assert_eq!(card.view.route, UiRoute::Custom("day_card".to_owned()));
     let mut output = activate(&mut vm, 4, "choice:0");
-    for sequence in 5..700 {
+    // Timed breaths are story-owned time, not extra reader inputs.  Drive
+    // those holds forward in one bounded idle step; otherwise this test would
+    // mistake intentional 170ms silences for hundreds of missing advances.
+    for sequence in 5..1_500 {
         if output.view.route == UiRoute::DemoEnd {
             break;
+        }
+        if output.view.route != UiRoute::Custom("interlude".to_owned())
+            && output.view.timed_hold_remaining_ms.is_some()
+        {
+            output = vm.step(&InputSnapshot::idle(sequence, 250)).unwrap();
+            continue;
         }
         let action = if output.view.route == UiRoute::Custom("interlude".to_owned()) {
             "interlude.advance"

@@ -21,6 +21,8 @@ fn main() {
     // build script only watches tauri.conf.json, so a fresh React/package build
     // could otherwise leave `tauri dev` serving an obsolete (or empty) asset
     // snapshot. Keep every packaged web asset in Cargo's dependency graph.
-    watch_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dist/web"));
+    let frontend_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dist/build");
+    watch_tree(&frontend_root.join("full/web"));
+    watch_tree(&frontend_root.join("demo/web"));
     tauri_build::build()
 }

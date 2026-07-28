@@ -9,17 +9,18 @@
 | 区分 | 実行 | 合格条件 |
 | --- | --- | --- |
 | 整形 | `cargo fmt --all -- --check` | Rust差分が標準整形済み |
-| Core | `cargo test -p aria-core` | 字幕分割、保存、履歴、設定、CG、断章を含む全テスト成功 |
-| Scenario/CLI | `cargo test -p aria-cli --no-default-features --test umikaze_sample` | 通常版の章導線と体験版のDAY 0–4境界が成功 |
+| Core | `cargo test --locked -p aria-core` | 字幕分割、保存、履歴、設定、CG、断章を含む全テスト成功 |
+| Scenario/CLI | `cargo test --locked -p aria-cli --no-default-features --test umikaze_sample` | 通常版の章導線と体験版のDAY 0–4境界が成功 |
 | 正本照合 | `aria import-novel … --verify` | `Desktop/Novel/src` とDay 0–10の本文・話者・順序が一致 |
 | 通常Web | `npm run prepare:desktop` → `npm test` | タイトル、章扉、読書、RMenu、設定、保存、履歴、ギャラリーの25件以上が成功 |
-| 体験版Web | `npm run prepare:demo` → `UMIKAZE_DEMO=true npm test -- --grep 'opening arc'` | DAY 4終端、DAY 5以降の不在、体験版保存名が確認できる |
+| 体験版Web | `npm run prepare:demo` → `UMIKAZE_DEMO=true npm test -- --grep 'opening arc|offline PWA'` | DAY 4終端、DAY 5以降の不在、体験版保存名、オフライン再起動が確認できる |
 | 静止性能 | 通常/体験版のPlaywright性能テスト | タイトルが継続的な`requestAnimationFrame`を要求しない |
-| Native save | `cargo test --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml` | 自動保存が手動スロットと別ディレクトリである |
+| Native save | `cargo test --locked --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml` | 自動保存が手動スロットと別ディレクトリである |
 
-Playwrightには公開済みの`dist/web`を配信するローカルHTTPサーバーが必要である。
-CIでは`python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/web`
-をバックグラウンドで開始する。
+Playwrightには対象版の公開済みbundleを配信するローカルHTTPサーバーが必要である。
+通常版は`examples/umikaze/dist/build/full/web`、体験版は
+`examples/umikaze/dist/build/demo/web`を配信する。二つの出力は共存するため、検証順序で
+成果物がすり替わることはない。
 
 ## 手動リリース候補確認
 

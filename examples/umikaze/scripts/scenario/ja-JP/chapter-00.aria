@@ -3,7 +3,7 @@
 aria;
 module umikaze.scenario.ja.chapter_00;
 
-// Source: 00_init.md — 271 player-visible beats
+// Source: 00_init.md — 265 player-visible beats
 scene novel_chapter_00 {
   locale "ja-JP";
   persistent flag "canonical_chapter_00_seen" = true;
@@ -111,12 +111,15 @@ scene novel_chapter_00_story {
   await advance;
   narrate "天井を見た。";
   await advance;
-  narrate "白い。";
-  await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  screen statement;
+  background asset("#6d706f") with fade(260ms);
+  narrate "白い。";
+  wait 1600ms;
+  background asset("#3d4655") with fade(360ms);
+  screen dialogue;
+  clear dialogue;
+  wait 180ms;
   narrate "いつの間にか、寝ていた。";
   await advance;
   narrate "そして、いつの間にか、目を覚ましていた。";
@@ -141,11 +144,8 @@ scene novel_chapter_00_story {
   await advance;
   narrate "さっきより、塩気が強いって思うのは、なんでだろ...";
   await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#6d6b57") with fade(360ms);
+  wait 620ms;
   narrate "桜は散り、幾度の雨が降る季節のこと。";
   await advance;
   narrate "じめじめした部屋で、私は今日も寝ていた。";
@@ -166,11 +166,8 @@ scene novel_chapter_00_story {
   await advance;
   narrate "「暇だなぁ」";
   await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#375a61") with fade(360ms);
+  wait 520ms;
   narrate "外ではうるさく蝉が鳴いている。";
   await advance;
   narrate "クーラーから冷たい風が吹き、とても涼しい。";
@@ -199,11 +196,8 @@ scene novel_chapter_00_story {
   await advance;
   narrate "また、寝よう...";
   await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  background asset("#2f4555") with fade(360ms);
+  wait 620ms;
   narrate "あんなにうるさかった蝉が消え、少し涼しくなった頃。";
   await advance;
   narrate "また、私は寝ていた。";
@@ -414,12 +408,7 @@ scene novel_chapter_00_story {
   await advance;
   narrate "俺はノートを閉じ、自分の鞄の底へ押し込んだ。";
   await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
-  clear dialogue;
-  background asset("#2f4555") with fade(360ms);
   screen interlude;
   narrate "9月20日　学校　朝";
   wait 880ms;
@@ -550,10 +539,8 @@ scene novel_chapter_00_story {
   await advance;
   narrate "俺は文庫本を受け取った。";
   await advance;
-  narrate "...";
-  await advance;
   clear dialogue;
-  wait 420ms;
+  wait 560ms;
   narrate "家に帰る。";
   await advance;
   narrate "相変わらず、白い壁と、重たい勉強机が俺を待っている。";
@@ -592,6 +579,7 @@ scene novel_chapter_00_story {
   await advance;
   chapter "canonical_chapter_00" progress 100;
   clear dialogue;
-  wait 180ms;
+  background asset("#05070b") with fade(480ms);
+  wait 480ms;
   jump chapter_select_ja;
 }

@@ -13,11 +13,12 @@ use crate::vm::{AutoMode, SettingsState, SkipMode};
 
 /// Version of the JSON view contract consumed by game presentation packages.
 ///
-/// Schema 6 pages subtitles in Core, exposes replayable backlog page IDs,
-/// persists semantic gallery/confirmation/interlude state, and carries the
-/// reader's subtitle-opacity/stage-effects preferences without coupling a
-/// host to DOM layout.
-pub const UI_VIEW_MODEL_SCHEMA: u16 = 6;
+/// Schema 7 pages subtitles in Core, exposes replayable backlog page IDs,
+/// persists semantic gallery/confirmation/interlude state, and gives a host
+/// the exact remaining duration of an authored timed hold. That last value
+/// lets a static WebView use one timer rather than keep an animation clock
+/// alive while dialogue is deliberately absent.
+pub const UI_VIEW_MODEL_SCHEMA: u16 = 7;
 
 /// Standard surfaces understood by the engine. A frontend may render a
 /// project-specific surface for [`Self::Custom`] without changing the VM
@@ -211,6 +212,10 @@ pub struct UiViewModel {
     pub route_stack: Vec<UiRoute>,
     pub game: GameView,
     pub dialogue: Option<DialogueView>,
+    /// A story-authored timer currently owns the VM. `None` means the host
+    /// may sleep until input, resize, or a distinct active visual transition.
+    #[serde(default)]
+    pub timed_hold_remaining_ms: Option<u32>,
     pub choices: Vec<ChoiceView>,
     pub actions: Vec<ActionView>,
     pub settings: SettingsState,

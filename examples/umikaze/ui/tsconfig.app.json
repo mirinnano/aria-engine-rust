@@ -14,7 +14,8 @@
     "baseUrl": ".",
     "paths": {
       "#scene-assets": ["./src/scene-assets.full.ts"],
-      "#chapter-preview": ["./src/chapter-preview.full.ts"]
+      "#chapter-preview": ["./src/chapter-preview.full.ts"],
+      "#stage-mapping": ["./src/stage-mapping.full.ts"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

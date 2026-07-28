@@ -6,11 +6,14 @@ import trainMotionSummer from "./assets/scenes/train-motion-summer-v1.webp";
 import stationNightPass from "./assets/scenes/station-night-pass-v1.webp";
 import railWindowSunset from "./assets/scenes/rail-window-sunset-v1.webp";
 import shoreStormSunset from "./assets/scenes/shore-storm-sunset-v1.webp";
+import platformSeaDawn from "./assets/scenes/platform-sea-dawn-v1.webp";
+import hotelCorridorBlue from "./assets/scenes/hotel-corridor-blue-v1.webp";
 import type { SceneAsset, StagePhoto } from "./scene-assets.types";
 
-// The browser demo is deliberately a closed opening arc.  It reuses its own
-// eight photographs for neutral system states instead of shipping visual
-// material from later chapters merely to decorate an unreachable route.
+// The browser demo is deliberately a closed opening arc. It reuses its
+// approved opening-arc photographs for neutral system states instead of
+// shipping visual material from later chapters merely to decorate an
+// unreachable route.
 export const sceneSources: Record<string, string> = {
   coast: coastRoad,
   ward: hospitalCorridor,
@@ -20,6 +23,8 @@ export const sceneSources: Record<string, string> = {
   station: stationNightPass,
   "rail-sunset": railWindowSunset,
   shore: shoreStormSunset,
+  "north-platform": platformSeaDawn,
+  "hotel-blue": hotelCorridorBlue,
 };
 
 export const sceneAssetByTone: Record<string, SceneAsset> = {
@@ -45,12 +50,17 @@ export const sceneAssetByTone: Record<string, SceneAsset> = {
   night: { source: sceneSources.setup, name: "train-motion" },
   clear: { source: sceneSources.school, name: "summer-window" },
   harbor: { source: sceneSources.coast, name: "coast" },
+  "north-platform": { source: sceneSources["north-platform"], name: "north-platform" },
+  "hotel-blue": { source: sceneSources["hotel-blue"], name: "hotel-blue" },
   blackout: { name: "blackout", solid: "#05070b" },
   whiteout: { name: "whiteout", solid: "#ded7c9" },
+  stillness: { name: "stillness", solid: "#6d706f" },
 };
 
 export const stagePhotoByKind: Record<string, StagePhoto> = {
-  title: { source: sceneSources.school, name: "window" },
+  // Station Night Pass preserves the nocturnal title register without
+  // leaking the later chapter's night-window photograph into the demo.
+  title: { source: sceneSources.station, name: "night-motion" },
   setup: { source: sceneSources.setup, name: "motion" },
   record: { source: sceneSources.ward, name: "understructure" },
 };
