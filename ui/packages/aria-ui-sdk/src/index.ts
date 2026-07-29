@@ -140,6 +140,9 @@ export interface SceneFrame {
   // Scene commands are intentionally opaque to the React UI. They go
   // straight to the shared scene renderer.
   commands: unknown[];
+  /** Finite VM-owned scene transition. The Web presentation may project it
+   * as a lightweight veil while Native consumes the same frame protocol. */
+  transition?: { kind: string; progress: number } | null;
 }
 
 export interface RuntimeCommand {

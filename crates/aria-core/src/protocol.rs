@@ -268,6 +268,7 @@ fn is_default_sprite_fit(value: &SpriteFit) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum TransitionKind {
     Fade,
+    FadeThroughBlack,
     CrossFade,
     WipeLeft,
     WipeRight,

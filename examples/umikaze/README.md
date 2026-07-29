@@ -19,17 +19,21 @@ Its React presentation package at [`ui`](ui) separates story data from the
 title rail, reading panel, right/bottom sheets, settings sliders, backlog,
 chapter cards, and gallery. The package receives only the semantic view model
 from the shared WASM runtime and is also embedded by the Tauri desktop shell;
-there is no second native layout implementation. The text-free sea-fog,
-paper-grain, wave-divider, and chapter-ornament raster assets complement the
-existing seaside scene without baking any player-facing words into images.
-It deliberately uses color backgrounds and vector-like rectangles, so the
-project can be compiled and replayed without shipping the original artwork.
+there is no second native layout implementation. The title and system screens
+remain text-first, while the reading stage uses static, text-free scene
+photographs from the shared `assets/bg/scenes` catalogue. Native PAK entries and
+Web imports use the same `assets/...` logical names, so a location change does
+not fall back to a frontend-specific colour heuristic.
 The bundled Noto Sans CJK JP face carries the reader and operational text,
 while M PLUS 1 Code is reserved for compact record metadata. This keeps the
 same project runnable on desktop and web without relying on a host font.
 Both fonts are distributed under the SIL Open Font License; see
 [`licenses/NotoSansCJKJP-OFL.txt`](licenses/NotoSansCJKJP-OFL.txt) and
 [`licenses/MPLUS1Code-OFL.txt`](licenses/MPLUS1Code-OFL.txt).
+
+The new-install reading default is 48ms per grapheme. A save or an explicit
+setting can choose another speed; the chapter sources never overwrite that
+preference after startup.
 
 ## 日本語シナリオ
 
@@ -43,10 +47,12 @@ Both fonts are distributed under the SIL Open Font License; see
 
 演出規則は意図的に小さい。各日の開始はプレイヤーが進める日付カード、原稿内の太字
 日時は短い断章になる。通常の段落空きは、直前の文章をプレイヤーが送った**後**に字幕を
-消す170msの息継ぎへ変換する。文末が `…`／`...`／`――` の段落だけは320msに伸ばすため、
-読み進め操作を奪わず、言葉が消えた直後だけに余白が残る。単独の `...`／`……` は字幕を
-消した420msの沈黙になる。`pause ash <ms>` は原稿にだけ書ける明示指示で、灰色の無景色へ
-260msで退き、指定時間を保持したのち、その時点の背景へ360msで戻る。
+消す `wait breath` へ変換する。通常の文末の息は220ms、空行をまたぐ段落の息は最低300ms、
+文末が `…`／`...`／`――` のときは480msに伸ばす。息継ぎには160msの最小床があり、それを
+越えた後なら次の入力で解放できる。
+単独の `...`／`……` は字幕を消した620msの硬い沈黙になる。`pause ash <ms>` は原稿にだけ
+書ける明示指示で、灰色の無景色へ260msで退き、指定時間を保持したのち、その時点の背景へ
+360msで戻る。章や場所の移動は `fade_through_black(640ms)` と黒い保持を通る。
 
 Day 0〜4は先頭に `pacing explicit` を置く。この章ではMarkdownの空行を時間へ変換しない。
 代わりに、作者が必要な箇所だけ `pause breath <ms>`／`pause drift <ms>`（字幕を消して自動で

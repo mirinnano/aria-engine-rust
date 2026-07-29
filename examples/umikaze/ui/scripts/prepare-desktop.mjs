@@ -175,6 +175,8 @@ function assertDemoPresentationBoundary() {
     "shore-storm-sunset-v1-",
     "platform-sea-dawn-v1-",
     "hotel-corridor-blue-v1-",
+    "sannomiya-rain-platform-v1-",
+    "okayama-rail-window-v1-",
   ];
   for (const text of forbiddenText) {
     if (contains(text)) throw new Error(`demo presentation leaks later chapter text: ${text}`);

@@ -208,6 +208,9 @@ pub enum StatementKind {
     AwaitAdvance,
     Wait {
         duration_ms: u32,
+        /// A breath is a soft, player-releasable pause after a minimum floor.
+        /// Ordinary `wait` remains an authored hard hold.
+        release_after_ms: Option<u32>,
     },
     Background {
         asset: AssetRef,
@@ -421,7 +424,8 @@ pub struct RectSpec {
 pub struct Transition {
     pub span: SourceSpan,
     pub kind: TransitionKind,
-    /// `fade` and `wipe` may leave duration to a later theme/default stage.
+    /// `fade`, `fade_through_black`, and `wipe` may leave duration to a later
+    /// theme/default stage.
     /// `mask` requires an explicit duration syntactically.
     pub duration_ms: Option<u32>,
 }
@@ -429,6 +433,10 @@ pub struct Transition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionKind {
     Fade,
+    /// A location change that goes through a dark field before the new
+    /// photograph is revealed.  This is distinct from a short authored fade
+    /// used by statements and colour grades.
+    FadeThroughBlack,
     Wipe,
     Mask,
 }
@@ -1164,9 +1172,17 @@ impl Parser {
             self.expect_statement_end("expected ';' after await advance")?;
             StatementKind::AwaitAdvance
         } else if self.consume_keyword("wait") {
+            let release_after_ms = if self.consume_keyword("breath") {
+                Some(160)
+            } else {
+                None
+            };
             let duration_ms = self.parse_duration_ms()?;
             self.expect_statement_end("expected ';' after wait statement")?;
-            StatementKind::Wait { duration_ms }
+            StatementKind::Wait {
+                duration_ms,
+                release_after_ms,
+            }
         } else if self.consume_keyword("background") {
             self.parse_background()?
         } else if self.consume_keyword("hide") {
@@ -1332,10 +1348,14 @@ impl Parser {
         let token = self.next()?;
         let kind = match token.text.as_str() {
             "fade" => TransitionKind::Fade,
+            "fade_through_black" | "fade-through-black" => TransitionKind::FadeThroughBlack,
             "wipe" => TransitionKind::Wipe,
             "mask" => TransitionKind::Mask,
             _ => {
-                self.error_at(&token, "expected fade, wipe, or mask transition");
+                self.error_at(
+                    &token,
+                    "expected fade, fade_through_black, wipe, or mask transition",
+                );
                 return None;
             }
         };
@@ -2320,6 +2340,45 @@ scene start {\n\
         assert!(
             matches!(body[5].kind, StatementKind::Volume { value, .. } if (value - 0.75).abs() < f64::EPSILON)
         );
+    }
+
+    #[test]
+    fn parses_breath_waits_and_fade_through_black_as_first_class_story_syntax() {
+        let parsed = parse(
+            "main.aria",
+            "aria;\nentry start;\nscene start {\n\
+             background asset(\"bg/scenes/platform.webp\") with fade_through_black(640ms);\n\
+             wait breath 300ms;\n\
+             wait 220ms;\n\
+             end;\n}\n",
+        );
+        assert!(!parsed.has_errors(), "{:#?}", parsed.diagnostics);
+        let body = &parsed.module.unwrap().scenes[0].body;
+        assert!(matches!(
+            body[0].kind,
+            StatementKind::Background {
+                transition: Some(Transition {
+                    kind: TransitionKind::FadeThroughBlack,
+                    duration_ms: Some(640),
+                    ..
+                }),
+                ..
+            }
+        ));
+        assert!(matches!(
+            body[1].kind,
+            StatementKind::Wait {
+                duration_ms: 300,
+                release_after_ms: Some(160),
+            }
+        ));
+        assert!(matches!(
+            body[2].kind,
+            StatementKind::Wait {
+                duration_ms: 220,
+                release_after_ms: None,
+            }
+        ));
     }
 
     #[test]

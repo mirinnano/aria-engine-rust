@@ -12,7 +12,7 @@ const INPUTS: &str = include_str!("../../../compatibility/v3/vertical-slice-inpu
 // This baseline is updated only after Native/Web parity and bytecode
 // encode/decode equality are asserted above.
 const ARIA_SINGLE_LANGUAGE_VERTICAL_SLICE_SNAPSHOT_HASH: &str =
-    "35db88d1ec0c4299bf6f5ce1ba8f94a83ad5485c72ccc9ca9aa6bb7ca8124af3";
+    "342e5c445a120253a38af7ac920340d4cc2eb30a0184352b2fca058926c1afff";
 
 #[test]
 fn native_and_web_replay_hashes_match_the_single_language_golden_corpus() {

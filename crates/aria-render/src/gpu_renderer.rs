@@ -943,6 +943,25 @@ fn transition_overlay(
         },
         // A mask-specific texture will replace this fade fallback once the
         // declarative mask asset is represented in the renderer protocol.
+        TransitionKind::FadeThroughBlack => {
+            const DARK_HOLD_RATIO: f32 = 180.0 / 640.0;
+            let alpha = if progress <= DARK_HOLD_RATIO {
+                255
+            } else {
+                (((1.0 - (progress - DARK_HOLD_RATIO) / (1.0 - DARK_HOLD_RATIO)).clamp(0.0, 1.0))
+                    * 255.0)
+                    .round() as u8
+            };
+            TransitionOverlay {
+                bounds: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width,
+                    height,
+                },
+                alpha,
+            }
+        }
         TransitionKind::Fade | TransitionKind::CrossFade | TransitionKind::Mask(_) => {
             TransitionOverlay {
                 bounds: Rect {
@@ -1348,5 +1367,35 @@ mod tests {
         assert!(vertices[0].position[0] > -1.0);
         assert_eq!(vertices[0].position[1], 1.0);
         assert_eq!(vertices[2].position[1], -1.0);
+    }
+
+    #[test]
+    fn fade_through_black_holds_dark_before_revealing_the_new_scene() {
+        let frame = SceneFrame {
+            frame_number: 1,
+            logical_size: LogicalSize {
+                width: 1280,
+                height: 720,
+            },
+            viewport: Default::default(),
+            clear_color: Color::BLACK,
+            commands: Vec::new(),
+            transition: None,
+            effects: Vec::new(),
+        };
+        let kind = TransitionKind::FadeThroughBlack;
+        assert_eq!(
+            transition_overlay(&frame, kind.clone(), 0.0).unwrap().alpha,
+            255
+        );
+        assert_eq!(
+            transition_overlay(&frame, kind.clone(), 0.25)
+                .unwrap()
+                .alpha,
+            255
+        );
+        let reveal = transition_overlay(&frame, kind.clone(), 0.7).unwrap().alpha;
+        assert!(reveal < 255 && reveal > 0);
+        assert!(transition_overlay(&frame, kind, 1.0).is_none());
     }
 }

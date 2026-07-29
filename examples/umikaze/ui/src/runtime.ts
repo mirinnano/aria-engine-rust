@@ -1134,14 +1134,19 @@ export async function bootPresentation(
         await audio.consume(output.audio);
       }
 
-      if (sceneRendererEnabled) {
-        const nextSceneFingerprint = sceneFingerprint(output.scene);
-        if (sceneNeedsDraw || nextSceneFingerprint !== lastSceneFingerprint) {
-          await renderer.submit(output.scene);
-          lastSceneFingerprint = nextSceneFingerprint;
-          sceneNeedsDraw = false;
-        }
+      // Keep one semantic scene signature even when the presentation owns
+      // the stage in DOM. The photograph/veil layer still needs the finite
+      // transition frames; otherwise a fade-through-black would publish its
+      // first opaque frame and then remain there because the view itself did
+      // not change. A quiet scene keeps the same signature, so this does not
+      // reintroduce a render clock for static title/menu screens.
+      const nextSceneFingerprint = sceneFingerprint(output.scene);
+      const sceneChanged = nextSceneFingerprint !== lastSceneFingerprint;
+      if (sceneRendererEnabled && (sceneNeedsDraw || sceneChanged)) {
+        await renderer.submit(output.scene);
+        sceneNeedsDraw = false;
       }
+      lastSceneFingerprint = nextSceneFingerprint;
 
       const nextViewFingerprint = viewFingerprint(output.view);
       const isTyping = output.view.dialogue !== null && !output.view.dialogue.complete;
@@ -1151,7 +1156,7 @@ export async function bootPresentation(
       // above leaves enough headroom for the reading surface to stay smooth.
       const publishInterval = isTyping ? 16 : 0;
       if (
-        nextViewFingerprint !== lastViewFingerprint
+        (nextViewFingerprint !== lastViewFingerprint || sceneChanged)
         && (
           lastViewFingerprint.length === 0
           || !isTyping

@@ -574,11 +574,16 @@ impl ModernCompiler {
                 vec![Operand::Boolean(false)],
                 &statement.span,
             ),
-            StatementKind::Wait { duration_ms } => self.emit(
-                ByteOp::Delay,
-                vec![Operand::Integer(i64::from(*duration_ms))],
-                &statement.span,
-            ),
+            StatementKind::Wait {
+                duration_ms,
+                release_after_ms,
+            } => {
+                let mut operands = vec![Operand::Integer(i64::from(*duration_ms))];
+                if let Some(release_after_ms) = release_after_ms {
+                    operands.push(Operand::Integer(i64::from(*release_after_ms)));
+                }
+                self.emit(ByteOp::Delay, operands, &statement.span);
+            }
             StatementKind::Background { asset, transition } => {
                 let Some(asset) = self.visual_asset_operand(asset) else {
                     return;
@@ -592,13 +597,14 @@ impl ModernCompiler {
                     if transition.kind == TransitionKind::Mask {
                         self.error(
                             DiagnosticCode::InvalidOperand,
-                            "mask transitions are not available yet; use fade or wipe",
+                            "mask transitions are not available yet; use fade, fade_through_black, or wipe",
                             Some(transition.span.clone()),
                         );
                         return;
                     }
                     let kind = match transition.kind {
                         TransitionKind::Fade => "fade",
+                        TransitionKind::FadeThroughBlack => "fade_through_black",
                         TransitionKind::Wipe => "wipe",
                         TransitionKind::Mask => unreachable!("handled above"),
                     };
@@ -2465,6 +2471,25 @@ mod tests {
             .position(|instruction| instruction.op == ByteOp::Text)
             .unwrap();
         assert_eq!(instructions[text + 1].op, ByteOp::WaitAdvance);
+    }
+
+    #[test]
+    fn compiles_breath_waits_with_a_soft_release_operand_and_keeps_hard_waits_legacy_safe() {
+        let output = compile_script(
+            "aria;\nentry start;\nscene start { wait breath 300ms; wait 220ms; end; }\n",
+        );
+        assert!(!output.has_errors(), "{:#?}", output.diagnostics);
+        let instructions = &output.program.unwrap().instructions;
+        let delays = instructions
+            .iter()
+            .filter(|instruction| instruction.op == ByteOp::Delay)
+            .collect::<Vec<_>>();
+        assert_eq!(delays.len(), 2);
+        assert_eq!(
+            delays[0].operands,
+            vec![Operand::Integer(300), Operand::Integer(160)]
+        );
+        assert_eq!(delays[1].operands, vec![Operand::Integer(220)]);
     }
 
     #[test]

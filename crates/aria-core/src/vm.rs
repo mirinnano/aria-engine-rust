@@ -206,7 +206,10 @@ const fn default_stage_effects() -> bool {
 impl Default for SettingsState {
     fn default() -> Self {
         Self {
-            text_speed_ms: 24,
+            // 48ms per grapheme gives the ordinary reader a little more air
+            // than the previous 24ms default while preserving a responsive
+            // explicit setting for players who prefer faster delivery.
+            text_speed_ms: 48,
             auto_delay_ms: 900,
             bgm_volume: 1.0,
             sound_effect_volume: 1.0,
@@ -254,8 +257,17 @@ pub enum ScreenEffectKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutionState {
     Running,
-    WaitingForAdvance { clear_page: bool },
-    WaitingForDelay { remaining_ms: u32 },
+    WaitingForAdvance {
+        clear_page: bool,
+    },
+    WaitingForDelay {
+        remaining_ms: u32,
+        /// When present, a primary/confirm input may release the delay once
+        /// this much time remains.  Old snapshots omit the field and retain
+        /// the historical hard-hold behaviour.
+        #[serde(default)]
+        release_at_remaining_ms: Option<u32>,
+    },
     WaitingForChoice,
 }
 
@@ -764,7 +776,10 @@ impl Vm {
     fn handle_waiting_input(&mut self, input: &InputSnapshot) -> Result<(), VmError> {
         match self.state.execution.clone() {
             ExecutionState::Running => {}
-            ExecutionState::WaitingForDelay { remaining_ms } => {
+            ExecutionState::WaitingForDelay {
+                remaining_ms,
+                release_at_remaining_ms,
+            } => {
                 let mut remaining = remaining_ms.saturating_sub(input.delta_ms);
                 // Auto preserves the interlude's pause but never makes a
                 // first-read 1.2s hold feel like a stalled auto route. A
@@ -780,6 +795,12 @@ impl Vm {
                 // reader-releasable; a statement is not. Its normal advance,
                 // confirm, pointer, and gamepad-A inputs are ignored until
                 // the authored duration has elapsed.
+                let soft_pause_released = release_at_remaining_ms
+                    .is_some_and(|threshold| remaining <= threshold)
+                    && self.state.ui.route != "statement"
+                    && (input.is_pressed(InputAction::Advance)
+                        || input.is_pressed(InputAction::Confirm)
+                        || input.pointer.is_some_and(|pointer| pointer.primary_pressed));
                 if remaining == 0
                     || input.is_held(InputAction::Skip)
                     || ((self.state.ui.route == "interlude" || self.state.ui.route == "statement")
@@ -788,11 +809,13 @@ impl Vm {
                         && (input.is_pressed(InputAction::Advance)
                             || input.is_pressed(InputAction::Confirm)
                             || input.pointer.is_some_and(|pointer| pointer.primary_pressed)))
+                    || soft_pause_released
                 {
                     self.state.execution = ExecutionState::Running;
                 } else {
                     self.state.execution = ExecutionState::WaitingForDelay {
                         remaining_ms: remaining,
+                        release_at_remaining_ms,
                     };
                 }
             }
@@ -824,7 +847,7 @@ impl Vm {
         for intent in &input.intents {
             match intent {
                 UiIntent::Activate { id } => {
-                    route_changed |= self.activate_presentation_action(id)?;
+                    route_changed |= self.activate_presentation_action(id, input.delta_ms)?;
                 }
                 UiIntent::OpenRoute { route } => {
                     let normalized = self.resolve_screen(route);
@@ -920,8 +943,24 @@ impl Vm {
         Ok(())
     }
 
-    fn activate_presentation_action(&mut self, id: &str) -> Result<bool, VmError> {
+    fn activate_presentation_action(&mut self, id: &str, delta_ms: u32) -> Result<bool, VmError> {
         if id == "dialogue.advance" {
+            if let ExecutionState::WaitingForDelay {
+                remaining_ms,
+                release_at_remaining_ms: Some(threshold),
+            } = &self.state.execution
+            {
+                // The Web presentation sends a semantic button intent rather
+                // than a host pointer snapshot. Mirror the direct input path:
+                // a breath may be released only after its minimum floor, while
+                // an authored hard delay remains untouched.
+                if remaining_ms.saturating_sub(delta_ms) <= *threshold
+                    && self.state.ui.route != "statement"
+                {
+                    self.state.execution = ExecutionState::Running;
+                }
+                return Ok(false);
+            }
             self.advance_dialogue();
             return Ok(false);
         }
@@ -1789,6 +1828,12 @@ impl Vm {
             ByteOp::TextClear => self.clear_text(),
             ByteOp::Delay => {
                 let duration = self.integer(self.operand(instruction, 0)?)?.max(0) as u32;
+                let release_after_ms = instruction
+                    .operands
+                    .get(1)
+                    .map(|operand| self.integer(operand))
+                    .transpose()?
+                    .map(|value| value.max(0) as u32);
                 // UmiKaze interludes use a long first hold and a short
                 // revisit hold. Capture that distinction at the semantic
                 // delay boundary so a save keeps the visual blank/fade rhythm
@@ -1799,6 +1844,8 @@ impl Vm {
                 if duration > 0 {
                     self.state.execution = ExecutionState::WaitingForDelay {
                         remaining_ms: duration,
+                        release_at_remaining_ms: release_after_ms
+                            .map(|floor| duration.saturating_sub(floor)),
                     };
                 }
             }
@@ -2503,7 +2550,7 @@ impl Vm {
     fn build_view_model(&self) -> UiViewModel {
         let route = UiRoute::parse(&self.state.ui.route);
         let timed_hold_remaining_ms = match &self.state.execution {
-            ExecutionState::WaitingForDelay { remaining_ms } => Some(*remaining_ms),
+            ExecutionState::WaitingForDelay { remaining_ms, .. } => Some(*remaining_ms),
             _ => None,
         };
         let dialogue_pages = self.subtitle_pages();
@@ -3002,6 +3049,7 @@ fn parse_transition(value: &str) -> TransitionKind {
         "crossfade" | "cross_fade" => TransitionKind::CrossFade,
         "wipeleft" | "wipe_left" => TransitionKind::WipeLeft,
         "wiperight" | "wipe_right" => TransitionKind::WipeRight,
+        "fade_through_black" | "fade-through-black" => TransitionKind::FadeThroughBlack,
         "fade" => TransitionKind::Fade,
         mask => TransitionKind::Mask(mask.to_owned()),
     }
@@ -3140,6 +3188,75 @@ mod tests {
         });
         let selected = vm.step(&input).unwrap();
         assert!(selected.halted);
+    }
+
+    #[test]
+    fn new_settings_start_with_a_slower_reading_speed() {
+        assert_eq!(SettingsState::default().text_speed_ms, 48);
+    }
+
+    #[test]
+    fn breath_waits_release_after_the_floor_but_hard_waits_ignore_advance() {
+        let mut runtime = vm("aria;\nentry start;\nscene start {\n\
+             screen dialogue;\n\
+             narrate \"前。\";\n\
+             await advance;\n\
+             clear dialogue;\n\
+             wait breath 300ms;\n\
+             narrate \"後。\";\n\
+             await advance;\n\
+             clear dialogue;\n\
+             wait 220ms;\n\
+             narrate \"終。\";\n\
+             await advance;\n\
+             end;\n\
+             }\n");
+
+        runtime.step(&InputSnapshot::idle(1, 1_000)).unwrap();
+        let advance = InputSnapshot::pressed(2, 16, InputAction::Advance);
+        let full = runtime.step(&advance).unwrap();
+        assert!(full.view.dialogue.expect("first page").complete);
+
+        let mut advance = InputSnapshot::pressed(3, 16, InputAction::Advance);
+        let breath = runtime.step(&advance).unwrap();
+        assert_eq!(breath.view.timed_hold_remaining_ms, Some(300));
+        assert!(breath.view.dialogue.is_none());
+
+        advance = InputSnapshot::pressed(4, 100, InputAction::Advance);
+        let still_breathing = runtime.step(&advance).unwrap();
+        assert_eq!(still_breathing.view.timed_hold_remaining_ms, Some(200));
+        assert!(still_breathing.view.dialogue.is_none());
+
+        let mut release = InputSnapshot::idle(5, 70);
+        release.intents.push(UiIntent::Activate {
+            id: "dialogue.advance".to_owned(),
+        });
+        let released = runtime.step(&release).unwrap();
+        assert_eq!(released.view.timed_hold_remaining_ms, None);
+        assert_eq!(
+            released.view.dialogue.expect("released prose").full_text,
+            "後。"
+        );
+
+        let mut reveal = InputSnapshot::idle(6, 1_000);
+        let hard_ready = runtime.step(&reveal).unwrap();
+        assert!(hard_ready.view.dialogue.expect("second page").complete);
+
+        reveal = InputSnapshot::pressed(7, 16, InputAction::Advance);
+        let hard = runtime.step(&reveal).unwrap();
+        assert_eq!(hard.view.timed_hold_remaining_ms, Some(220));
+
+        reveal = InputSnapshot::pressed(8, 100, InputAction::Advance);
+        let hard_still_held = runtime.step(&reveal).unwrap();
+        assert_eq!(hard_still_held.view.timed_hold_remaining_ms, Some(120));
+        assert!(hard_still_held.view.dialogue.is_none());
+
+        let finished = runtime.step(&InputSnapshot::idle(9, 120)).unwrap();
+        assert_eq!(finished.view.timed_hold_remaining_ms, None);
+        assert_eq!(
+            finished.view.dialogue.expect("hard-wait prose").full_text,
+            "終。"
+        );
     }
 
     #[test]

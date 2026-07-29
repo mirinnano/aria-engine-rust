@@ -8,7 +8,7 @@ use "scenario/demo.aria";
 
 scene start {
   locale "ja-JP";
-  text_speed 28;
+  text_speed 48;
   background asset("#264450") with fade(240ms);
   persistent flag "umikaze_demo_setup_complete" = true;
   screen title;

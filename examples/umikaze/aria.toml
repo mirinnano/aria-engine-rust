@@ -26,11 +26,38 @@ fonts = [
   "assets/fonts/NotoSansJP-Regular.ttf",
   "assets/fonts/MPLUS1Code-wght.ttf",
 ]
-# Pack roles keep the first reader font on the hot path while the record-only
-# monospace face can be mounted later by native/Web adapters when it is needed.
+# Pack roles keep the reader face on the hot path. Record metadata, scene
+# photographs, and other infrequently needed material stay in the cold pack so
+# title startup does not map the full visual catalogue.
 asset_pack_roles = {
   "assets/fonts/NotoSansJP-Regular.ttf" = "hot",
   "assets/fonts/MPLUS1Code-wght.ttf" = "cold",
+  "assets/bg/scenes/blue-twilight-v1.webp" = "cold",
+  "assets/bg/scenes/bridge-understructure-v1.webp" = "cold",
+  "assets/bg/scenes/coast-road-dawn-v1.webp" = "cold",
+  "assets/bg/scenes/ferry-fog-morning-v1.webp" = "cold",
+  "assets/bg/scenes/ferry-night-deck-v1.webp" = "cold",
+  "assets/bg/scenes/hospital-corridor-overcast-v1.webp" = "cold",
+  "assets/bg/scenes/hotel-corridor-blue-v1.webp" = "cold",
+  "assets/bg/scenes/mist-window-rail-v1.webp" = "cold",
+  "assets/bg/scenes/mountain-room-dawn-v1.webp" = "cold",
+  "assets/bg/scenes/neon-alley-v1.webp" = "cold",
+  "assets/bg/scenes/night-window-motion-v1.webp" = "cold",
+  "assets/bg/scenes/okayama-rail-window-v1.webp" = "cold",
+  "assets/bg/scenes/passage-sunset-v1.webp" = "cold",
+  "assets/bg/scenes/platform-sea-dawn-v1.webp" = "cold",
+  "assets/bg/scenes/rail-platform-dawn-v1.webp" = "cold",
+  "assets/bg/scenes/rail-window-sunset-v1.webp" = "cold",
+  "assets/bg/scenes/rain-street-evening-v1.webp" = "cold",
+  "assets/bg/scenes/rain-window-dusk-v1.webp" = "cold",
+  "assets/bg/scenes/sannomiya-rain-platform-v1.webp" = "cold",
+  "assets/bg/scenes/shore-storm-sunset-v1.webp" = "cold",
+  "assets/bg/scenes/station-night-pass-v1.webp" = "cold",
+  "assets/bg/scenes/terminus-grey-sea-v1.webp" = "cold",
+  "assets/bg/scenes/train-motion-summer-v1.webp" = "cold",
+  "assets/bg/scenes/train-rain-grey-v1.webp" = "cold",
+  "assets/bg/scenes/train-window-summer-v1.webp" = "cold",
+  "assets/bg/scenes/understructure-evening-v1.webp" = "cold",
 }
 # This manuscript revision intentionally invalidates earlier routes and
 # checkpoints. Only this exact predecessor is purged; other Aria games and

@@ -27,6 +27,7 @@ import {
 import {
   chapterFallbackSources,
   gallerySources,
+  sceneAssetByLogicalPath,
   sceneAssetByTone,
   sceneSources,
   stagePhotoByKind,
@@ -80,7 +81,14 @@ function toneForScene(output: AriaStepOutput | null): string {
     Boolean(command)
     && typeof command === "object"
     && (command as { id?: unknown }).id === "scene.background"
-  )) as { kind?: unknown; color?: { red?: unknown; green?: unknown; blue?: unknown } } | undefined;
+  )) as {
+    kind?: unknown;
+    asset?: unknown;
+    color?: { red?: unknown; green?: unknown; blue?: unknown };
+  } | undefined;
+  if (background?.kind === "sprite" && typeof background.asset === "string") {
+    return sceneAssetByLogicalPath[background.asset]?.name || "night";
+  }
   if (background?.kind === "rectangle" && background.color) {
     const color = background.color;
     const key = [color.red, color.green, color.blue].map(Number).join(",");
@@ -97,7 +105,16 @@ function toneForScene(output: AriaStepOutput | null): string {
 function ScenePhotograph({ output, transform }: { output: AriaStepOutput | null; transform?: string }) {
   const route = output ? routeName(output.view.route) : "loading";
   const tone = toneForScene(output);
-  const asset = sceneAssetByTone[tone] || sceneAssetByTone.coast;
+  const scene = output?.scene as unknown as { commands?: unknown[] } | undefined;
+  const background = scene?.commands?.find((command) => (
+    Boolean(command)
+    && typeof command === "object"
+    && (command as { id?: unknown }).id === "scene.background"
+  )) as { kind?: unknown; asset?: unknown } | undefined;
+  const logicalAsset = background?.kind === "sprite" && typeof background.asset === "string"
+    ? sceneAssetByLogicalPath[background.asset]
+    : undefined;
+  const asset = logicalAsset || sceneAssetByTone[tone] || sceneAssetByTone.coast;
   if (!asset.source) {
     return (
       <div
@@ -118,6 +135,20 @@ function ScenePhotograph({ output, transform }: { output: AriaStepOutput | null;
       <img src={asset.source} alt="" decoding="async" />
     </div>
   );
+}
+
+function SceneTransitionVeil({ output }: { output: AriaStepOutput | null }) {
+  const transition = output?.scene.transition;
+  if (!transition || !Number.isFinite(transition.progress) || transition.progress >= 1) return null;
+  if (output?.view.settings.reduced_motion) return null;
+  const progress = Math.min(1, Math.max(0, transition.progress));
+  const opacity = transition.kind === "fade_through_black"
+    ? progress <= 180 / 640
+      ? 1
+      : Math.max(0, 1 - (progress - 180 / 640) / (1 - 180 / 640))
+    : Math.max(0, 1 - progress);
+  if (opacity <= 0) return null;
+  return <div className="scene-transition-veil" style={{ opacity }} aria-hidden="true" />;
 }
 
 type SceneDirectionOverlay = {
@@ -1973,6 +2004,7 @@ export default function App() {
         <ScenePhotograph output={output} transform={sceneDirection.transform} />
         <div className="atmosphere" style={sceneDirection.transform ? { transform: sceneDirection.transform } : undefined} aria-hidden="true" />
         <SceneDirectionLayer overlays={sceneDirection.overlays} />
+        <SceneTransitionVeil output={output} />
       </>}
       <div className="presentation-layer">
         {view && <Screen view={view} dispatch={dispatch} chromeVisible={chromeVisible} onRevealChrome={revealChrome} saveSlots={saveSlots} />}

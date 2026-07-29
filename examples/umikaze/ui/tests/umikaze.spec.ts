@@ -373,7 +373,7 @@ test("a chapter day card advances from its open surface as well as BEGIN", async
 
 test("the demo contains only the opening arc and reaches its quiet end after DAY 4", async ({ page }) => {
   test.skip(process.env.UMIKAZE_DEMO !== "true", "requires the demo content bundle");
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   await beginJapaneseRecord(page);
   await expect(page.locator(".title-edition")).toHaveText("DEMO");
   await page.getByRole("button", { name: "START" }).click();
@@ -385,7 +385,10 @@ test("the demo contains only the opening arc and reaches its quiet end after DAY
   await card.getByRole("button", { name: "次へ" }).click();
 
   const demoEnd = page.locator(".demo-end-screen");
-  for (let input = 0; input < 700 && !await demoEnd.isVisible().catch(() => false); input += 1) {
+  // The public default is intentionally slower and the opening arc now has
+  // semantic breaths between sentence beats. Keep the same human input path
+  // while giving the demo enough turns to reach its authored quiet ending.
+  for (let input = 0; input < 2_000 && !await demoEnd.isVisible().catch(() => false); input += 1) {
     await page.keyboard.press("Enter");
     await page.waitForTimeout(24);
   }
@@ -425,7 +428,10 @@ test("an automatic statement owns its duration while preserving log and menu esc
   // The prologue reaches its one automatic central line through ordinary
   // reading input. Once it arrives, do not send a second kind of control to
   // release it: the story, rather than the reader, owns this interval.
-  for (let input = 0; input < 180 && !await statement.isVisible().catch(() => false); input += 1) {
+  // Each authored sentence now owns a small semantic breath. Keep sending
+  // the same ordinary reading input, but allow the slower default and those
+  // breaths to carry the prologue to its central statement.
+  for (let input = 0; input < 1_200 && !await statement.isVisible().catch(() => false); input += 1) {
     await page.keyboard.press("Enter");
     await page.waitForTimeout(8);
   }
@@ -447,6 +453,7 @@ test("an automatic statement owns its duration while preserving log and menu esc
   await expect(statement).toBeVisible();
 
   await expect(page.getByRole("region", { name: "読書中" })).toBeVisible({ timeout: 3_500 });
+  await waitForCompletedPage(page);
   await expect(page.locator(".dialogue-text")).toHaveText("いつの間にか、寝ていた。");
 });
 
@@ -457,7 +464,7 @@ test("a story scene selects its deterministic photograph after the chapter inter
   await expect(page.locator(".interlude-screen")).toBeVisible();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
-  await expect(page.locator(".scene-photograph--north-platform img"))
+  await expect(page.locator(".scene-photograph--platform-sea-dawn img"))
     .toHaveAttribute("src", /platform-sea-dawn-v1-/);
 });
 

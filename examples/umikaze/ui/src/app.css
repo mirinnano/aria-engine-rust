@@ -73,6 +73,15 @@ button { -webkit-tap-highlight-color: transparent; }
   inset: 0;
 }
 
+.scene-transition-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: #000;
+  will-change: opacity;
+}
+
 .scene-canvas {
   z-index: 0;
   /* The semantic runtime retains this element for viewport/input parity, but
@@ -166,7 +175,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .route-setup .atmosphere { display: none; }
 
 .presentation-layer {
-  z-index: 3;
+  z-index: 4;
   display: grid;
   min-height: 0;
   pointer-events: none;

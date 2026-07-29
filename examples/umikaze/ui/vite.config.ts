@@ -6,6 +6,7 @@ const edition = process.env.VITE_UMIKAZE_EDITION === "demo" ? "demo" : "full";
 const editionModule = (name: "scene-assets" | "chapter-preview" | "stage-mapping") => fileURLToPath(
   new URL(`./src/${name}.${edition}.ts`, import.meta.url),
 );
+const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 // `aria build --target web` copies this dist directory next to the bytecode,
 // pak, wasm glue, and scene renderer. Relative paths keep the same package
@@ -24,6 +25,11 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 1420,
     strictPort: true,
+    fs: {
+      // Story-owned photographs live beside the native PAK source tree so
+      // Web and Native resolve the same logical path during development.
+      allow: [projectRoot],
+    },
   },
   build: {
     outDir: process.env.ARIA_PRESENTATION_OUT_DIR || "dist",

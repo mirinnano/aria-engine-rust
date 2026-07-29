@@ -12,7 +12,9 @@ state visit_count: Int = 0;
 
 scene start {
   locale "ja-JP";
-  text_speed 28;
+  // Ordinary reading starts at a slower 48ms/grapheme; the settings screen
+  // can still choose a faster pace without mutating the manuscript.
+  text_speed 48;
   // The React presentation owns the stage treatment. A plain, deterministic
   // scene colour keeps the title free of the old generative-looking backdrop.
   background asset("#264450") with fade(240ms);

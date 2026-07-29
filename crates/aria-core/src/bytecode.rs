@@ -193,12 +193,12 @@ impl ByteOp {
             | Self::SpriteVisibility
             | Self::BeginTransition => operand_count == 2,
             Self::WaitAdvance
-            | Self::Delay
             | Self::Jump
             | Self::Call
             | Self::SpriteRemove
             | Self::Save
             | Self::Load => operand_count == 1,
+            Self::Delay => operand_count == 1 || operand_count == 2,
             Self::JumpIfFalse => operand_count == 4,
             Self::AddInt | Self::SpriteMove | Self::StopAudio | Self::SetVolume => {
                 operand_count == 3
