@@ -11,7 +11,7 @@ scene novel_chapter_10 {
   background asset("assets/bg/scenes/terminus-grey-sea-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 10\n終点を知らない列車\n灰色の海のそばを、降りる理由のないまま進む。" => novel_chapter_10_story;
+    "DAY 10\nX\n幸福とは、なお次を選びうることである。\n終点を知らない列車\n灰色の海のそばを、降りる理由のないまま進む。" => novel_chapter_10_story;
   }
 }
 

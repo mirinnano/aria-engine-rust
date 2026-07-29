@@ -1,11 +1,10 @@
 # 海風 Aria sample
 
 This is the single-`aria;` semantic-runtime sample for the umikaze vertical
-slice. The historical NScripter/C# sources are preserved in the separate
-[`aria-engine` legacy repository](https://github.com/mirinnano/aria-engine);
-they are not an executable compatibility path: `aria migrate` and the legacy
-parser were removed. New scenario sources are compiled directly by the current
-Aria front end.
+slice. The historical NScripter/C# sources were retired with the legacy
+runtime; they are not an executable compatibility path. `aria migrate` and
+the legacy parser were removed, and new scenario sources are compiled directly
+by the current Aria front end.
 
 The sample keeps the umikaze visual language (deep indigo, sea fog, pale
 paper, restrained gold, quiet panels, chapter cards, and non-colour-only

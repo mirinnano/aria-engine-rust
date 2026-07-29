@@ -19,16 +19,16 @@ scene chapter_select_ja {
   screen chapter_select;
   background asset("#102b38") with wipe(260ms);
   choice {
-    "PROLOGUE" => novel_chapter_00;
-    "DAY 1" => novel_chapter_01;
-    "DAY 2" => novel_chapter_02;
-    "DAY 3" => novel_chapter_03;
-    "DAY 4" => novel_chapter_04;
-    "DAY 5" => novel_chapter_05;
-    "DAY 6" => novel_chapter_06;
-    "DAY 7" => novel_chapter_07;
-    "DAY 8" => novel_chapter_08;
-    "DAY 9" => novel_chapter_09;
-    "DAY 10" => novel_chapter_10;
+    "PROLOGUE\nP\n幸福は、世界のなかの事実ではない。\n春から九月\n季節だけが先に進む窓辺で、まだ名もない願いが揺れている。" => novel_chapter_00;
+    "DAY 1\nI\n幸福は、理由ではなく現在に示される。\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01;
+    "DAY 2\nII\n幸福の可能性は、行くことのうちにある。\n9月22日・三ノ宮\n雨の気配が近づく街で、二人は次の行き先を探している。" => novel_chapter_02;
+    "DAY 3\nIII\n幸福は、苦痛の不在を意味しない。\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03;
+    "DAY 4\nIV\n記録されるのは、幸福の痕跡だけである。\n9月24日・松江\n残そうとする音が、静かな海辺へ続く道を指している。" => novel_chapter_04;
+    "DAY 5\nV\n幸福への問いは、答えがなくとも消えない。\n9月25日・益田\n強い雨が、進む理由を足止めする。" => novel_chapter_05;
+    "DAY 6\nVI\n幸福は、目的地に着くことを意味しない。\n晴れた移動の途中\n夜の駅を越え、海の気配へ向かう。" => novel_chapter_06;
+    "DAY 7\nVII\n幸福は、像の限界においてのみ示される。\n始発前の待合室\n海を渡るあいだ、記録の外側が近づいてくる。" => novel_chapter_07;
+    "DAY 8\nVIII\n他者の幸福を、ひとは決定できない。\n山あいの居間\n遠い場所の映像が、静かな朝を占めていく。" => novel_chapter_08;
+    "DAY 9\nIX\n帰る場所から、幸福の存在は帰結しない。\n北へ向かう列車\n足元の地図を離れ、線路だけが先へ続いている。" => novel_chapter_09;
+    "DAY 10\nX\n幸福とは、なお次を選びうることである。\n終点を知らない列車\n灰色の海のそばを、降りる理由のないまま進む。" => novel_chapter_10;
   }
 }

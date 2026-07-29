@@ -11,7 +11,7 @@ scene novel_chapter_02 {
   background asset("assets/bg/scenes/sannomiya-rain-platform-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 2\n9月22日・三ノ宮\n雨の気配が近づく街で、二人は次の行き先を探している。" => novel_chapter_02_story;
+    "DAY 2\nII\n幸福の可能性は、行くことのうちにある。\n9月22日・三ノ宮\n雨の気配が近づく街で、二人は次の行き先を探している。" => novel_chapter_02_story;
   }
 }
 

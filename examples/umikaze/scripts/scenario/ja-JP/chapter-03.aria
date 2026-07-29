@@ -11,7 +11,7 @@ scene novel_chapter_03 {
   background asset("assets/bg/scenes/okayama-rail-window-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 3\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03_story;
+    "DAY 3\nIII\n幸福は、苦痛の不在を意味しない。\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03_story;
   }
 }
 

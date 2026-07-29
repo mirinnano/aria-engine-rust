@@ -11,7 +11,7 @@ scene novel_chapter_07 {
   background asset("assets/bg/scenes/ferry-night-deck-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 7\n始発前の待合室\n海を渡るあいだ、記録の外側が近づいてくる。" => novel_chapter_07_story;
+    "DAY 7\nVII\n幸福は、像の限界においてのみ示される。\n始発前の待合室\n海を渡るあいだ、記録の外側が近づいてくる。" => novel_chapter_07_story;
   }
 }
 

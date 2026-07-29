@@ -817,18 +817,18 @@ export async function bootPresentation(
       gamepadPollTimer = null;
     }
   };
-  const scheduleTick = (delay = 0) => {
+  const scheduleTick = (delay = 0, consumeTimedHoldElapsed = false) => {
     if (disposed || ticking || frameRequest || timerRequest !== null) return;
     if (delay <= 16) {
       frameRequest = requestAnimationFrame((now) => {
         frameRequest = 0;
-        void tick(now);
+        void tick(now, consumeTimedHoldElapsed);
       });
       return;
     }
     timerRequest = window.setTimeout(() => {
       timerRequest = null;
-      void tick(performance.now());
+      void tick(performance.now(), consumeTimedHoldElapsed);
     }, delay);
   };
   const wake = () => {
@@ -841,7 +841,10 @@ export async function bootPresentation(
       window.clearTimeout(timerRequest);
       timerRequest = null;
     }
-    scheduleTick();
+    // An input that interrupts a one-shot story hold should account for the
+    // wall time already spent looking at it. The resulting frame may still
+    // ignore the input (statements do), but it must not restart the interval.
+    scheduleTick(0, activeOutput?.view.timed_hold_remaining_ms != null);
   };
   const resize = () => {
     viewport = resizeCanvas(canvas);
@@ -1095,12 +1098,23 @@ export async function bootPresentation(
     return restored;
   };
 
-  const tick = async (now: number) => {
+  const tick = async (now: number, consumeTimedHoldElapsed = false) => {
     if (disposed || ticking) return;
     ticking = true;
     let nextDelay: number | null = null;
+    let nextTickConsumesTimedHoldElapsed = false;
     try {
-      const delta = Math.min(250, Math.max(0, Math.round(now - previous)));
+      const elapsed = Math.min(0xffff_ffff, Math.max(0, Math.round(now - previous)));
+      // Long gaps are capped for typewriting and visual transitions so a
+      // starved or restored WebView cannot jump through prose before it has
+      // painted. An authored `wait` eventually becomes one exact timeout;
+      // only that timeout (or an input interrupting it) consumes real elapsed
+      // time. Capping its wake-up to 250 ms would repeatedly reschedule most
+      // of the hold and turn a 2.4 s statement into a 13 s stall.
+      const delta = consumeTimedHoldElapsed
+        && activeOutput?.view.timed_hold_remaining_ms != null
+        ? elapsed
+        : Math.min(250, elapsed);
       previous = now;
       const intents = queued;
       queued = [];
@@ -1134,18 +1148,17 @@ export async function bootPresentation(
         await audio.consume(output.audio);
       }
 
-      // Keep one semantic scene signature even when the presentation owns
-      // the stage in DOM. The photograph/veil layer still needs the finite
-      // transition frames; otherwise a fade-through-black would publish its
-      // first opaque frame and then remain there because the view itself did
-      // not change. A quiet scene keeps the same signature, so this does not
-      // reintroduce a render clock for static title/menu screens.
       const nextSceneFingerprint = sceneFingerprint(output.scene);
       const sceneChanged = nextSceneFingerprint !== lastSceneFingerprint;
-      if (sceneRendererEnabled && (sceneNeedsDraw || sceneChanged)) {
-        await renderer.submit(output.scene);
-        sceneNeedsDraw = false;
+      if (sceneRendererEnabled) {
+        if (sceneNeedsDraw || sceneChanged) {
+          await renderer.submit(output.scene);
+          sceneNeedsDraw = false;
+        }
       }
+      // The DOM presentation projects the finite scene transition as a veil;
+      // keep its progress observable even when the optional canvas renderer
+      // is disabled for the Web surface.
       lastSceneFingerprint = nextSceneFingerprint;
 
       const nextViewFingerprint = viewFingerprint(output.view);
@@ -1182,6 +1195,12 @@ export async function bootPresentation(
       }
       if (!output.halted) {
         nextDelay = nextTickDelay(output);
+        nextTickConsumesTimedHoldElapsed = (
+          nextDelay !== null
+          && output.view.timed_hold_remaining_ms !== null
+          && !sceneIsAnimating(output.scene)
+          && !(output.view.dialogue && !output.view.dialogue.complete)
+        );
         if (appliedIntents.length > 0 || !needsBlankDialogueBootstrap(output)) {
           blankDialogueBootstrapQueued = false;
         }
@@ -1207,9 +1226,9 @@ export async function bootPresentation(
       syncGamepadPolling();
       if (wakeRequested) {
         wakeRequested = false;
-        scheduleTick();
+        scheduleTick(0, activeOutput?.view.timed_hold_remaining_ms != null);
       } else if (nextDelay !== null) {
-        scheduleTick(nextDelay);
+        scheduleTick(nextDelay, nextTickConsumesTimedHoldElapsed);
       }
     }
   };

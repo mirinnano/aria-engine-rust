@@ -11,7 +11,7 @@ scene novel_chapter_08 {
   background asset("assets/bg/scenes/mountain-room-dawn-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 8\n山あいの居間\n遠い場所の映像が、静かな朝を占めていく。" => novel_chapter_08_story;
+    "DAY 8\nVIII\n他者の幸福を、ひとは決定できない。\n山あいの居間\n遠い場所の映像が、静かな朝を占めていく。" => novel_chapter_08_story;
   }
 }
 

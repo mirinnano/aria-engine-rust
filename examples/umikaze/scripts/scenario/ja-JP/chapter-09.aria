@@ -11,7 +11,7 @@ scene novel_chapter_09 {
   background asset("assets/bg/scenes/train-rain-grey-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 9\n北へ向かう列車\n足元の地図を離れ、線路だけが先へ続いている。" => novel_chapter_09_story;
+    "DAY 9\nIX\n帰る場所から、幸福の存在は帰結しない。\n北へ向かう列車\n足元の地図を離れ、線路だけが先へ続いている。" => novel_chapter_09_story;
   }
 }
 

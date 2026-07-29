@@ -40,7 +40,8 @@ const isDemoEdition = import.meta.env.VITE_UMIKAZE_EDITION === "demo";
 // Kept in lockstep with the importer. A statement owns one authored hold;
 // the negative animation delay makes a save restored halfway through it pick
 // up the same opacity phase without a render clock.
-const STATEMENT_HOLD_MS = 1600;
+const STATEMENT_HOLD_MS = 2400;
+const INTERLUDE_HOLD_MS = 3600;
 
 type Dispatch = (intent: UiIntent) => void;
 
@@ -57,9 +58,55 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(element?.closest("button, input, textarea, select, [contenteditable=true], [data-aria-action]"));
 }
 
+type ChapterIdentity = {
+  key: string;
+  numeral: string;
+  proposition: string;
+  date: string;
+  synopsis: string;
+};
+
+const romanNumerals = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+
+function fallbackChapterNumeral(key: string): string {
+  if (key === "PROLOGUE") return "P";
+  const day = /^DAY\s+(\d+)$/.exec(key)?.[1];
+  return day ? romanNumerals[Number(day)] || day : "—";
+}
+
+/**
+ * Umikaze chapter labels are an Aria-authored five-line record:
+ * key / Roman numeral / proposition / date-place / invitation.
+ *
+ * TSX owns no duplicate literary copy. The compact legacy shape remains
+ * readable so an older hand-written sample does not become an empty screen.
+ */
+function chapterIdentity(label: string, fallbackDescription = ""): ChapterIdentity {
+  const [rawKey = "", rawNumeral = "", rawProposition = "", rawDate = "", ...rawSynopsis] = label.split("\n");
+  const key = rawKey.trim();
+  if (rawSynopsis.length > 0) {
+    return {
+      key,
+      numeral: rawNumeral.trim() || fallbackChapterNumeral(key),
+      proposition: rawProposition.trim() || key,
+      date: rawDate.trim(),
+      synopsis: rawSynopsis.join("\n").trim() || fallbackDescription,
+    };
+  }
+  const legacy = label.split("\n");
+  return {
+    key,
+    numeral: fallbackChapterNumeral(key),
+    proposition: key,
+    date: legacy[1]?.trim() ?? "",
+    synopsis: legacy.slice(2).join("\n").trim() || fallbackDescription,
+  };
+}
+
 function dayCardHeading(view: UiViewModel | null | undefined): string | null {
   if (!view || routeName(view.route) !== "day_card") return null;
-  return view.choices[0]?.label.split("\n", 1)[0]?.trim() || null;
+  const label = view.choices[0]?.label;
+  return label ? chapterIdentity(label).key || null : null;
 }
 
 function dayCardThemeFor(view: UiViewModel | null | undefined): string {
@@ -1048,27 +1095,89 @@ function RMenu({ view, copy, onAction, dispatch }: {
   );
 }
 
-function ConfirmationSheet({ view, copy, onAction, dispatch }: {
+function ConfirmationSheet({ view, copy, onAction }: {
   view: UiViewModel;
   copy: ReturnType<typeof strings>;
   onAction: (id: string) => void;
-  dispatch: Dispatch;
 }) {
   const action = view.confirmation?.action;
-  const message = action === "quit"
-    ? copy.confirmQuit
-    : action === "resume_backlog"
-      ? copy.confirmResume
-      : copy.confirmReset;
-  const resume = action === "resume_backlog";
+  const scriptedChoices = action ? [] : view.choices.slice(0, 2);
+  const scripted = scriptedChoices.length === 2;
+  const message = scripted
+    ? view.dialogue?.full_page_text || copy.confirm
+    : action === "quit"
+      ? copy.confirmQuit
+      : action === "resume_backlog"
+        ? copy.confirmResume
+        : copy.confirmReset;
+  const acceptId = scripted ? scriptedChoices[0].id : "confirm.accept";
+  const cancelId = scripted ? scriptedChoices[1].id : "confirm.cancel";
+  const acceptLabel = scripted ? scriptedChoices[0].label : copy.ok;
+  const cancelLabel = scripted ? scriptedChoices[1].label : copy.ng;
+  const resumeTarget = action === "resume_backlog"
+    ? view.backlog.find((entry) => entry.id === view.confirmation?.resume_id)
+    : null;
+  const moveConfirmationFocus = (container: HTMLElement, direction: -1 | 1) => {
+    const controls = [...container.querySelectorAll<HTMLButtonElement>("[data-confirmation-choice]")]
+      .filter((control) => !control.disabled);
+    if (!controls.length) return;
+    const active = controls.indexOf(document.activeElement as HTMLButtonElement);
+    controls[(active < 0 ? 0 : active + direction + controls.length) % controls.length]?.focus({ preventScroll: true });
+  };
   return (
-    <OverlaySheet title="CONFIRM" kicker={copy.confirm} dismissLabel={copy.close} variant="confirm" onDismiss={() => dispatch({ kind: "activate", id: "confirm.cancel" })}>
-      <p className="confirmation-message">{message}</p>
-      <div className="confirmation-actions">
-        <ActionButton id="confirm.accept" label={resume ? copy.ok : copy.proceed} onAction={onAction} className="confirmation-accept" />
-        <ActionButton id="confirm.cancel" label={resume ? copy.ng : copy.cancel} onAction={onAction} className="confirmation-cancel" />
-      </div>
-    </OverlaySheet>
+    <ModalOverlay className="confirmation-overlay" isOpen isDismissable onOpenChange={(open) => {
+      if (!open) onAction(cancelId);
+    }}>
+      <Modal className="confirmation-modal">
+        <Dialog
+          className="confirmation-dialog"
+          aria-label="CONFIRM"
+          data-scripted-confirmation={scripted ? "true" : "false"}
+        >
+          <StageBackdrop kind="confirm" />
+          <div className="confirmation-content" onKeyDown={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+              event.preventDefault();
+              moveConfirmationFocus(event.currentTarget, -1);
+            }
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+              event.preventDefault();
+              moveConfirmationFocus(event.currentTarget, 1);
+            }
+          }}>
+            <p className="confirmation-kicker">CONFIRM</p>
+            <Heading slot="title" className="confirmation-message">{message}</Heading>
+            {resumeTarget && (
+              <p className="confirmation-excerpt">
+                {resumeTarget.speaker && <span>{resumeTarget.speaker}</span>}
+                {resumeTarget.text}
+              </p>
+            )}
+            <div className="confirmation-actions" aria-label={copy.confirm}>
+              <Button
+                className="confirmation-accept"
+                data-aria-focusable
+                data-aria-action={acceptId}
+                data-confirmation-choice
+                onPress={() => onAction(acceptId)}
+              >
+                {acceptLabel}
+              </Button>
+              <Button
+                autoFocus
+                className="confirmation-cancel"
+                data-aria-focusable
+                data-aria-action={cancelId}
+                data-confirmation-choice
+                onPress={() => onAction(cancelId)}
+              >
+                {cancelLabel}
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      </Modal>
+    </ModalOverlay>
   );
 }
 
@@ -1212,32 +1321,28 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
 }) {
   type ChapterCard = {
     id: string;
-    label: string;
-    description: string;
-    date: string;
+    identity: ChapterIdentity;
     preview?: ChapterPreviewRecord;
     unlocked: boolean;
     selected: boolean;
   };
   const cards: ChapterCard[] = view.choices.length ? view.choices.map((choice) => {
-    const preview = chapterPreviewByLabel[choice.label.trim()];
+    const identity = chapterIdentity(choice.label);
+    const preview = chapterPreviewByLabel[identity.key];
     return {
       id: choice.id,
-      label: choice.label,
-      description: preview?.synopsis ?? "",
-      date: preview?.date ?? "",
+      identity,
       preview,
       unlocked: true,
       selected: choice.selected,
     };
   }) : view.chapters.map((chapter) => {
     const label = chapter.title || chapter.id;
-    const preview = chapterPreviewByLabel[label.trim()];
+    const identity = chapterIdentity(label, chapter.description);
+    const preview = chapterPreviewByLabel[identity.key];
     return {
       id: `chapter:${chapter.id}`,
-      label,
-      description: preview?.synopsis || chapter.description,
-      date: preview?.date ?? "",
+      identity,
       preview,
       unlocked: chapter.unlocked,
       selected: false,
@@ -1269,12 +1374,19 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
     <OverlaySheet title="CHAPTERS" kicker={copy.chapters} dismissLabel={copy.close} variant="chapter" onDismiss={() => dispatch({ kind: "dismiss" })}>
       <div className="chapter-stage">
         {featured && (
-          <section className="chapter-preview" aria-label={featured.unlocked ? featured.label : copy.locked}>
+          <section className="chapter-preview" aria-label={featured.unlocked ? featured.identity.key : copy.locked}>
             <img className="chapter-preview-image" src={previewSource} alt="" />
+            <span className="chapter-preview-watermark" aria-hidden="true">
+              {featured.unlocked ? featured.identity.numeral : "—"}
+            </span>
             <div className="chapter-preview-record">
-              {featured.unlocked && featured.date && <p className="chapter-preview-date">{featured.date}</p>}
-              <h3>{featured.unlocked ? featured.label : "SEALED"}</h3>
-              {featured.unlocked && featured.description && <p className="chapter-preview-description">{featured.description}</p>}
+              {featured.unlocked && <p className="chapter-preview-key">{featured.identity.key}</p>}
+              <div className="chapter-preview-heading">
+                {featured.unlocked && <span className="chapter-preview-numeral" aria-hidden="true">{featured.identity.numeral}</span>}
+                <h3>{featured.unlocked ? featured.identity.proposition : "SEALED"}</h3>
+              </div>
+              {featured.unlocked && featured.identity.date && <p className="chapter-preview-date">{featured.identity.date}</p>}
+              {featured.unlocked && featured.identity.synopsis && <p className="chapter-preview-description">{featured.identity.synopsis}</p>}
               {!featured.unlocked && <p className="chapter-preview-description">{copy.locked}</p>}
             </div>
           </section>
@@ -1289,16 +1401,25 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
             moveIndexFocus(event.currentTarget, 1);
           }
         }}>
-          {cards.map((card) => (
+          {cards.map((card, index) => {
+            const propositionId = `chapter-proposition-${index}`;
+            const dateId = `chapter-date-${index}`;
+            return (
             <Button key={card.id} data-aria-focusable data-aria-action={card.id} data-chapter-index-item
               className={`chapter-index-row${card.unlocked ? "" : " is-locked"}${card.id === featured?.id ? " is-preview" : ""}`}
-              aria-label={card.unlocked ? card.label : copy.locked}
+              aria-label={card.unlocked ? card.identity.key : copy.locked}
+              aria-describedby={card.unlocked ? `${propositionId} ${dateId}` : undefined}
               isDisabled={!card.unlocked} onFocus={() => setPreviewChapterId(card.id)} onPointerEnter={() => setPreviewChapterId(card.id)}
               onPress={() => onAction(card.id)}>
-              <span className="chapter-index-name">{card.unlocked ? card.label : "SEALED"}</span>
+              <span className="chapter-index-numeral" aria-hidden="true">{card.unlocked ? card.identity.numeral : "—"}</span>
+              <span className="chapter-index-copy">
+                <span id={propositionId} className="chapter-index-proposition">{card.unlocked ? card.identity.proposition : "SEALED"}</span>
+                <span id={dateId} className="chapter-index-date">{card.unlocked ? card.identity.date : ""}</span>
+              </span>
               <span className="chapter-index-rule" aria-hidden="true" />
             </Button>
-          ))}
+            );
+          })}
         </nav>
       </div>
     </OverlaySheet>
@@ -1417,22 +1538,15 @@ function Dialogue({ view, copy, onAction, chromeVisible, onRevealChrome }: {
 
 type DayCardContent = {
   choice: ChoiceView;
-  day: string;
-  date: string;
-  synopsis: string;
+  identity: ChapterIdentity;
 };
 
 function dayCardFor(view: UiViewModel): DayCardContent | null {
   const choice = view.choices[0];
   if (!choice) return null;
-  const [day = "", date = "", ...synopsis] = choice.label.split("\n");
-  if (!day.trim() || !date.trim() || synopsis.length === 0) return null;
-  return {
-    choice,
-    day: day.trim(),
-    date: date.trim(),
-    synopsis: synopsis.join("\n").trim(),
-  };
+  const identity = chapterIdentity(choice.label);
+  if (!identity.key || !identity.proposition || !identity.date || !identity.synopsis) return null;
+  return { choice, identity };
 }
 
 /**
@@ -1449,12 +1563,20 @@ function DayCard({ view, copy, onAction }: {
   const card = dayCardFor(view);
   if (!card) return null;
   const theme = dayCardThemeFor(view);
+  const { identity } = card;
   return (
     <section className={`day-card day-card--${theme}`} aria-labelledby="day-card-title">
+      <span className="day-card-watermark" aria-hidden="true">{identity.numeral}</span>
       <div className="day-card-copy">
-        <p className="day-card-date">{card.date}</p>
-        <h1 id="day-card-title">{card.day}</h1>
-        <p className="day-card-synopsis">{card.synopsis}</p>
+        <div className="day-card-coordinate">
+          <p className="day-card-key">{identity.key}</p>
+          <p className="day-card-date">{identity.date}</p>
+        </div>
+        <div className="day-card-heading">
+          <span className="day-card-numeral" aria-hidden="true">{identity.numeral}</span>
+          <h1 id="day-card-title">{identity.proposition}</h1>
+        </div>
+        <p className="day-card-synopsis">{identity.synopsis}</p>
       </div>
       <Button
         autoFocus
@@ -1484,10 +1606,13 @@ function Interlude({ view, copy, onAction }: {
 }) {
   const text = view.dialogue?.full_page_text || "";
   const firstVisit = view.interlude?.first_visit ?? false;
+  const remaining = view.timed_hold_remaining_ms ?? INTERLUDE_HOLD_MS;
+  const elapsed = Math.min(INTERLUDE_HOLD_MS, Math.max(0, INTERLUDE_HOLD_MS - remaining));
   return (
     <section
       className={`interlude-screen${firstVisit ? " interlude-screen--first" : " interlude-screen--return"}`}
       aria-label={copy.reading}
+      style={{ animationDelay: `-${elapsed}ms` }}
     >
       <Button
         autoFocus
@@ -1497,7 +1622,14 @@ function Interlude({ view, copy, onAction }: {
         aria-label={copy.next}
         onPress={() => onAction("interlude.advance")}
       >
-        <p className="interlude-line" aria-live="polite" aria-atomic="true">{text}</p>
+        <p
+          className="interlude-line"
+          aria-live="polite"
+          aria-atomic="true"
+          style={{ animationDelay: `-${elapsed}ms` }}
+        >
+          {text}
+        </p>
         <span className="sr-only">{copy.next}</span>
       </Button>
     </section>
@@ -1724,7 +1856,7 @@ function Screen({ view, dispatch, chromeVisible, onRevealChrome, saveSlots }: {
   }
   if (route === "chapter_select") return <ChapterSheet view={view} copy={copy} onAction={onAction} dispatch={dispatch} />;
   if (route === "gallery") return <GallerySheet view={view} copy={copy} onAction={onAction} dispatch={dispatch} />;
-  if (route === "confirm") return <ConfirmationSheet view={view} copy={copy} onAction={onAction} dispatch={dispatch} />;
+  if (route === "confirm") return <ConfirmationSheet view={view} copy={copy} onAction={onAction} />;
   return <Dialogue view={view} copy={copy} onAction={onAction} chromeVisible={chromeVisible} onRevealChrome={onRevealChrome} />;
 }
 
@@ -1785,7 +1917,9 @@ export default function App() {
   const view = output?.view;
   const fallbackCopy = strings(view?.game.locale ?? navigator.language);
   const route = view ? routeName(view.route) : "loading";
-  const isTextOnlyRoute = route === "interlude" || route === "statement";
+  // Interludes fade their black field away to the already selected scene
+  // photograph. Statements remain truly image-less, as authored.
+  const isTextOnlyRoute = route === "statement";
   const tone = toneForScene(output);
   const dayCardTheme = dayCardThemeFor(view);
   const isReadingStage = route === "dialogue"

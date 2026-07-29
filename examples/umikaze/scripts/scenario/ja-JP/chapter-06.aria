@@ -11,7 +11,7 @@ scene novel_chapter_06 {
   background asset("assets/bg/scenes/coast-road-dawn-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 6\n晴れた移動の途中\n夜の駅を越え、海の気配へ向かう。" => novel_chapter_06_story;
+    "DAY 6\nVI\n幸福は、目的地に着くことを意味しない。\n晴れた移動の途中\n夜の駅を越え、海の気配へ向かう。" => novel_chapter_06_story;
   }
 }
 

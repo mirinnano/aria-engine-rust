@@ -1,9 +1,8 @@
 # Aria V3 Rust
 
 This repository is the active Rust-native Aria runtime and the Umikaze
-distribution project. The historical C# / Raylib implementation lives in the
-separate `aria-engine` repository and is not an authoring or release target
-here.
+distribution project. The historical C# / Raylib implementation has been
+retired and is not an authoring or release target here.
 
 ## Verify
 

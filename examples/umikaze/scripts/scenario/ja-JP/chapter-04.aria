@@ -11,7 +11,7 @@ scene novel_chapter_04 {
   background asset("assets/bg/scenes/shore-storm-sunset-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 4\n9月24日・松江\n残そうとする音が、静かな海辺へ続く道を指している。" => novel_chapter_04_story;
+    "DAY 4\nIV\n記録されるのは、幸福の痕跡だけである。\n9月24日・松江\n残そうとする音が、静かな海辺へ続く道を指している。" => novel_chapter_04_story;
   }
 }
 

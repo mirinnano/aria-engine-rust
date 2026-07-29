@@ -11,7 +11,7 @@ scene novel_chapter_05 {
   background asset("assets/bg/scenes/rain-street-evening-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 5\n9月25日・益田\n強い雨が、進む理由を足止めする。" => novel_chapter_05_story;
+    "DAY 5\nV\n幸福への問いは、答えがなくとも消えない。\n9月25日・益田\n強い雨が、進む理由を足止めする。" => novel_chapter_05_story;
   }
 }
 

@@ -11,7 +11,7 @@ scene novel_chapter_01 {
   background asset("assets/bg/scenes/platform-sea-dawn-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 1\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01_story;
+    "DAY 1\nI\n幸福は、理由ではなく現在に示される。\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01_story;
   }
 }
 

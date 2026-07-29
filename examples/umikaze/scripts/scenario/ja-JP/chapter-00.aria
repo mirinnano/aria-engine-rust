@@ -11,7 +11,7 @@ scene novel_chapter_00 {
   background asset("assets/bg/scenes/hospital-corridor-overcast-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "PROLOGUE\n春から九月\n季節だけが先に進む窓辺で、まだ名もない願いが揺れている。" => novel_chapter_00_story;
+    "PROLOGUE\nP\n幸福は、世界のなかの事実ではない。\n春から九月\n季節だけが先に進む窓辺で、まだ名もない願いが揺れている。" => novel_chapter_00_story;
   }
 }
 
