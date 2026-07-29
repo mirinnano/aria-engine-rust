@@ -54,6 +54,7 @@ scene novel_chapter_09_story {
   narrate "俺は受け取って、黙って食った。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.north.grey.ogg") fade 650ms;
   wait breath 300ms;
   narrate "「...ねえ、カズキ」";
   await advance;
@@ -214,6 +215,7 @@ scene novel_chapter_09_story {
   narrate "その白いコードを受け取り、右耳に差し込んだ。";
   await advance;
   clear dialogue;
+  stop bgm fade 900ms;
   wait breath 300ms;
   narrate "流れてきたのは、田儀の海で彼女が録音した、";
   await advance;

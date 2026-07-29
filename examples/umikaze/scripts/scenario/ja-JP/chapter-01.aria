@@ -105,6 +105,7 @@ scene novel_chapter_01_story {
   narrate "ガクンと鈍い衝撃があり、列車がゆっくりと滑り出す。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.rail.departure.ogg") loop fade 500ms;
   wait breath 220ms;
   narrate "ホームの景色が後ろへ後ろへと流れていく。";
   await advance;
@@ -193,6 +194,7 @@ scene novel_chapter_01_story {
   narrate "聞いたところで、俺にできることなんて何もないしな。";
   await advance;
   clear dialogue;
+  stop bgm fade 600ms;
   background asset("#6d706f") with fade(260ms);
   wait 680ms;
   background asset("assets/bg/scenes/platform-sea-dawn-v1.webp") with fade(360ms);

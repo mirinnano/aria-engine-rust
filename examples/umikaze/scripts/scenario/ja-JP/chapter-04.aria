@@ -96,6 +96,7 @@ scene novel_chapter_04_story {
   narrate "洗濯槽が回り始めると、ミオは鞄からMDウォーカーを出した。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.recording.trace.ogg") fade 450ms;
   wait breath 220ms;
   narrate "小さなマイクをつなぎ、回る洗濯機へ向ける。";
   await advance;
@@ -128,6 +129,7 @@ scene novel_chapter_04_story {
   narrate "ミオは録音を止め、MDをその一枚に戻した。";
   await advance;
   clear dialogue;
+  stop bgm fade 650ms;
   wait breath 220ms;
   narrate "洗濯槽が止まるまで、俺たちはほとんど話さなかった。";
   await advance;

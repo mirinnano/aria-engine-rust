@@ -210,6 +210,7 @@ scene novel_chapter_06_story {
   narrate "俺は水２本をカゴに入れ、おにぎりの鮭と昆布、そしてガリガリくんもカゴに入れた。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.everyday.table.ogg") loop fade 450ms;
   wait breath 220ms;
   narrate "俺は近くにいるミオに話しかける。";
   await advance;
@@ -284,6 +285,7 @@ scene novel_chapter_06_story {
   narrate "それに、昨日の夜からずっと降り続いていた陰鬱な雨に比べれば、こんな些細なことなんてどうでもよく感じる。";
   await advance;
   clear dialogue;
+  stop bgm fade 550ms;
   wait breath 300ms;
   narrate "会計を済ませて外に出ると、外は店内に入る前より暑さは増し、一瞬気が飛んだ。";
   await advance;
@@ -496,6 +498,7 @@ scene novel_chapter_06_story {
   narrate "俺は社交辞令を呟き、ロビーのドアを開ける。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.clear-between.ogg") loop fade 600ms;
   wait breath 300ms;
   narrate "クソったれの太陽はまだこの地を強く照らしている。";
   await advance;
@@ -640,6 +643,7 @@ scene novel_chapter_06_story {
   narrate "エンジンは唸りを上げ、窓の外の寂れた街がゆっくりと後方へと流れていった。";
   await advance;
   clear dialogue;
+  stop bgm fade 700ms;
   wait breath 300ms;
   narrate "...";
   await advance;

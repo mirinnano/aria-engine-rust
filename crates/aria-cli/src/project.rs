@@ -297,12 +297,7 @@ fn validate_program_asset_references(
     let mut diagnostics = Vec::new();
     let mut reported = BTreeSet::new();
     for (instruction_index, instruction) in program.instructions.iter().enumerate() {
-        let asset_operand = match instruction.op {
-            ByteOp::Background => Some((0, true, "background")),
-            ByteOp::SpriteImage => Some((1, false, "image")),
-            ByteOp::PlayAudio => Some((2, false, "audio")),
-            _ => None,
-        };
+        let asset_operand = asset_operand(instruction.op);
         let Some((operand_index, accepts_color, kind)) = asset_operand else {
             continue;
         };
@@ -347,6 +342,35 @@ fn validate_program_asset_references(
         }
     }
     diagnostics
+}
+
+/// Returns the literal assets reachable from the selected source import
+/// closure. Manifest fonts are deliberately not included here: every Player
+/// needs those regardless of whether the story mentions them explicitly.
+pub(crate) fn referenced_asset_paths(program: &CompiledProgram) -> BTreeSet<String> {
+    program
+        .instructions
+        .iter()
+        .filter_map(|instruction| {
+            let (operand_index, accepts_color, _) = asset_operand(instruction.op)?;
+            let path = constant_string(program, instruction.operands.get(operand_index)?)?;
+            if accepts_color && path.starts_with('#') {
+                None
+            } else {
+                Some(path.to_owned())
+            }
+        })
+        .collect()
+}
+
+fn asset_operand(op: ByteOp) -> Option<(usize, bool, &'static str)> {
+    match op {
+        ByteOp::Background => Some((0, true, "background")),
+        ByteOp::SpriteImage => Some((1, false, "image")),
+        ByteOp::PlayAudio => Some((2, false, "audio")),
+        ByteOp::PreloadAsset => Some((0, false, "preload")),
+        _ => None,
+    }
 }
 
 fn constant_string<'a>(program: &'a CompiledProgram, operand: &Operand) -> Option<&'a str> {

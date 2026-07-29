@@ -142,6 +142,7 @@ test("automatic checkpoint stays invisible while LOAD exposes only manual record
 });
 
 test("title and transparent RMenu use English commands with a stable localized description", async ({ page }) => {
+  const isDemo = process.env.UMIKAZE_DEMO === "true";
   await page.setViewportSize({ width: 1440, height: 900 });
   await beginJapaneseRecord(page);
   await expect(page.getByRole("button", { name: "START" })).toBeVisible();
@@ -150,7 +151,10 @@ test("title and transparent RMenu use English commands with a stable localized d
   await expect(page.getByRole("button", { name: "CONFIG" })).toBeVisible();
   await expect(page.getByRole("button", { name: "EXIT" })).toBeVisible();
   const titleStage = page.locator(".record-title-screen--home");
-  await expect(titleStage.locator(".record-stage-photograph--night-motion")).toHaveAttribute("src", /night-window-motion-v1-/);
+  await expect(titleStage.locator(".record-stage-photograph--night-motion")).toHaveAttribute(
+    "src",
+    isDemo ? /station-night-pass-v1-/ : /night-window-motion-v1-/,
+  );
   await expect(titleStage.locator(".title-record-card, .record-stage-slip, .title-opening")).toHaveCount(0);
   const titleTypeface = await titleStage.getByRole("heading", { name: "海風" }).evaluate((element) => getComputedStyle(element).fontFamily);
   expect(titleTypeface).toContain("UmikazeTitle");
@@ -184,7 +188,10 @@ test("title and transparent RMenu use English commands with a stable localized d
   expect(titleLayout.quotationCount).toBe(360);
 
   await page.getByRole("button", { name: "LOAD" }).click();
-  await expect(page.getByRole("dialog", { name: "LOAD" }).locator(".record-stage-photograph--understructure")).toHaveAttribute("src", /understructure-evening-v1-/);
+  await expect(page.getByRole("dialog", { name: "LOAD" }).locator(".record-stage-photograph--understructure")).toHaveAttribute(
+    "src",
+    isDemo ? /hospital-corridor-overcast-v1-/ : /understructure-evening-v1-/,
+  );
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "START" }).click();
@@ -334,8 +341,10 @@ test("chapter focus changes only the preview until a command is confirmed", asyn
   await expect(catalogue.locator(".chapter-preview-description"))
     .toHaveText("西へ向かう最初の列車が、朝のホームを離れる。");
   await dayOne.press("Enter");
-  await expect(page.locator(".day-card")).toBeVisible();
-  await expect(page.locator(".day-card").getByRole("heading", { name: "DAY 1" })).toBeVisible();
+  const card = page.locator(".day-card");
+  await expect(card).toBeVisible();
+  await expect(card.locator(".day-card-key")).toHaveText("DAY 1");
+  await expect(card.getByRole("heading", { name: "幸福は、理由ではなく現在に示される。" })).toBeVisible();
   await expect(catalogue.getByText(/^CHAPTER \d+$/)).toHaveCount(0);
 });
 
@@ -405,8 +414,14 @@ test("an interlude is a dark logged story beat and every reading input releases 
   const interlude = page.locator(".interlude-screen");
   await expect(interlude).toBeVisible();
   await expect(interlude.getByText("9月21日　横浜駅 6:00", { exact: true })).toBeVisible();
-  await expect(page.locator(".scene-photograph")).toHaveCount(0);
-  await expect(interlude.locator(".interlude-line")).toHaveCSS("animation-delay", "0.2s");
+  // The black field starts over the selected location photograph and yields
+  // back to it as the authored interlude ends.
+  await expect(page.locator(".scene-photograph")).toHaveCount(1);
+  const phase = await interlude.locator(".interlude-line").evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).animationDelay),
+  );
+  expect(phase).toBeLessThanOrEqual(0);
+  expect(phase).toBeGreaterThanOrEqual(-3.6);
 
   await page.keyboard.press("h");
   const backlog = page.getByRole("dialog", { name: "LOG" });
@@ -436,7 +451,8 @@ test("an automatic statement owns its duration while preserving log and menu esc
     await page.waitForTimeout(8);
   }
   await expect(statement).toBeVisible();
-  await expect(statement.getByText("白い。", { exact: true })).toBeVisible();
+  const statementText = "「だって、人が死ぬとこなんて...わざわざ見る人なんていないもんね」";
+  await expect(statement.getByText(statementText, { exact: true })).toBeVisible();
   await expect(statement.locator("button")).toHaveCount(0);
   await expect(page.locator(".scene-photograph")).toHaveCount(0);
 
@@ -448,13 +464,13 @@ test("an automatic statement owns its duration while preserving log and menu esc
   await page.keyboard.press("h");
   const backlog = page.getByRole("dialog", { name: "LOG" });
   await expect(backlog).toBeVisible();
-  await expect(backlog.getByText("白い。", { exact: true })).toBeVisible();
+  await expect(backlog.getByText(statementText, { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(statement).toBeVisible();
 
   await expect(page.getByRole("region", { name: "読書中" })).toBeVisible({ timeout: 3_500 });
   await waitForCompletedPage(page);
-  await expect(page.locator(".dialogue-text")).toHaveText("いつの間にか、寝ていた。");
+  await expect(page.locator(".dialogue-text")).toHaveText("私はいつものように、窓のむこうを見る。");
 });
 
 test("a story scene selects its deterministic photograph after the chapter interlude", async ({ page }) => {

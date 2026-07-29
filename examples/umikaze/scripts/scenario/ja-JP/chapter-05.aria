@@ -225,6 +225,7 @@ scene novel_chapter_05_story {
   narrate "冷えた缶を口に当てると、雨の音が少し遠くなった。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.rain.room.ogg") loop fade 800ms;
   wait breath 300ms;
   narrate "「なあ」";
   await advance;
@@ -709,6 +710,7 @@ scene novel_chapter_05_story {
   narrate "ミオは布団の中で、少しだけ笑った。";
   await advance;
   clear dialogue;
+  stop bgm fade 700ms;
   wait breath 300ms;
   narrate "俺は財布を取り、濡れた靴を履いた。";
   await advance;

@@ -99,6 +99,9 @@ DAY 11–13は[`docs/story-map.md`](docs/story-map.md)で設計中であり、�
 「もう一度読む」か「タイトルへ戻る」だけを選べる。DAY 5以降の本文・選択肢・画像を
 体験版PAKへ含めない。さらに表示用フロントエンドもDAY 0–4用の章プレビューと場面写真
 だけを解決するため、先の内容がブラウザやデスクトップの展開物から読める形では残らない。
+`aria build --entry`は選択したimport閉包が静的に参照する背景・画像・音声・preloadと、
+必須の`runtime.fonts`だけをPAKへ収録する。公開検証はその一覧をDAY 0–4のallowlistと
+照合するため、後半用BGMや背景の混入もリリースエラーになる。
 
 保存は完成版の`umikaze-v4`と分離した`umikaze-demo-v1`を使う。体験版の初回起動は
 完成版の保存を削除も移行もしない。Tauri版もアプリIDを`jp.example.umikaze.demo`として

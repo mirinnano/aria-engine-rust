@@ -122,6 +122,11 @@ The presentation resolves a separate demo-only scene catalogue and chapter
 preview catalogue too, so later text and photographs are not merely hidden in
 the player bundle. No store URL is embedded until a real store page is
 configured.
+An explicit `aria build --entry` packages only literal background, sprite,
+audio, and preload references reachable from that entry, plus the mandatory
+`runtime.fonts`. Release verification compares the resulting demo PAK
+inventory with a reviewed DAY 0–4 allowlist, so later-game media cannot drift
+into the public archive unnoticed.
 
 The demo owns its save namespace (`umikaze-demo-v1`) and desktop identity
 (`jp.example.umikaze.demo`). It neither reads nor clears the complete game's

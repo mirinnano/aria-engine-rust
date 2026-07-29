@@ -71,6 +71,7 @@ scene novel_chapter_00_story {
   narrate "私はいつものように、窓のむこうを見る。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.ward.first-light.ogg") loop fade 700ms;
   wait breath 220ms;
   narrate "「きれいな桜...」";
   await advance;
@@ -167,6 +168,7 @@ scene novel_chapter_00_story {
   narrate "母親は、ハンカチで涙を拭いた...";
   await advance;
   clear dialogue;
+  stop bgm fade 900ms;
   wait breath 480ms;
   narrate "親の車で、家にたどり着いた。";
   await advance;

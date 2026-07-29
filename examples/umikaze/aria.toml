@@ -14,6 +14,7 @@ asset_roots = ["assets"]
 # not read them. Keep the shipping pak limited to the two role fonts instead
 # of paying startup memory for unused decorative rasters and typefaces.
 asset_excludes = [
+  "assets/audio/bgm/README.md",
   "assets/bg/title-seaside.png",
   "assets/fonts/ShipporiMincho-Regular.ttf",
   "assets/ui/chapter-ornament.png",
@@ -32,6 +33,15 @@ fonts = [
 asset_pack_roles = {
   "assets/fonts/NotoSansJP-Regular.ttf" = "hot",
   "assets/fonts/MPLUS1Code-wght.ttf" = "cold",
+  "assets/audio/bgm/umk.clear-between.ogg" = "cold",
+  "assets/audio/bgm/umk.everyday.table.ogg" = "cold",
+  "assets/audio/bgm/umk.island.distance.ogg" = "cold",
+  "assets/audio/bgm/umk.north.grey.ogg" = "cold",
+  "assets/audio/bgm/umk.rail.departure.ogg" = "cold",
+  "assets/audio/bgm/umk.rain.room.ogg" = "cold",
+  "assets/audio/bgm/umk.recording.trace.ogg" = "cold",
+  "assets/audio/bgm/umk.waiting.window.ogg" = "cold",
+  "assets/audio/bgm/umk.ward.first-light.ogg" = "cold",
   "assets/bg/scenes/blue-twilight-v1.webp" = "cold",
   "assets/bg/scenes/bridge-understructure-v1.webp" = "cold",
   "assets/bg/scenes/coast-road-dawn-v1.webp" = "cold",

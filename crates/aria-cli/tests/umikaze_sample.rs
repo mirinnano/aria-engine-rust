@@ -141,7 +141,7 @@ fn canonical_route_holds_on_day_cards_before_entering_the_source_text() {
     assert_eq!(card.view.route, UiRoute::Custom("day_card".to_owned()));
     assert_eq!(
         card.view.choices[0].label,
-        "PROLOGUE\n春から九月\n季節だけが先に進む窓辺で、まだ名もない願いが揺れている。"
+        "PROLOGUE\nP\n幸福は、世界のなかの事実ではない。\n春から九月\n季節だけが先に進む窓辺で、まだ名もない願いが揺れている。"
     );
     let opening_hold = activate(&mut prologue, 4, "choice:0");
     assert_eq!(opening_hold.view.route, UiRoute::Dialogue);
@@ -159,7 +159,7 @@ fn canonical_route_holds_on_day_cards_before_entering_the_source_text() {
     assert_eq!(card.view.route, UiRoute::Custom("day_card".to_owned()));
     assert_eq!(
         card.view.choices[0].label,
-        "DAY 10\n終点を知らない列車\n灰色の海のそばを、降りる理由のないまま進む。"
+        "DAY 10\nX\n幸福とは、なお次を選びうることである。\n終点を知らない列車\n灰色の海のそばを、降りる理由のないまま進む。"
     );
     let _ = activate(&mut day_ten, 4, "choice:0");
     let opening = day_ten.step(&InputSnapshot::idle(5, 200)).unwrap();
@@ -204,7 +204,7 @@ fn demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four() {
             .view
             .choices
             .iter()
-            .map(|choice| choice.label.as_str())
+            .map(|choice| choice.label.lines().next().unwrap_or_default())
             .collect::<Vec<_>>(),
         vec!["PROLOGUE", "DAY 1", "DAY 2", "DAY 3", "DAY 4"]
     );

@@ -151,9 +151,45 @@ if (bundle.save_namespace !== expectedSaveNamespace) {
   fail(`expected save namespace ${expectedSaveNamespace}, received ${bundle.save_namespace}`);
 }
 if (!Array.isArray(bundle.pak_packs) || bundle.pak_packs.length === 0) fail("bundle has no PAK packs");
+const packagedAssets = [];
+const seenPackagedAssets = new Set();
 for (const pack of bundle.pak_packs) {
   if (typeof pack?.file !== "string" || !pack.file.endsWith(".ariapak")) fail("bundle contains an invalid PAK record");
+  if (!Array.isArray(pack.assets)) fail(`bundle PAK ${pack.file} has no asset inventory`);
+  for (const asset of pack.assets) {
+    if (typeof asset !== "string" || !asset) fail(`bundle PAK ${pack.file} contains an invalid asset path`);
+    if (seenPackagedAssets.has(asset)) fail(`bundle repeats asset ${asset} across PAKs`);
+    seenPackagedAssets.add(asset);
+    packagedAssets.push(asset);
+  }
   requiredFile(safeSitePath(pack.file, "PAK path"), `site/${pack.file}`);
+}
+if (edition === "demo") {
+  // This is a deliberate content boundary, not merely a runtime lock. Any
+  // new opening-arc asset must be reviewed and added here; later-game media
+  // must never be recoverable from the public static download.
+  const expectedDemoAssets = [
+    "assets/audio/bgm/umk.rail.departure.ogg",
+    "assets/audio/bgm/umk.recording.trace.ogg",
+    "assets/audio/bgm/umk.ward.first-light.ogg",
+    "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
+    "assets/bg/scenes/hotel-corridor-blue-v1.webp",
+    "assets/bg/scenes/neon-alley-v1.webp",
+    "assets/bg/scenes/okayama-rail-window-v1.webp",
+    "assets/bg/scenes/platform-sea-dawn-v1.webp",
+    "assets/bg/scenes/rail-window-sunset-v1.webp",
+    "assets/bg/scenes/rain-street-evening-v1.webp",
+    "assets/bg/scenes/sannomiya-rain-platform-v1.webp",
+    "assets/bg/scenes/shore-storm-sunset-v1.webp",
+    "assets/fonts/MPLUS1Code-wght.ttf",
+    "assets/fonts/NotoSansJP-Regular.ttf",
+  ].sort();
+  const actualDemoAssets = [...packagedAssets].sort();
+  if (JSON.stringify(actualDemoAssets) !== JSON.stringify(expectedDemoAssets)) {
+    const unexpected = actualDemoAssets.filter((asset) => !expectedDemoAssets.includes(asset));
+    const missing = expectedDemoAssets.filter((asset) => !actualDemoAssets.includes(asset));
+    fail(`demo PAK asset boundary drifted (unexpected: ${unexpected.join(", ") || "none"}; missing: ${missing.join(", ") || "none"})`);
+  }
 }
 requiredFile(resolve(site, "game.ariac"), "site/game.ariac");
 

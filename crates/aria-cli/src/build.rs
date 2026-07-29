@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use aria_core::Severity;
 use aria_core::pak::AssetInput;
+use aria_core::{CompiledProgram, Severity};
 use aria_protection::{
     LicensePolicy, PakBuildInput, PakEncryptionKey, PakPackage, PakProfile, PakRole, PakSigningKey,
     StaticPakKeyProvider,
@@ -18,7 +18,7 @@ use crate::package_runtime::{
     copy_native_player, copy_web_runtime, native_player_filename, resolve_native_player,
     resolve_web_runtime, validate_native_player, validate_web_runtime_package,
 };
-use crate::project::{AssetInventory, LoadedProject};
+use crate::project::{AssetInventory, LoadedProject, referenced_asset_paths};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -323,7 +323,12 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
     let ariac = program.encode()?;
     let asset_inventory = project.asset_inventory()?;
     project.validate_bundled_fonts(&asset_inventory, release)?;
-    let assets_by_role = collect_assets_by_role(&project, &asset_inventory)?;
+    // An explicit entry override defines a content-limited edition (for
+    // example, Umikaze DAY 0–4). Package only the selected import closure's
+    // literal assets plus the mandatory runtime fonts. Ordinary builds retain
+    // the manifest's complete asset inventory for DLC/dynamic pack workflows.
+    let assets_by_role =
+        collect_assets_by_role(&project, &asset_inventory, entry.map(|_| &program))?;
 
     let ariac_blake3 = blake3::hash(&ariac).to_hex().to_string();
     let mut built_packs = Vec::new();
@@ -682,9 +687,21 @@ fn split_key_value(value: &str, default_id: &str) -> (String, String) {
 fn collect_assets_by_role(
     project: &LoadedProject,
     inventory: &AssetInventory,
+    reachable_program: Option<&CompiledProgram>,
 ) -> Result<BTreeMap<PakRole, Vec<AssetInput>>> {
     let mut assets = BTreeMap::<PakRole, Vec<AssetInput>>::new();
+    let included_paths = reachable_program.map(|program| {
+        let mut paths = referenced_asset_paths(program);
+        paths.extend(project.manifest.runtime.fonts.iter().cloned());
+        paths
+    });
     for (logical_path, disk_path) in inventory.iter() {
+        if included_paths
+            .as_ref()
+            .is_some_and(|paths| !paths.contains(logical_path))
+        {
+            continue;
+        }
         let role = project
             .manifest
             .runtime
@@ -1482,6 +1499,54 @@ await writeFile(`${output}/service-worker.js`, "const CACHE = '__ARIA_WEB_CACHE_
         assert!(out.join("game.cold.ariapak").is_file());
         let cold = PakArchive::open(&fs::read(out.join("game.cold.ariapak")).unwrap()).unwrap();
         assert_eq!(cold.read("assets/data.txt").unwrap(), b"asset");
+    }
+
+    #[test]
+    fn entry_override_excludes_assets_outside_the_selected_import_closure() {
+        let temp = tempfile::tempdir().unwrap();
+        project(temp.path());
+        fs::write(
+            temp.path().join("scripts/demo.aria"),
+            "aria;\n\
+             entry demo;\n\
+             scene demo {\n\
+               preload asset(\"assets/demo.txt\");\n\
+               say ミオ: \"体験版。\";\n\
+               await advance;\n\
+               end;\n\
+             }\n",
+        )
+        .unwrap();
+        fs::write(temp.path().join("assets/demo.txt"), "demo").unwrap();
+        fs::write(temp.path().join("assets/full-only.txt"), "full").unwrap();
+
+        let out = temp.path().join("demo-output");
+        build_project_with_profile_and_keys_and_runtime_overrides(
+            temp.path(),
+            BuildTarget::LinuxX64,
+            Some(&out),
+            false,
+            BuildProfile::Dev,
+            PakBuildKeys::default(),
+            Some(false),
+            None,
+            Some("scripts/demo.aria"),
+            Some("test-demo"),
+        )
+        .unwrap();
+
+        let bundle: BundleManifest =
+            serde_json::from_slice(&fs::read(out.join("bundle.aria.json")).unwrap()).unwrap();
+        let packaged_assets = bundle
+            .pak_packs
+            .iter()
+            .flat_map(|pack| pack.assets.iter().map(String::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(packaged_assets, vec!["assets/demo.txt"]);
+        let pak = PakArchive::open(&fs::read(out.join("game.ariapak")).unwrap()).unwrap();
+        assert_eq!(pak.read("assets/demo.txt").unwrap(), b"demo");
+        assert!(pak.read("assets/data.txt").is_err());
+        assert!(pak.read("assets/full-only.txt").is_err());
     }
 
     #[test]

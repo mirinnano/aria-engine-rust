@@ -26,6 +26,7 @@ scene novel_chapter_07_story {
   narrate "待合室の窓は白く曇っている。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.waiting.window.ogg") loop fade 600ms;
   wait breath 220ms;
   narrate "ベンチの隣で、ミオが温かいココアの缶を持っていた。";
   await advance;
@@ -62,6 +63,7 @@ scene novel_chapter_07_story {
   narrate "甘い匂いが、始発前の待合室に少しだけ残った。";
   await advance;
   clear dialogue;
+  stop bgm fade 700ms;
   wait breath 300ms;
   narrate "「今日、行けるか」";
   await advance;
@@ -362,6 +364,7 @@ scene novel_chapter_07_story {
   narrate "俺はペダルを踏み込み、潮風を切り裂いて走り出す。";
   await advance;
   clear dialogue;
+  play bgm asset("assets/audio/bgm/umk.island.distance.ogg") fade 650ms;
   wait breath 220ms;
   narrate "緩やかな坂道を下ると、眼下にキラキラと光る瀬戸内海が広がった。";
   await advance;
@@ -524,6 +527,7 @@ scene novel_chapter_07_story {
   narrate "俺はゆっくりとペダルを漕ぐ。";
   await advance;
   clear dialogue;
+  stop bgm fade 800ms;
   wait breath 300ms;
   narrate "霧はまだ晴れない。";
   await advance;
