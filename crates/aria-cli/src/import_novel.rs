@@ -178,6 +178,12 @@ enum NovelDirection {
     AshPause {
         duration_ms: u32,
     },
+    /// A hard absence used only for irreversible thresholds and substantial
+    /// time cuts. Unlike `ash`, this removes the scene into near-black before
+    /// returning to the same location.
+    BlackPause {
+        duration_ms: u32,
+    },
     /// A deliberate beat after a reader has released the preceding line.
     /// The source names it either `breath` or `drift`; runtime work is the
     /// same quiet, player-independent hold, while the distinction remains
@@ -198,6 +204,7 @@ enum NovelDirection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StatementField {
     Ash,
+    Black,
     Sea,
 }
 
@@ -205,6 +212,7 @@ impl StatementField {
     fn asset(self) -> &'static str {
         match self {
             Self::Ash => "#6d706f",
+            Self::Black => "#05070b",
             Self::Sea => "#244e5a",
         }
     }
@@ -212,6 +220,7 @@ impl StatementField {
     fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "ash" => Some(Self::Ash),
+            "black" => Some(Self::Black),
             "sea" => Some(Self::Sea),
             _ => None,
         }
@@ -223,6 +232,8 @@ impl StatementField {
 /// the manuscript never needs to know a frontend-specific import name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackdropTone {
+    Ash,
+    Ferry,
     Ward,
     Platform,
     Hotel,
@@ -235,6 +246,8 @@ enum BackdropTone {
 impl BackdropTone {
     fn asset(self) -> &'static str {
         match self {
+            Self::Ash => "#6d706f",
+            Self::Ferry => "assets/bg/scenes/ferry-fog-morning-v1.webp",
             Self::Ward => "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
             Self::Platform => "assets/bg/scenes/platform-sea-dawn-v1.webp",
             Self::Hotel => "assets/bg/scenes/hotel-corridor-blue-v1.webp",
@@ -247,6 +260,8 @@ impl BackdropTone {
 
     fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "ash" => Some(Self::Ash),
+            "ferry" => Some(Self::Ferry),
             "ward" => Some(Self::Ward),
             "platform" => Some(Self::Platform),
             "hotel" => Some(Self::Hotel),
@@ -676,6 +691,12 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
             duration_ms,
         })));
     }
+    if let Some(milliseconds) = normalized.strip_prefix("pause black ") {
+        let duration_ms = parse_control_duration("pause black", milliseconds)?;
+        return Ok(Some(NovelControl::Direction(NovelDirection::BlackPause {
+            duration_ms,
+        })));
+    }
     if let Some(rest) = normalized.strip_prefix("pause ") {
         let mut parts = rest.split_whitespace();
         let style = parts.next().unwrap_or_default();
@@ -693,7 +714,7 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
     if let Some(tone) = normalized.strip_prefix("backdrop ") {
         let Some(tone) = BackdropTone::parse(tone) else {
             bail!(
-                "unsupported backdrop directive '{command}'; use ward, platform, hotel, shore, rail, rain, or city"
+                "unsupported backdrop directive '{command}'; use ash, ferry, ward, platform, hotel, shore, rail, rain, or city"
             );
         };
         return Ok(Some(NovelControl::Direction(NovelDirection::Backdrop {
@@ -702,7 +723,7 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
     }
     if let Some(field) = normalized.strip_prefix("statement ") {
         let Some(field) = StatementField::parse(field) else {
-            bail!("unsupported statement directive '{command}'; use ash or sea");
+            bail!("unsupported statement directive '{command}'; use ash, black, or sea");
         };
         return Ok(Some(NovelControl::Statement(field)));
     }
@@ -755,6 +776,7 @@ fn with_semantic_breaths(beats: Vec<NovelBeat>) -> Vec<NovelBeat> {
             Some(NovelBeat::Breath { .. })
                 | Some(NovelBeat::Direction(
                     NovelDirection::AshPause { .. }
+                        | NovelDirection::BlackPause { .. }
                         | NovelDirection::QuietPause { .. }
                         | NovelDirection::Wait { .. }
                         | NovelDirection::Backdrop { .. }
@@ -1102,8 +1124,18 @@ fn render_umikaze_chapter_content(
     output.push_str("  wait 180ms;\n");
 
     let mut current_background = style.background.to_owned();
+    let mut heading_seen = false;
+    let mut previous_was_scene_cut = false;
     for beat in &chapter.beats {
-        render_umikaze_beat(output, chapter, style, beat, &mut current_background);
+        render_umikaze_beat(
+            output,
+            chapter,
+            style,
+            beat,
+            &mut current_background,
+            &mut heading_seen,
+            &mut previous_was_scene_cut,
+        );
     }
 
     output.push_str(&format!(
@@ -1760,11 +1792,11 @@ fn verify_structural_turn(
     }
     let has_pov_turn = statements.windows(3).any(|window| {
         matches!(&window[0].kind, StatementKind::ClearDialogue)
-            && is_background_fade(&window[1], "#284b59", 360)
+            && is_background_fade_through_black(&window[1], "#284b59", 640)
             && matches!(
                 &window[2].kind,
                 StatementKind::Wait {
-                    duration_ms: 360,
+                    duration_ms: 640,
                     ..
                 }
             )
@@ -1831,6 +1863,45 @@ fn verify_stage_directions(
             chapter.source_name,
             expected_ash_holds,
             actual_ash_holds
+        );
+    }
+
+    let expected_black_holds = directions
+        .iter()
+        .filter_map(|direction| match direction {
+            NovelDirection::BlackPause { duration_ms } => Some(*duration_ms),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let actual_black_holds = statements
+        .windows(5)
+        .filter_map(|window| {
+            if !matches!(&window[0].kind, StatementKind::ClearDialogue)
+                || !is_background_fade(&window[1], "#05070b", 260)
+                || !is_any_background_fade(&window[3], 360)
+                || !matches!(
+                    &window[4].kind,
+                    StatementKind::Wait {
+                        duration_ms: 180,
+                        ..
+                    }
+                )
+            {
+                return None;
+            }
+            match &window[2].kind {
+                StatementKind::Wait { duration_ms, .. } => Some(*duration_ms),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    if actual_black_holds != expected_black_holds {
+        bail!(
+            "{} black-pause mismatch for source {}: expected {:?}, found {:?}",
+            path.display(),
+            chapter.source_name,
+            expected_black_holds,
+            actual_black_holds
         );
     }
 
@@ -1901,7 +1972,8 @@ fn verify_stage_directions(
             match &window[1].kind {
                 StatementKind::Background { asset, transition: Some(transition) }
                     if matches!(transition.kind, aria_core::modern::TransitionKind::FadeThroughBlack)
-                        && transition.duration_ms == Some(640) =>
+                        && transition.duration_ms == Some(640)
+                        && expected_backdrops.contains(&asset.path.as_str()) =>
                 {
                     Some(asset.path.as_str())
                 }
@@ -1992,6 +2064,21 @@ fn is_background_fade(statement: &Statement, path: &str, duration_ms: u32) -> bo
     )
 }
 
+fn is_background_fade_through_black(statement: &Statement, path: &str, duration_ms: u32) -> bool {
+    matches!(
+        &statement.kind,
+        StatementKind::Background {
+            asset,
+            transition: Some(transition),
+        } if asset.path == path
+            && matches!(
+                transition.kind,
+                aria_core::modern::TransitionKind::FadeThroughBlack
+            )
+            && transition.duration_ms == Some(duration_ms)
+    )
+}
+
 fn is_any_background_fade(statement: &Statement, duration_ms: u32) -> bool {
     matches!(
         &statement.kind,
@@ -2039,6 +2126,10 @@ fn render_plain_direction(output: &mut String, direction: &NovelDirection) {
             output.push_str("  clear dialogue;\n");
             output.push_str(&format!("  wait {duration_ms}ms;\n"));
         }
+        NovelDirection::BlackPause { duration_ms } => {
+            output.push_str("  clear dialogue;\n");
+            output.push_str(&format!("  wait {duration_ms}ms;\n"));
+        }
         NovelDirection::QuietPause { duration_ms } => {
             output.push_str("  clear dialogue;\n");
             output.push_str(&format!("  wait {duration_ms}ms;\n"));
@@ -2056,7 +2147,11 @@ fn render_umikaze_beat(
     style: &UmikazeChapterStyle,
     beat: &NovelBeat,
     current_background: &mut String,
+    heading_seen: &mut bool,
+    previous_was_scene_cut: &mut bool,
 ) {
+    let preceding_cut = *previous_was_scene_cut;
+    *previous_was_scene_cut = false;
     match beat {
         NovelBeat::Reading { speaker, text } => {
             render_text_beat(output, speaker.as_deref(), text);
@@ -2088,10 +2183,30 @@ fn render_umikaze_beat(
             output.push_str("  wait 180ms;\n");
         }
         NovelBeat::Heading { text } => {
+            // The first heading is the chapter's opening record and already
+            // follows the day-card fade. Later headings are authored time or
+            // viewpoint cuts (Day 0 has two of them); give those cuts a real
+            // dark interval instead of merely swapping the subtitle route.
+            // A structural break immediately before a heading already
+            // supplied the dark interval. Do not stack two blackouts for the
+            // same authored cut.
+            let scene_cut = *heading_seen && !preceding_cut;
             output.push_str("  clear dialogue;\n");
+            if scene_cut {
+                output.push_str("  background asset(\"#05070b\") with fade(640ms);\n");
+                output.push_str("  wait 640ms;\n");
+            }
+            *heading_seen = true;
             output.push_str("  screen interlude;\n");
             output.push_str(&format!("  narrate \"{}\";\n", escape_string(text)));
             output.push_str("  wait 1000ms;\n");
+            if scene_cut && current_background != "#05070b" {
+                output.push_str(&format!(
+                    "  background asset(\"{}\") with fade(360ms);\n",
+                    current_background
+                ));
+                output.push_str("  wait 360ms;\n");
+            }
             output.push_str("  screen dialogue;\n");
             output.push_str("  clear dialogue;\n");
             output.push_str("  wait 220ms;\n");
@@ -2108,8 +2223,10 @@ fn render_umikaze_beat(
                 style.background
             };
             let changed = current_background != target;
+            let through_black = changed
+                && ((is_scene_asset(current_background) && is_scene_asset(target))
+                    || (chapter.source_name == "00_init.md" && target == "#284b59"));
             if changed {
-                let through_black = is_scene_asset(current_background) && is_scene_asset(target);
                 let transition = if through_black {
                     "fade_through_black(640ms)"
                 } else {
@@ -2120,13 +2237,16 @@ fn render_umikaze_beat(
                 ));
                 *current_background = target.to_owned();
             }
-            output.push_str(if changed && is_scene_asset(target) {
+            output.push_str(if changed && (is_scene_asset(target) || through_black) {
                 "  wait 640ms;\n"
             } else if changed {
                 "  wait 360ms;\n"
             } else {
                 "  wait 700ms;\n"
             });
+            if through_black {
+                *previous_was_scene_cut = true;
+            }
         }
         NovelBeat::Direction(direction) => match direction {
             NovelDirection::FadeOut { duration_ms } => {
@@ -2158,6 +2278,16 @@ fn render_umikaze_beat(
                 ));
                 output.push_str("  wait 180ms;\n");
             }
+            NovelDirection::BlackPause { duration_ms } => {
+                output.push_str("  clear dialogue;\n");
+                output.push_str("  background asset(\"#05070b\") with fade(260ms);\n");
+                output.push_str(&format!("  wait {duration_ms}ms;\n"));
+                output.push_str(&format!(
+                    "  background asset(\"{}\") with fade(360ms);\n",
+                    current_background
+                ));
+                output.push_str("  wait 180ms;\n");
+            }
             NovelDirection::QuietPause { duration_ms } => {
                 output.push_str("  clear dialogue;\n");
                 output.push_str(&format!("  wait {duration_ms}ms;\n"));
@@ -2170,6 +2300,7 @@ fn render_umikaze_beat(
                 ));
                 output.push_str("  wait 640ms;\n");
                 *current_background = tone.asset().to_owned();
+                *previous_was_scene_cut = true;
             }
         },
     }
@@ -2340,6 +2471,39 @@ mod tests {
     }
 
     #[test]
+    fn black_holds_and_backgroundless_fields_remain_authored_stage_cues() {
+        let beats = parse_beats(
+            "pacing explicit\n\n前の文。\n\npause black 880\n\nbackdrop ash\n\nbackdrop ferry\n\nstatement black\n\n消える。\n\n次の文。\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            beats,
+            vec![
+                NovelBeat::Reading {
+                    speaker: None,
+                    text: "前の文。".to_owned(),
+                },
+                NovelBeat::Direction(NovelDirection::BlackPause { duration_ms: 880 }),
+                NovelBeat::Direction(NovelDirection::Backdrop {
+                    tone: BackdropTone::Ash,
+                }),
+                NovelBeat::Direction(NovelDirection::Backdrop {
+                    tone: BackdropTone::Ferry,
+                }),
+                NovelBeat::Statement {
+                    text: "消える。".to_owned(),
+                    field: StatementField::Black,
+                },
+                NovelBeat::Reading {
+                    speaker: None,
+                    text: "次の文。".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn umikaze_statement_is_an_automatic_atomic_story_surface() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
@@ -2451,6 +2615,52 @@ mod tests {
             ],
         });
         assert!(!compiled.has_errors(), "{:#?}", compiled.diagnostics);
+    }
+
+    #[test]
+    fn umikaze_heading_cuts_blackout_only_unpaired_scene_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("src");
+        fs::create_dir_all(&source).unwrap();
+        for style in &UMIKAZE_CHAPTER_STYLES {
+            fs::write(source.join(style.source_name), "本文。\n").unwrap();
+        }
+        fs::write(
+            source.join("00_init.md"),
+            "pacing explicit\n\n**春**\n\n最初。\n\n**道**\n\n二つ目。\n\n# side2\n\n**保健室**\n\n三つ目。\n",
+        )
+        .unwrap();
+        let output = temp.path().join("generated/umikaze.aria");
+        let include = UMIKAZE_CHAPTER_STYLES
+            .iter()
+            .map(|style| style.source_name.to_owned())
+            .collect();
+
+        import_novel_with_options(
+            &source,
+            &output,
+            NovelImportOptions {
+                chapter_select: "chapter_select_ja".to_owned(),
+                locale: "ja-JP".to_owned(),
+                include,
+                presentation: NovelPresentation::Umikaze,
+                layout: NovelImportLayout::Single,
+            },
+        )
+        .unwrap();
+
+        let generated = fs::read_to_string(&output).unwrap();
+        // The second heading is a real time cut; the third follows a
+        // structural POV cut and must not receive a second blackout.
+        assert_eq!(
+            generated
+                .matches("background asset(\"#05070b\") with fade(640ms);")
+                .count(),
+            1
+        );
+        assert!(generated.contains(
+            "background asset(\"#284b59\") with fade_through_black(640ms);\n  wait 640ms;"
+        ));
     }
 
     #[test]

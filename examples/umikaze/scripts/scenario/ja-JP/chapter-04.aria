@@ -3,7 +3,7 @@
 aria;
 module umikaze.scenario.ja.chapter_04;
 
-// Source: 04_day4.md — 117 player-visible beats
+// Source: 04_day4.md — 127 player-visible beats
 scene novel_chapter_04 {
   locale "ja-JP";
   persistent flag "canonical_chapter_04_seen" = true;
@@ -61,6 +61,10 @@ scene novel_chapter_04_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
+  narrate "ユニットバスで交代に着替え、脱いだ服を紙袋へ詰めた。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
   narrate "外に出ると、冷たい空気が顔に当たった。";
   await advance;
   clear dialogue;
@@ -72,8 +76,9 @@ scene novel_chapter_04_story {
   narrate "駅前のコインランドリーに入った。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
-  narrate "客はいない。俺たちは交代で着替え、服を一つの洗濯機へ押し込んだ。";
+  background asset("#6d706f") with fade_through_black(640ms);
+  wait 640ms;
+  narrate "客はいない。紙袋の服を一つの洗濯機へ押し込んだ。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -102,14 +107,14 @@ scene novel_chapter_04_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "「九月二十四日。松江のコインランドリー。私とカズキの服が回ってる」";
+  narrate "「九月二十四日。松江のコインランドリー。私と君の服が回ってる」";
   await advance;
   clear dialogue;
   wait breath 220ms;
   narrate "機械音の中で、ミオの声だけが残った。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  wait 620ms;
   narrate "「残しておけば、あとで聞けるでしょ」";
   await advance;
   clear dialogue;
@@ -126,7 +131,7 @@ scene novel_chapter_04_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "ミオは録音を止め、MDをその一枚に戻した。";
+  narrate "ミオは録音を止め、ディスクを取り出して、半透明のケースへ戻した。";
   await advance;
   clear dialogue;
   stop bgm fade 650ms;
@@ -138,9 +143,47 @@ scene novel_chapter_04_story {
   narrate "最後に、蓋のロックが外れる音だけがした。";
   await advance;
   clear dialogue;
-  background asset("assets/bg/scenes/rail-window-sunset-v1.webp") with fade_through_black(640ms);
-  wait 640ms;
-  narrate "洗濯を終え、駅へ向かう。";
+  wait breath 220ms;
+  narrate "ポケットの中で、J-PHONEの角が指に当たった。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "三ノ宮で切ったままの電源を入れる。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "起動音のあと、着信を知らせる通知が続けて届いた。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "画面の隅に、十四件、と表示されている。";
+  await advance;
+  clear dialogue;
+  background asset("#05070b") with fade(260ms);
+  wait 1000ms;
+  background asset("#6d706f") with fade(360ms);
+  wait 180ms;
+  narrate "名前は開かなかった。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "保存した写真を一枚だけ表示する。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "小さな液晶の中に、あの日の青い海があった。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "折りたたみを閉じ、もう一度、電源を切った。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "洗濯を終え、ホテルへ戻って鍵を返した。";
+  await advance;
+  clear dialogue;
+  wait breath 220ms;
+  narrate "そのまま駅へ向かう。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -187,7 +230,8 @@ scene novel_chapter_04_story {
   narrate "切符を買い、二両編成の気動車に乗り込む。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  background asset("assets/bg/scenes/rail-window-sunset-v1.webp") with fade_through_black(640ms);
+  wait 640ms;
   narrate "宍道湖が車窓の後ろへ流れ、しばらくすると、日本海が見えた。";
   await advance;
   clear dialogue;
@@ -217,7 +261,7 @@ scene novel_chapter_04_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "ミオはMDレコーダーを取り出し、古びた階段を小走りで降りていった。";
+  narrate "ミオはMDウォーカーを取り出し、古びた階段を小走りで降りていった。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -284,7 +328,7 @@ scene novel_chapter_04_story {
   narrate "振り返ると、ミオは波のほうを見たまま、何も言わない。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  wait 700ms;
   narrate "俺は手を差し出した。";
   await advance;
   clear dialogue;
@@ -359,7 +403,8 @@ scene novel_chapter_04_story {
   narrate "俺は痺れた右手を一度握って、立ち上がった。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  background asset("assets/bg/scenes/neon-alley-v1.webp") with fade_through_black(640ms);
+  wait 640ms;
   narrate "改札を抜けると、人の姿が少ない街があった。";
   await advance;
   clear dialogue;
@@ -379,7 +424,8 @@ scene novel_chapter_04_story {
   narrate "管理人に現金を渡し、鍵を受け取った。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  background asset("assets/bg/scenes/hotel-corridor-blue-v1.webp") with fade_through_black(640ms);
+  wait 640ms;
   narrate "部屋には、細いベッドが二つ、壁際に並んでいた。";
   await advance;
   clear dialogue;
@@ -387,7 +433,8 @@ scene novel_chapter_04_story {
   narrate "荷物を置き、買い出しに出る。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  background asset("assets/bg/scenes/neon-alley-v1.webp") with fade_through_black(640ms);
+  wait 640ms;
   narrate "暗い道を十分ほど歩き、国道沿いのコンビニに入った。";
   await advance;
   clear dialogue;
@@ -412,7 +459,7 @@ scene novel_chapter_04_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "俺は上着を脱ぎ、ミオの頭へかけた。";
+  narrate "俺は制服のカーディガンを脱ぎ、ミオの頭へかけた。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -432,7 +479,8 @@ scene novel_chapter_04_story {
   narrate "ホテルへ戻る頃には、二人とも濡れていた。";
   await advance;
   clear dialogue;
-  wait breath 220ms;
+  background asset("assets/bg/scenes/hotel-corridor-blue-v1.webp") with fade_through_black(640ms);
+  wait 640ms;
   narrate "「先、風呂入れ」";
   await advance;
   clear dialogue;
