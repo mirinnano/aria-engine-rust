@@ -3,7 +3,7 @@ schema = 4
 [game]
 id = "jp.example.umikaze"
 version = "3.2.0"
-title = "海風 — The Records of Autumn"
+title = "無意味な生にて、なお。"
 
 [runtime]
 entry = "scripts/main.aria"

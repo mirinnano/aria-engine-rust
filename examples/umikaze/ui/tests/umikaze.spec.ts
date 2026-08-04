@@ -5,7 +5,7 @@ async function beginJapaneseRecord(page: import("@playwright/test").Page) {
   // root host. Vite emits relative assets, so the test must not throw away a
   // configured base path by navigating to the origin root.
   await page.goto("./");
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "無意味な生にて、なお。" })).toBeVisible();
   await expect(page.getByRole("button", { name: "日本語" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "English" })).toHaveCount(0);
 }
@@ -68,11 +68,11 @@ test("title load opens a record table and explains an empty slot", async ({ page
 
 test("the public release enters the Japanese title without language setup", async ({ page }) => {
   await page.goto("./");
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "無意味な生にて、なお。" })).toBeVisible();
   await expect(page.getByRole("button", { name: "日本語" })).toHaveCount(0);
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "無意味な生にて、なお。" })).toBeVisible();
   await expect(page.getByRole("button", { name: "日本語" })).toHaveCount(0);
 });
 
@@ -114,13 +114,13 @@ test("a warmed offline PWA reopens the reader from its static-host subpath", asy
   // the document before network access is withdrawn.
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "無意味な生にて、なお。" })).toBeVisible();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
 
   await context.setOffline(true);
   try {
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "無意味な生にて、なお。" })).toBeVisible();
     await page.getByRole("button", { name: "START" }).click();
     await page.getByRole("dialog", { name: "CHAPTERS" })
       .getByRole("button", { name: /PROLOGUE/ }).click();
@@ -156,7 +156,7 @@ test("title and transparent RMenu use English commands with a stable localized d
     isDemo ? /station-night-pass-v1-/ : /night-window-motion-v1-/,
   );
   await expect(titleStage.locator(".title-record-card, .record-stage-slip, .title-opening")).toHaveCount(0);
-  const titleTypeface = await titleStage.getByRole("heading", { name: "海風" }).evaluate((element) => getComputedStyle(element).fontFamily);
+  const titleTypeface = await titleStage.getByRole("heading", { name: "無意味な生にて、なお。" }).evaluate((element) => getComputedStyle(element).fontFamily);
   expect(titleTypeface).toContain("UmikazeTitle");
   await expect(titleStage.locator(".record-stage-quotation--tractatus-silence"))
     .toContainText("語ることのできないものについては、沈黙しなければならない。");

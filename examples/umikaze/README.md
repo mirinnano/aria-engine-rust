@@ -1,4 +1,7 @@
-# 海風 Aria sample
+# 無意味な生にて、なお。 — Aria sample
+
+正式タイトルは **無意味な生にて、なお。**。`umikaze` / `海風` は、保存領域・論理アセット名・
+ビルド用識別子に残る旧開発名であり、表示名の互換性とは分離して扱う。
 
 This is the single-`aria;` semantic-runtime sample for the umikaze vertical
 slice. The historical NScripter/C# sources were retired with the legacy
@@ -51,16 +54,23 @@ preference after startup.
 越えた後なら次の入力で解放できる。
 単独の `...`／`……` は字幕を消した620msの硬い沈黙になる。`pause ash <ms>` は原稿にだけ
 書ける明示指示で、灰色の無景色へ260msで退き、指定時間を保持したのち、その時点の背景へ
-360msで戻る。章や場所の移動は `fade_through_black(640ms)` と黒い保持を通る。
+360msで戻る。`pause black <ms>` は戻れない選択や大きな時間断絶だけに使い、近い黒へ退いて
+同じ場所へ戻る。章や場所の移動は `fade_through_black(640ms)` と黒い保持を通る。
 
 Day 0〜4は先頭に `pacing explicit` を置く。この章ではMarkdownの空行を時間へ変換しない。
 代わりに、作者が必要な箇所だけ `pause breath <ms>`／`pause drift <ms>`（字幕を消して自動で
 待つ）、`backdrop <ward|platform|hotel|shore|rail|rain|city>`（静かな背景遷移）、
-`statement <ash|sea>` を記す。`statement` は直後の無話者の一行を、プレイヤーが送れない
+`backdrop ash` は写真が意味を説明しすぎる場面を持続する無景色へ移す。`statement <ash|black|sea>`
+は直後の無話者の一行を、プレイヤーが送れない
 中央の単色フィールドへ一度だけ出す。本文はタイプライタにせず、フェードイン・保持・
 フェードアウトまで自動で終える。Day 5では原稿の暗転・待機・フェードインを暗い保持と
 病室色への遷移として保ち、Day 10末尾だけは暗い色をゆっくり残す。新しい地の文・台詞・
 事実は生成していない。
+
+暗転は全場面に配る装飾ではない。場所移動を表す `backdrop`、日付・視点の断絶を表す
+章内見出し、そして作者が明示した回想だけが暗転の候補になる。直前に構造分割がある場合は
+一回にまとめ、同じ切れ目へ二重の黒を置かない。Day 0–10を本文の因果と照合した判定表は
+[`docs/scene-transition-rules.md`](docs/scene-transition-rules.md) に残している。
 
 原文の更新を反映するときは、必ず本文レビュー後にDay 0〜10を明示指定する。まず
 `--verify` で既存Ariaを**書き換えずに**検証する。この検証はMarkdownとAria ASTの

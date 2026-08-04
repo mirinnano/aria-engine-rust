@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Umikaze",
+  "productName": "無意味な生にて、なお。",
   "version": "3.2.0",
   "identifier": "jp.example.umikaze",
   "build": {
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "海風 — The Records of Autumn",
+        "title": "無意味な生にて、なお。 — The Records of Autumn",
         "width": 1280,
         "height": 720,
         "minWidth": 390,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Umikaze Demo",
+  "productName": "無意味な生にて、なお。 体験版",
   "version": "3.2.0",
   "identifier": "jp.example.umikaze.demo",
   "mainBinaryName": "umikaze-demo",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "海風 — 体験版",
+        "title": "無意味な生にて、なお。 — 体験版",
         "width": 1280,
         "height": 720,
         "minWidth": 390,

@@ -43,7 +43,10 @@ export const sceneAssetByTone: Record<string, SceneAsset> = {
   platform: { source: sceneSources.station, name: "station" },
   mist: { source: sceneSources["rail-sunset"], name: "rail-sunset" },
   "rail-sunset": { source: sceneSources["rail-sunset"], name: "rail-sunset" },
-  hotel: { source: sceneSources.ward, name: "corridor" },
+  // A hotel is not a hospital. Keep the fallback semantically honest when
+  // a native logical-path command is not available during a transitional
+  // frame or while an older save is being restored.
+  hotel: { source: sceneSources["hotel-blue"], name: "hotel-blue" },
   blue: { source: sceneSources.shore, name: "storm-shore" },
   city: { source: sceneSources.rain, name: "rain" },
   "rain-city": { source: sceneSources.rain, name: "rain" },
