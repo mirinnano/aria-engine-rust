@@ -48,7 +48,7 @@ async function waitForCompletedPage(page: import("@playwright/test").Page) {
 
 async function autosaveGenerations(page: import("@playwright/test").Page): Promise<number[]> {
   const namespace = process.env.UMIKAZE_DEMO === "true" ? "umikaze-demo-v2" : "umikaze-v5";
-  return page.evaluate(async () => {
+  return page.evaluate(async (namespace) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(`aria-v3-${namespace}`, 1);
       request.onsuccess = () => resolve(request.result);
@@ -65,7 +65,7 @@ async function autosaveGenerations(page: import("@playwright/test").Page): Promi
     } finally {
       database.close();
     }
-  });
+  }, namespace);
 }
 
 async function expectOneAutosaveAfterRestore(
