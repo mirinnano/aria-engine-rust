@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use accesskit_winit::WindowEvent as AccessKitWindowEvent;
 use accesskit_winit::{Adapter as AccessKitAdapter, Event as AccessKitEvent};
-use aria_core::protocol::{AudioCommand, LogicalSize, RuntimeCommand, StepOutput};
+use aria_core::protocol::{AudioCommand, LogicalSize, RuntimeCommand, StepOutput, stable_digest};
 use aria_core::{
     CompiledProgram, InputSnapshot, SaveEnvelopeError, SaveEnvelopeV3, UiInsets, UiViewport, Vm,
     VmSnapshot,
@@ -19,6 +19,7 @@ use aria_core::{
 use aria_render::{
     BundledFont, RenderSurfaceSize, SafeAreaInsets, ViewportTransform, WgpuRenderer,
 };
+use serde::Serialize;
 use thiserror::Error;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize as WindowLogicalSize;
@@ -38,6 +39,8 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 /// bound used by the PWA. Suspends and debugger pauses therefore cannot make
 /// Windows and Linux advance a delay, transition, or typewriter by seconds.
 const MAX_FRAME_DELTA_MS: u32 = 250;
+const QUICK_SAVE_SLOT: u32 = 0;
+const AUTO_SAVE_SLOT: u32 = 11;
 
 /// Values needed to launch a graphical desktop Player.
 pub struct NativePlayerConfig {
@@ -188,12 +191,33 @@ struct WindowState {
     sequence: u64,
     last_tick: Instant,
     warned: BTreeSet<String>,
+    autosave_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FrameDisposition {
     Continue,
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupAutosaveAction {
+    WriteFresh,
+    KeepCurrent,
+    PromotePrevious,
+}
+
+const fn startup_autosave_action(
+    restored_autosave: bool,
+    recovered_from_previous: bool,
+) -> StartupAutosaveAction {
+    if !restored_autosave {
+        StartupAutosaveAction::WriteFresh
+    } else if recovered_from_previous {
+        StartupAutosaveAction::PromotePrevious
+    } else {
+        StartupAutosaveAction::KeepCurrent
+    }
 }
 
 impl NativeApplication {
@@ -277,16 +301,45 @@ impl NativeApplication {
             WgpuRenderer::new_with_fonts(device, queue, surface_config.format, bundled_fonts)
                 .map_err(|error| NativePlayerError::Renderer(error.to_string()))?;
 
+        for namespace in &legacy_save_namespaces {
+            AtomicSaveStore::purge_namespace(&save_root, namespace)?;
+        }
+        let save_store = AtomicSaveStore::new(save_root, save_namespace)?;
         let mut vm = Vm::new(program, logical_size)?;
+        let mut recovered_autosave_from_previous = false;
+        let mut restored_autosave = false;
+        match save_store.load_candidates(AUTO_SAVE_SLOT) {
+            Ok(candidates) => {
+                for loaded in candidates {
+                    let restored = (|| -> Result<(), NativePlayerError> {
+                        let snapshot: VmSnapshot = loaded.envelope.payload_as()?;
+                        loaded.envelope.validate_for_game(&snapshot.game_id)?;
+                        vm.restore(snapshot).map_err(NativePlayerError::from)
+                    })();
+                    if restored.is_ok() {
+                        recovered_autosave_from_previous = loaded.recovered_from_previous;
+                        restored_autosave = true;
+                        break;
+                    }
+                    eprintln!(
+                        "warning: skipped incompatible automatic save generation: {restored:?}"
+                    );
+                }
+            }
+            Err(error) => {
+                eprintln!("warning: cannot read automatic saves; starting fresh: {error}")
+            }
+        }
+        let restored_autosave_fingerprint = if restored_autosave {
+            autosave_checkpoint_fingerprint(&vm.snapshot())
+        } else {
+            String::new()
+        };
         let output = vm.step(&InputSnapshot::idle(1, 0))?;
         let viewport = renderer.viewport_transform(
             &output.scene,
             RenderSurfaceSize::new(size.width.max(1), size.height.max(1), window.scale_factor()),
         );
-        for namespace in &legacy_save_namespaces {
-            AtomicSaveStore::purge_namespace(&save_root, namespace)?;
-        }
-        let save_store = AtomicSaveStore::new(save_root, save_namespace)?;
         let audio = match KiraAudioAdapter::new(".") {
             Ok(audio) => Some(audio),
             Err(error) => {
@@ -331,9 +384,19 @@ impl NativeApplication {
             sequence: 1,
             last_tick: Instant::now(),
             warned: BTreeSet::new(),
+            autosave_fingerprint: restored_autosave_fingerprint,
         };
         state.apply_audio_commands()?;
         state.process_runtime_commands()?;
+        match startup_autosave_action(restored_autosave, recovered_autosave_from_previous) {
+            StartupAutosaveAction::PromotePrevious => {
+                let snapshot = state.vm.snapshot();
+                let fingerprint = autosave_checkpoint_fingerprint(&snapshot);
+                state.promote_recovered_autosave(snapshot, fingerprint)?;
+            }
+            StartupAutosaveAction::WriteFresh => state.autosave_if_changed()?,
+            StartupAutosaveAction::KeepCurrent => {}
+        }
         state.update_accessibility();
         window.set_visible(true);
         window.request_redraw();
@@ -533,6 +596,7 @@ impl WindowState {
         );
         self.apply_audio_commands()?;
         let disposition = self.process_runtime_commands()?;
+        self.autosave_if_changed()?;
         self.update_accessibility();
         if disposition == FrameDisposition::Quit {
             return Ok(disposition);
@@ -625,8 +689,8 @@ impl WindowState {
             match command {
                 RuntimeCommand::Save { slot } => self.save_slot(slot)?,
                 RuntimeCommand::Load { slot } => self.load_slot(slot)?,
-                RuntimeCommand::QuickSave => self.save_slot(0)?,
-                RuntimeCommand::QuickLoad => self.load_slot(0)?,
+                RuntimeCommand::QuickSave => self.save_slot(QUICK_SAVE_SLOT)?,
+                RuntimeCommand::QuickLoad => self.load_slot(QUICK_SAVE_SLOT)?,
                 RuntimeCommand::Quit => return Ok(FrameDisposition::Quit),
                 RuntimeCommand::ReturnToTitle => warn_once(
                     &mut self.warned,
@@ -661,22 +725,107 @@ impl WindowState {
         Ok(())
     }
 
+    /// Automatic recovery is independent from player slots. Ignore delivery
+    /// clock fields when deciding whether a semantic checkpoint changed, so a
+    /// static reader does not rewrite the filesystem every frame.
+    fn autosave_if_changed(&mut self) -> Result<(), NativePlayerError> {
+        let snapshot = self.vm.snapshot();
+        let fingerprint = autosave_checkpoint_fingerprint(&snapshot);
+        if !autosave_fingerprint_changed(&self.autosave_fingerprint, &fingerprint) {
+            return Ok(());
+        }
+        self.write_autosave(snapshot, fingerprint)
+    }
+
+    fn write_autosave(
+        &mut self,
+        snapshot: VmSnapshot,
+        fingerprint: String,
+    ) -> Result<(), NativePlayerError> {
+        self.save_store.save(
+            AUTO_SAVE_SLOT,
+            &SaveEnvelopeV3::new(
+                snapshot.game_id.clone(),
+                aria_core::ENGINE_VERSION,
+                now_unix_ms(),
+                &snapshot,
+            )?,
+        )?;
+        self.autosave_fingerprint = fingerprint;
+        Ok(())
+    }
+
+    fn promote_recovered_autosave(
+        &mut self,
+        snapshot: VmSnapshot,
+        fingerprint: String,
+    ) -> Result<(), NativePlayerError> {
+        self.save_store.promote_recovered(
+            AUTO_SAVE_SLOT,
+            &SaveEnvelopeV3::new(
+                snapshot.game_id.clone(),
+                aria_core::ENGINE_VERSION,
+                now_unix_ms(),
+                &snapshot,
+            )?,
+        )?;
+        self.autosave_fingerprint = fingerprint;
+        Ok(())
+    }
+
     fn load_slot(&mut self, slot: u32) -> Result<(), NativePlayerError> {
-        let Some(loaded) = self.save_store.load(slot)? else {
+        let candidates = match self.save_store.load_candidates(slot) {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                warn_once(
+                    &mut self.warned,
+                    format!("invalid-save:{slot}"),
+                    format!("cannot load save slot {slot}: {error}"),
+                );
+                return Ok(());
+            }
+        };
+        if candidates.is_empty() {
             warn_once(
                 &mut self.warned,
                 format!("missing-save:{slot}"),
                 format!("save slot {slot} does not exist"),
             );
             return Ok(());
-        };
-        let snapshot: VmSnapshot = loaded.envelope.payload_as()?;
-        loaded.envelope.validate_for_game(&snapshot.game_id)?;
+        }
+        let mut restored_from_previous = false;
+        let mut restored = false;
+        for loaded in candidates {
+            let attempt = (|| -> Result<(), NativePlayerError> {
+                let snapshot: VmSnapshot = loaded.envelope.payload_as()?;
+                loaded.envelope.validate_for_game(&snapshot.game_id)?;
+                // Manual and quick records retain the current system-owned
+                // state. This API validates into a staged VM first.
+                self.vm.restore_story_with_current_system_state(snapshot)?;
+                Ok(())
+            })();
+            if attempt.is_ok() {
+                restored = true;
+                restored_from_previous = loaded.recovered_from_previous;
+                break;
+            }
+            eprintln!("warning: skipped incompatible save generation for slot {slot}: {attempt:?}");
+        }
+        if !restored {
+            warn_once(
+                &mut self.warned,
+                format!("incompatible-save:{slot}"),
+                format!("save slot {slot} has no compatible generation"),
+            );
+            return Ok(());
+        }
         if let Some(audio) = &mut self.audio {
             audio.stop_all();
         }
-        self.vm.restore(snapshot)?;
-        if loaded.recovered_from_previous {
+        let snapshot = self.vm.snapshot();
+        let fingerprint = autosave_checkpoint_fingerprint(&snapshot);
+        self.write_autosave(snapshot, fingerprint)?;
+        if restored_from_previous {
             eprintln!("warning: recovered save slot {slot} from the previous generation");
         }
         eprintln!("loaded slot {slot}");
@@ -689,6 +838,76 @@ impl WindowState {
             .viewport_transform(&self.output.scene, self.render_surface_size());
         let _ = transform;
     }
+}
+
+fn autosave_fingerprint_changed(previous: &str, next: &str) -> bool {
+    previous != next
+}
+
+#[derive(Serialize)]
+struct AutosaveCheckpoint<'a> {
+    pc: u32,
+    halted: bool,
+    execution: &'static str,
+    route: &'a str,
+    route_stack: &'a [String],
+    confirmation: &'a Option<aria_core::PendingConfirmation>,
+    gallery_viewer: &'a Option<String>,
+    interlude_first_visit: bool,
+    scroll_offsets: &'a std::collections::BTreeMap<String, f32>,
+    text_id: &'a str,
+    page_index: usize,
+    text_complete: bool,
+    choice: &'a Option<aria_core::vm::ChoiceState>,
+    int_registers: &'a std::collections::BTreeMap<String, i64>,
+    string_registers: &'a std::collections::BTreeMap<String, String>,
+    flags: &'a std::collections::BTreeMap<String, bool>,
+    persistent_flags: &'a std::collections::BTreeMap<String, bool>,
+    chapters: &'a std::collections::BTreeMap<String, aria_core::ChapterState>,
+    unlocked_cgs: &'a std::collections::BTreeSet<String>,
+    locale: &'a str,
+    read_texts: &'a std::collections::BTreeSet<String>,
+    settings: &'a aria_core::SettingsState,
+    bus_volumes: &'a std::collections::BTreeMap<aria_core::protocol::AudioBus, f32>,
+    auto_mode: aria_core::AutoMode,
+    skip_mode: aria_core::SkipMode,
+}
+
+fn autosave_checkpoint_fingerprint(snapshot: &VmSnapshot) -> String {
+    let execution = match snapshot.execution {
+        aria_core::vm::ExecutionState::Running => "running",
+        aria_core::vm::ExecutionState::WaitingForAdvance { .. } => "advance",
+        aria_core::vm::ExecutionState::WaitingForChoice => "choice",
+        aria_core::vm::ExecutionState::WaitingForDelay { .. } => "delay",
+    };
+    let text_complete = aria_core::snapshot_current_page_complete(snapshot);
+    stable_digest(&AutosaveCheckpoint {
+        pc: snapshot.pc,
+        halted: snapshot.halted,
+        execution,
+        route: &snapshot.ui.route,
+        route_stack: &snapshot.ui.route_stack,
+        confirmation: &snapshot.ui.confirmation,
+        gallery_viewer: &snapshot.ui.gallery_viewer,
+        interlude_first_visit: snapshot.ui.interlude_first_visit,
+        scroll_offsets: &snapshot.ui.scroll_offsets,
+        text_id: &snapshot.text.full_text,
+        page_index: snapshot.text.page_index,
+        text_complete,
+        choice: &snapshot.choice,
+        int_registers: &snapshot.int_registers,
+        string_registers: &snapshot.string_registers,
+        flags: &snapshot.flags,
+        persistent_flags: &snapshot.persistent_flags,
+        chapters: &snapshot.chapters,
+        unlocked_cgs: &snapshot.unlocked_cgs,
+        locale: &snapshot.locale,
+        read_texts: &snapshot.read_texts,
+        settings: &snapshot.settings,
+        bus_volumes: &snapshot.bus_volumes,
+        auto_mode: snapshot.auto_mode,
+        skip_mode: snapshot.skip_mode,
+    })
 }
 
 fn pressed_system_slot(event: &WindowEvent, key: KeyCode) -> Option<u32> {
@@ -734,5 +953,212 @@ mod tests {
     #[test]
     fn default_save_root_has_a_nonempty_fallback() {
         assert!(!default_save_root().as_os_str().is_empty());
+    }
+
+    #[test]
+    fn startup_autosave_keeps_current_and_promotes_only_a_recovered_previous() {
+        assert_eq!(
+            startup_autosave_action(false, false),
+            StartupAutosaveAction::WriteFresh
+        );
+        assert_eq!(
+            startup_autosave_action(true, false),
+            StartupAutosaveAction::KeepCurrent
+        );
+        assert_eq!(
+            startup_autosave_action(true, true),
+            StartupAutosaveAction::PromotePrevious
+        );
+    }
+
+    #[test]
+    fn startup_autosave_generation_rotation_is_limited_to_one_previous_promotion() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AtomicSaveStore::new(temp.path(), "game").unwrap();
+        let snapshot = Vm::new(
+            CompiledProgram::empty("jp.example.native.startup-generations"),
+            LogicalSize {
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap()
+        .snapshot();
+        let envelope = |timestamp| {
+            SaveEnvelopeV3::new(
+                "jp.example.native.startup-generations",
+                "test",
+                timestamp,
+                &snapshot,
+            )
+            .unwrap()
+        };
+        store.save(AUTO_SAVE_SLOT, &envelope(1)).unwrap();
+        let file_count = || std::fs::read_dir(store.directory()).unwrap().count();
+        let fingerprint = autosave_checkpoint_fingerprint(&snapshot);
+
+        // A valid current restore keeps its one generation untouched.
+        assert_eq!(
+            startup_autosave_action(true, false),
+            StartupAutosaveAction::KeepCurrent
+        );
+        assert_eq!(file_count(), 1);
+        assert!(!autosave_fingerprint_changed(&fingerprint, &fingerprint));
+        assert_eq!(file_count(), 1);
+
+        // A previous recovery gets exactly one promotion. The immediately
+        // following identical checkpoint is skipped, retaining the fallback.
+        assert_eq!(
+            startup_autosave_action(true, true),
+            StartupAutosaveAction::PromotePrevious
+        );
+        store.save(AUTO_SAVE_SLOT, &envelope(2)).unwrap();
+        assert_eq!(file_count(), 2);
+        assert!(!autosave_fingerprint_changed(&fingerprint, &fingerprint));
+        assert_eq!(file_count(), 2);
+    }
+
+    #[test]
+    fn autosave_checkpoint_ignores_typewriter_and_clock_ticks_but_tracks_story_state() {
+        let vm = Vm::new(
+            CompiledProgram::empty("jp.example.native.checkpoint"),
+            LogicalSize {
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
+        let mut first = vm.snapshot();
+        first.text.full_text = "abcdefghij".to_owned();
+        first.text.page_columns = 1;
+        first.text.visible_graphemes = 0;
+        let mut typewriter_tick = first.clone();
+        typewriter_tick.frame_number = 99;
+        typewriter_tick.logical_time_ms = 500;
+        typewriter_tick.text.visible_graphemes = 1;
+        assert_eq!(
+            autosave_checkpoint_fingerprint(&first),
+            autosave_checkpoint_fingerprint(&typewriter_tick)
+        );
+        assert!(!aria_core::snapshot_current_page_complete(&typewriter_tick));
+        let mut intermediate_complete = typewriter_tick.clone();
+        intermediate_complete.text.visible_graphemes = usize::MAX;
+        assert!(aria_core::snapshot_current_page_complete(
+            &intermediate_complete
+        ));
+        assert_ne!(
+            autosave_checkpoint_fingerprint(&typewriter_tick),
+            autosave_checkpoint_fingerprint(&intermediate_complete)
+        );
+        let mut final_page = intermediate_complete.clone();
+        final_page.text.page_index = 1;
+        final_page.text.visible_graphemes = 0;
+        let final_complete = {
+            let mut snapshot = final_page.clone();
+            snapshot.text.visible_graphemes = usize::MAX;
+            snapshot
+        };
+        assert!(aria_core::snapshot_current_page_complete(&final_complete));
+        assert_ne!(
+            autosave_checkpoint_fingerprint(&final_page),
+            autosave_checkpoint_fingerprint(&final_complete)
+        );
+        let mut changed = typewriter_tick;
+        changed.flags.insert("system_unlock".to_owned(), true);
+        assert_ne!(
+            autosave_checkpoint_fingerprint(&first),
+            autosave_checkpoint_fingerprint(&changed)
+        );
+        let mut gallery = first.clone();
+        gallery.ui.gallery_viewer = Some("cg-01".to_owned());
+        assert_ne!(
+            autosave_checkpoint_fingerprint(&first),
+            autosave_checkpoint_fingerprint(&gallery)
+        );
+        let mut confirmation = first;
+        confirmation.ui.confirmation = Some(aria_core::PendingConfirmation {
+            action: "reset".to_owned(),
+            resume_id: None,
+        });
+        assert_ne!(
+            autosave_checkpoint_fingerprint(&gallery),
+            autosave_checkpoint_fingerprint(&confirmation)
+        );
+    }
+
+    #[test]
+    fn checksum_valid_mismatched_program_generation_falls_back_to_previous() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AtomicSaveStore::new(temp.path(), "game").unwrap();
+        let program = CompiledProgram::empty("jp.example.native.fallback");
+        let valid_snapshot = Vm::new(
+            program.clone(),
+            LogicalSize {
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap()
+        .snapshot();
+        let mut changed_program = program.clone();
+        changed_program
+            .constants
+            .push(aria_core::bytecode::Constant::String("changed".to_owned()));
+        let incompatible_snapshot = Vm::new(
+            changed_program,
+            LogicalSize {
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap()
+        .snapshot();
+        store
+            .save(
+                AUTO_SAVE_SLOT,
+                &SaveEnvelopeV3::new("jp.example.native.fallback", "test", 1, &valid_snapshot)
+                    .unwrap(),
+            )
+            .unwrap();
+        store
+            .save(
+                AUTO_SAVE_SLOT,
+                &SaveEnvelopeV3::new(
+                    "jp.example.native.fallback",
+                    "test",
+                    2,
+                    &incompatible_snapshot,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let mut restored = Vm::new(
+            program,
+            LogicalSize {
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
+        let selected = store
+            .load_candidates(AUTO_SAVE_SLOT)
+            .unwrap()
+            .into_iter()
+            .find(|candidate| {
+                let snapshot: VmSnapshot = candidate.envelope.payload_as().unwrap();
+                restored.restore(snapshot).is_ok()
+            })
+            .expect("previous compatible generation");
+        assert!(selected.recovered_from_previous);
+        store
+            .promote_recovered(AUTO_SAVE_SLOT, &selected.envelope)
+            .unwrap();
+        let promoted = store.load_candidates(AUTO_SAVE_SLOT).unwrap();
+        assert_eq!(promoted.len(), 2);
+        for candidate in promoted {
+            let snapshot: VmSnapshot = candidate.envelope.payload_as().unwrap();
+            assert!(restored.restore(snapshot).is_ok());
+        }
     }
 }

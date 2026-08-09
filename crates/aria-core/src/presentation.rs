@@ -18,7 +18,7 @@ use crate::vm::{AutoMode, SettingsState, SkipMode};
 /// the exact remaining duration of an authored timed hold. That last value
 /// lets a static WebView use one timer rather than keep an animation clock
 /// alive while dialogue is deliberately absent.
-pub const UI_VIEW_MODEL_SCHEMA: u16 = 7;
+pub const UI_VIEW_MODEL_SCHEMA: u16 = 8;
 
 /// Standard surfaces understood by the engine. A frontend may render a
 /// project-specific surface for [`Self::Custom`] without changing the VM
@@ -145,6 +145,14 @@ pub struct ChoiceView {
     pub id: String,
     pub label: String,
     pub selected: bool,
+    #[serde(default = "default_choice_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_choice_enabled")]
+    pub unlocked: bool,
+}
+
+const fn default_choice_enabled() -> bool {
+    true
 }
 
 /// An action supplied by the engine. Its display label belongs to the game

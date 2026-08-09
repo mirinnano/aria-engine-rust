@@ -7,11 +7,10 @@ module umikaze.scenario.ja.chapter_09;
 scene novel_chapter_09 {
   locale "ja-JP";
   persistent flag "canonical_chapter_09_seen" = true;
-  unlock chapter "canonical_chapter_09" progress 1;
   background asset("assets/bg/scenes/train-rain-grey-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 9\nIX\n帰る場所から、幸福の存在は帰結しない。\n北へ向かう列車\n足元の地図を離れ、線路だけが先へ続いている。" => novel_chapter_09_story;
+    "DAY 9\n北へ向かう列車\n足元の地図を離れ、線路だけが先へ続いている。" => novel_chapter_09_story;
   }
 }
 
@@ -63,8 +62,8 @@ scene novel_chapter_09_story {
   wait breath 220ms;
   narrate "俺は受け取って、黙って食った。";
   await advance;
-  clear dialogue;
   play bgm asset("assets/audio/bgm/umk.north.grey.ogg") fade 650ms;
+  clear dialogue;
   wait breath 220ms;
   say ミオ: "「...ねえ」";
   await advance;
@@ -216,8 +215,8 @@ scene novel_chapter_09_story {
   wait breath 220ms;
   narrate "コードが届かないから、俺は向かいの席を立ち、ミオの隣へ座った。";
   await advance;
-  clear dialogue;
   stop bgm fade 900ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "流れてきたのは、田儀の海で彼女が録音した、";
   await advance;
@@ -699,6 +698,8 @@ scene novel_chapter_09_story {
   clear dialogue;
   wait 1400ms;
   chapter "canonical_chapter_09" progress 100;
+  persistent flag "canonical_chapter_09_completed" = true;
+  unlock chapter "canonical_chapter_10" progress 1;
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

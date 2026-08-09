@@ -15,13 +15,17 @@ use crate::protocol::{
     RuntimeCommand, SceneFrame, ScreenEffect, SpriteFit, StepOutput, TransitionFrame,
     TransitionKind,
 };
-use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
+use crate::text::{
+    grapheme_count, grapheme_prefix, paginate_subtitles, paginate_subtitles_spanned,
+};
+#[cfg(test)]
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Schema 9 removes retired script-owned theme/textbox state. Deterministic
 /// subtitle paging, replayable history targets, gallery viewing state, and
 /// structured confirmation state remain persisted. Older saves are rejected
 /// explicitly rather than silently guessing at a page boundary.
-pub const VM_SNAPSHOT_SCHEMA: u32 = 9;
+pub const VM_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
@@ -34,6 +38,8 @@ const MAX_CALL_DEPTH: usize = 1_024;
 pub struct VmSnapshot {
     pub schema_version: u32,
     pub game_id: String,
+    /// Deterministic hash of the complete executable ARIAC program.
+    pub program_fingerprint: String,
     pub pc: u32,
     pub frame_number: u64,
     pub logical_time_ms: u64,
@@ -96,6 +102,22 @@ pub struct VmSnapshot {
     #[serde(default)]
     pub ui: UiRuntimeState,
     pub halted: bool,
+}
+
+/// Read-only page-completion semantics for adapters that need to decide
+/// whether a coarse checkpoint crossed a readable subtitle boundary.
+#[must_use]
+pub fn snapshot_current_page_complete(snapshot: &VmSnapshot) -> bool {
+    let pages = paginate_subtitles(
+        &snapshot.text.full_text,
+        snapshot.text.page_columns.max(1),
+        2,
+    );
+    let page = pages
+        .get(snapshot.text.page_index.min(pages.len().saturating_sub(1)))
+        .cloned()
+        .unwrap_or_default();
+    snapshot.text.visible_graphemes >= grapheme_count(&page)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -347,6 +369,16 @@ impl Default for TextState {
 pub struct ChoiceOptionState {
     pub text: String,
     pub target: u32,
+    #[serde(default = "default_choice_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_choice_enabled")]
+    pub unlocked: bool,
+    #[serde(default)]
+    pub chapter_id: Option<String>,
+}
+
+const fn default_choice_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,6 +403,13 @@ pub struct AudioTrackState {
     pub volume: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReflowBoundaryAffinity {
+    Start,
+    End,
+    Within,
+}
+
 #[derive(Debug, Clone)]
 pub struct Vm {
     program: CompiledProgram,
@@ -392,12 +431,16 @@ impl Vm {
             return Err(VmError::InvalidLogicalSize);
         }
         let game_id = program.game_id.clone();
+        let program_fingerprint = program
+            .content_fingerprint()
+            .map_err(|error| VmError::InvalidProgram(error.to_string()))?;
         Ok(Self {
             program,
             logical_size,
             state: VmSnapshot {
                 schema_version: VM_SNAPSHOT_SCHEMA,
                 game_id,
+                program_fingerprint,
                 pc: 0,
                 frame_number: 0,
                 logical_time_ms: 0,
@@ -465,6 +508,16 @@ impl Vm {
             return Err(VmError::WrongGame {
                 expected: self.program.game_id.clone(),
                 actual: snapshot.game_id,
+            });
+        }
+        let expected_fingerprint = self
+            .program
+            .content_fingerprint()
+            .map_err(|error| VmError::InvalidProgram(error.to_string()))?;
+        if snapshot.program_fingerprint != expected_fingerprint {
+            return Err(VmError::WrongProgram {
+                expected: expected_fingerprint,
+                actual: snapshot.program_fingerprint,
             });
         }
         if usize::try_from(snapshot.pc)
@@ -554,6 +607,57 @@ impl Vm {
         Ok(())
     }
 
+    /// Restores a manual or quick story checkpoint while retaining the
+    /// current runtime's system-owned progression and preferences. The loaded
+    /// checkpoint is first validated in a staged VM, so a bad save cannot
+    /// mutate the live runtime.
+    pub fn restore_story_with_current_system_state(
+        &mut self,
+        snapshot: VmSnapshot,
+    ) -> Result<(), VmError> {
+        let current = self.state.clone();
+        let mut staged = self.clone();
+        staged.restore(snapshot)?;
+
+        staged
+            .state
+            .persistent_flags
+            .extend(current.persistent_flags);
+        for (name, value) in &staged.state.persistent_flags {
+            staged.state.flags.insert(name.clone(), *value);
+        }
+        for (id, current_chapter) in current.chapters {
+            let chapter = staged
+                .state
+                .chapters
+                .entry(id)
+                .or_insert_with(|| current_chapter.clone());
+            chapter.unlocked |= current_chapter.unlocked;
+            chapter.progress = chapter.progress.max(current_chapter.progress);
+            if !current_chapter.title.is_empty() {
+                chapter.title = current_chapter.title;
+            }
+            if !current_chapter.description.is_empty() {
+                chapter.description = current_chapter.description;
+            }
+            if current_chapter.thumbnail.is_some() {
+                chapter.thumbnail = current_chapter.thumbnail;
+            }
+            if current_chapter.script.is_some() {
+                chapter.script = current_chapter.script;
+            }
+        }
+        staged.state.unlocked_cgs.extend(current.unlocked_cgs);
+        staged.state.read_texts.extend(current.read_texts);
+        staged.state.settings = current.settings;
+        staged.state.bus_volumes.extend(current.bus_volumes);
+        staged.apply_settings_derived_state();
+        staged.sync_chapter_selector_options()?;
+        staged.queue_restored_audio_state();
+        *self = staged;
+        Ok(())
+    }
+
     /// Changes the locale without exposing a host locale or filesystem to the
     /// deterministic VM.  Text localization tables are supplied by the
     /// project/package layer and represented as ordinary values.
@@ -633,6 +737,7 @@ impl Vm {
                 return Err(VmError::InvalidViewport);
             }
             self.state.ui.viewport = viewport;
+            self.repaginate_active_subtitle_if_needed();
         }
         self.state.frame_number = self.state.frame_number.saturating_add(1);
         self.state.logical_time_ms = self
@@ -1032,6 +1137,15 @@ impl Vm {
             return Ok(false);
         }
         match id {
+            "menu.quick_save" => {
+                self.pending_runtime.push(RuntimeCommand::QuickSave);
+                self.close_all_screens();
+                return Ok(true);
+            }
+            "menu.quick_load" => {
+                self.pending_runtime.push(RuntimeCommand::QuickLoad);
+                return Ok(false);
+            }
             "menu.save" => self.open_screen("save"),
             "menu.load" => self.open_screen("load"),
             "menu.backlog" => self.open_screen("backlog"),
@@ -1544,6 +1658,93 @@ impl Vm {
         )
     }
 
+    fn spanned_subtitle_pages(&self) -> Vec<crate::text::SpannedSubtitlePage> {
+        paginate_subtitles_spanned(
+            &self.state.text.full_text,
+            self.state.text.page_columns.max(1),
+            2,
+        )
+    }
+
+    /// Reflows the active source line without changing the story position.
+    ///
+    /// A page separator is presentation-only, so the stable boundary is the
+    /// number of source graphemes that have actually been revealed.  Mapping
+    /// that boundary into the newly paginated grid keeps a rotation or text
+    /// scale change from repeating or skipping prose.  Completed backlog
+    /// pages intentionally remain records of their original grid.
+    fn repaginate_active_subtitle_if_needed(&mut self) {
+        if self.state.text.full_text.is_empty() {
+            return;
+        }
+        let page_columns = subtitle_columns(self.state.ui.viewport, self.state.settings.text_scale);
+        if page_columns == self.state.text.page_columns.max(1) {
+            return;
+        }
+
+        let old_pages = self.spanned_subtitle_pages();
+        let old_index = self
+            .state
+            .text
+            .page_index
+            .min(old_pages.len().saturating_sub(1));
+        let (read_graphemes, affinity) =
+            old_pages
+                .get(old_index)
+                .map_or((0, ReflowBoundaryAffinity::Start), |page| {
+                    let visible = self.state.text.visible_graphemes;
+                    let affinity = if visible == 0 {
+                        ReflowBoundaryAffinity::Start
+                    } else if visible >= page.display_grapheme_count() {
+                        ReflowBoundaryAffinity::End
+                    } else {
+                        ReflowBoundaryAffinity::Within
+                    };
+                    (page.source_boundary_at_display(visible), affinity)
+                });
+
+        self.state.text.page_columns = page_columns;
+        let pages = self.spanned_subtitle_pages();
+        let exact_affinity_position = match affinity {
+            ReflowBoundaryAffinity::Start => pages
+                .iter()
+                .position(|page| page.source_start == read_graphemes)
+                .map(|page_index| (page_index, 0)),
+            ReflowBoundaryAffinity::End => pages
+                .iter()
+                .position(|page| page.source_end == read_graphemes)
+                .map(|page_index| (page_index, pages[page_index].display_grapheme_count())),
+            ReflowBoundaryAffinity::Within => None,
+        };
+        let (page_index, visible_graphemes) = exact_affinity_position.unwrap_or_else(|| {
+            pages
+                .iter()
+                .enumerate()
+                .find_map(|(page_index, page)| {
+                    (read_graphemes <= page.source_end).then(|| {
+                        let visible = (0..=page.display_grapheme_count())
+                            .find(|visible| {
+                                page.source_boundary_at_display(*visible) >= read_graphemes
+                            })
+                            .unwrap_or_else(|| page.display_grapheme_count());
+                        (page_index, visible)
+                    })
+                })
+                .unwrap_or_else(|| {
+                    let page_index = pages.len().saturating_sub(1);
+                    (
+                        page_index,
+                        pages
+                            .get(page_index)
+                            .map_or(0, |page| page.display_grapheme_count()),
+                    )
+                })
+        });
+        self.state.text.page_index = page_index;
+        self.state.text.visible_graphemes = visible_graphemes;
+        self.state.text.reveal_elapsed_ms = 0;
+    }
+
     fn current_subtitle_page(&self) -> String {
         let pages = self.subtitle_pages();
         pages
@@ -1561,11 +1762,44 @@ impl Vm {
         grapheme_count(&self.current_subtitle_page())
     }
 
+    fn sync_chapter_selector_options(&mut self) -> Result<(), VmError> {
+        if self.state.ui.route != "chapter_select" {
+            return Ok(());
+        }
+        let chapters = self.state.chapters.values().collect::<Vec<_>>();
+        let Some(choice_count) = self
+            .state
+            .choice
+            .as_ref()
+            .map(|choice| choice.options.len())
+        else {
+            return Ok(());
+        };
+        if chapters.len() != choice_count {
+            return Err(self.error_at_pc(VmErrorKind::ChapterChoiceMappingMismatch {
+                chapters: chapters.len(),
+                choices: choice_count,
+            }));
+        }
+        let choice = self
+            .state
+            .choice
+            .as_mut()
+            .expect("choice was present while synchronizing chapter options");
+        for (option, chapter) in choice.options.iter_mut().zip(chapters) {
+            option.enabled = chapter.unlocked;
+            option.unlocked = chapter.unlocked;
+            option.chapter_id = Some(chapter.id.clone());
+        }
+        Ok(())
+    }
+
     fn current_page_id(&self) -> Option<String> {
         self.state.text.text_id.as_ref().map(|text_id| {
             format!(
-                "{text_id}:page-{}",
-                self.state.text.page_index.saturating_add(1)
+                "{text_id}:columns-{}:page-{}",
+                self.state.text.page_columns.max(1),
+                self.state.text.page_index.saturating_add(1),
             )
         })
     }
@@ -1632,6 +1866,17 @@ impl Vm {
         let Some(option) = choice.options.get(index) else {
             return Err(self.error_at_pc(VmErrorKind::MissingChoiceState));
         };
+        if !option.enabled
+            || option.chapter_id.as_ref().is_some_and(|id| {
+                !self
+                    .state
+                    .chapters
+                    .get(id)
+                    .is_some_and(|chapter| chapter.unlocked)
+            })
+        {
+            return Err(self.error_at_pc(VmErrorKind::LockedChoice(index)));
+        }
         self.state
             .int_registers
             .insert("choice".to_owned(), index as i64 + 1);
@@ -1664,10 +1909,50 @@ impl Vm {
             "bgm_volume" => self.set_setting_volume_to(AudioBus::Bgm, value),
             "sound_effect_volume" => self.set_setting_volume_to(AudioBus::SoundEffect, value),
             "voice_volume" => self.set_setting_volume_to(AudioBus::Voice, value),
-            "text_scale" => self.state.settings.text_scale = value.clamp(0.85, 1.35),
+            "text_scale" => {
+                self.state.settings.text_scale = value.clamp(0.85, 1.35);
+                self.repaginate_active_subtitle_if_needed();
+            }
             "text_opacity" => self.state.settings.text_opacity = value.clamp(0.72, 1.0),
             _ => {}
         }
+    }
+
+    /// Reconnects persisted reader preferences to their runtime-owned
+    /// derivatives after a system-state merge. Exact restore keeps its
+    /// existing snapshot semantics and does not call this path.
+    fn apply_settings_derived_state(&mut self) {
+        self.state.settings.text_scale = self.state.settings.text_scale.clamp(0.85, 1.35);
+        self.state.settings.text_opacity = self.state.settings.text_opacity.clamp(0.72, 1.0);
+        self.state.text.speed_ms = self.state.settings.text_speed_ms;
+        self.state.auto_delay_ms = self.state.settings.auto_delay_ms;
+        self.repaginate_active_subtitle_if_needed();
+    }
+
+    fn queue_restored_audio_state(&mut self) {
+        self.pending_audio = self
+            .state
+            .bus_volumes
+            .iter()
+            .map(|(bus, volume)| AudioCommand::SetBusVolume {
+                bus: *bus,
+                volume: *volume,
+                fade_ms: 0,
+            })
+            .chain(
+                self.state
+                    .audio_tracks
+                    .values()
+                    .map(|track| AudioCommand::Play {
+                        bus: track.bus,
+                        id: track.id.clone(),
+                        asset: track.asset.clone(),
+                        looping: track.looping,
+                        volume: track.volume,
+                        fade_in_ms: 0,
+                    }),
+            )
+            .collect();
     }
 
     fn toggle_setting(&mut self, name: &str) {
@@ -2018,7 +2303,7 @@ impl Vm {
                         unlocked: false,
                         progress: 0,
                     });
-                chapter.progress = progress;
+                chapter.progress = chapter.progress.max(progress);
             }
             ByteOp::UnlockCg => {
                 let id = self.string(self.operand(instruction, 0)?)?;
@@ -2202,12 +2487,16 @@ impl Vm {
             options.push(ChoiceOptionState {
                 text: self.string(&pair[0])?,
                 target: self.address(&pair[1])?,
+                enabled: true,
+                unlocked: true,
+                chapter_id: None,
             });
         }
         self.state.choice = Some(ChoiceState {
             options,
             focused: 0,
         });
+        self.sync_chapter_selector_options()?;
         self.state.execution = ExecutionState::WaitingForChoice;
         Ok(())
     }
@@ -2595,6 +2884,8 @@ impl Vm {
                         id: format!("choice:{index}"),
                         label: option.text.clone(),
                         selected: index == choice.focused,
+                        enabled: option.enabled,
+                        unlocked: option.unlocked,
                     })
                     .collect()
             })
@@ -2708,6 +2999,8 @@ impl Vm {
                 action("menu.skip", self.state.skip_mode != SkipMode::Off),
             ],
             UiRoute::Pause => vec![
+                action("menu.quick_save", false),
+                action("menu.quick_load", false),
                 action("menu.save", false),
                 action("menu.load", false),
                 action("menu.backlog", false),
@@ -3098,6 +3391,65 @@ fn subtitle_columns(viewport: UiViewport, text_scale: f32) -> usize {
     (usable_width / cell_width).floor().clamp(1.0, 112.0) as usize
 }
 
+/// Counts the actual source graphemes revealed by a display boundary. A
+/// rendered LF consumes source only when the next source grapheme is also an
+/// LF; every other rendered LF was inserted by pagination.
+#[cfg(test)]
+fn subtitle_source_boundary(
+    source: &str,
+    pages: &[String],
+    target_page: usize,
+    visible_graphemes: usize,
+) -> usize {
+    let source = source.graphemes(true).collect::<Vec<_>>();
+    let mut consumed = 0_usize;
+    for (page_index, page) in pages.iter().enumerate() {
+        let limit = if page_index == target_page {
+            visible_graphemes
+        } else if page_index < target_page {
+            grapheme_count(page)
+        } else {
+            break;
+        };
+        for display in page.graphemes(true).take(limit) {
+            if source.get(consumed).is_some_and(|next| *next == display) {
+                consumed = consumed.saturating_add(1);
+            }
+        }
+    }
+    consumed
+}
+
+/// Finds the new paginated display location for an actual source boundary.
+/// This deterministically retains authored newlines while ignoring only the
+/// layout newlines introduced by wrapping.
+#[cfg(test)]
+fn subtitle_display_position_for_source_boundary(
+    source: &str,
+    pages: &[String],
+    boundary: usize,
+) -> (usize, usize) {
+    let source = source.graphemes(true).collect::<Vec<_>>();
+    let mut consumed = 0_usize;
+    for (page_index, page) in pages.iter().enumerate() {
+        if consumed == boundary {
+            return (page_index, 0);
+        }
+        let mut visible = 0_usize;
+        for display in page.graphemes(true) {
+            visible = visible.saturating_add(1);
+            if source.get(consumed).is_some_and(|next| *next == display) {
+                consumed = consumed.saturating_add(1);
+                if consumed == boundary {
+                    return (page_index, visible);
+                }
+            }
+        }
+    }
+    let last = pages.len().saturating_sub(1);
+    (last, pages.get(last).map_or(0, |page| grapheme_count(page)))
+}
+
 #[derive(Debug, Error)]
 pub enum VmError {
     #[error("invalid compiled program: {0}")]
@@ -3116,6 +3468,8 @@ pub enum VmError {
     UnsupportedSnapshot(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
     WrongGame { expected: String, actual: String },
+    #[error("snapshot belongs to a different compiled program (expected {expected}, got {actual})")]
+    WrongProgram { expected: String, actual: String },
     #[error("invalid snapshot program counter {0}")]
     InvalidSnapshotPc(u32),
     #[error("unknown audio bus '{0}'")]
@@ -3130,6 +3484,12 @@ pub enum VmError {
 
 #[derive(Debug, Error)]
 pub enum VmErrorKind {
+    #[error(
+        "chapter selector mapping mismatch: {chapters} registered chapters for {choices} choices"
+    )]
+    ChapterChoiceMappingMismatch { chapters: usize, choices: usize },
+    #[error("choice {0} is locked")]
+    LockedChoice(usize),
     #[error("program counter is outside the instruction table")]
     ProgramCounterOutOfRange,
     #[error("instruction budget exceeded; probable infinite loop")]
@@ -3709,6 +4069,204 @@ mod tests {
     }
 
     #[test]
+    fn exact_restore_rejects_a_different_compiled_program() {
+        let source = "aria; entry start; scene start { end; }";
+        let snapshot = vm(source).snapshot();
+        let mut changed =
+            vm("aria; entry start; scene start { narrate \"changed\"; await advance; end; }");
+        assert!(matches!(
+            changed.restore(snapshot),
+            Err(VmError::WrongProgram { .. })
+        ));
+    }
+
+    #[test]
+    fn story_restore_merges_current_system_state_and_mirrors_persistent_flags() {
+        let mut loaded = vm("aria; entry start; scene start { end; }");
+        loaded
+            .state
+            .persistent_flags
+            .insert("loaded_only".to_owned(), false);
+        loaded.state.flags.insert("loaded_only".to_owned(), false);
+        loaded.state.chapters.insert(
+            "chapter".to_owned(),
+            ChapterState {
+                id: "chapter".to_owned(),
+                title: "loaded".to_owned(),
+                description: String::new(),
+                thumbnail: None,
+                script: None,
+                unlocked: false,
+                progress: 20,
+            },
+        );
+        let snapshot = loaded.snapshot();
+        let mut current = vm("aria; entry start; scene start { end; }");
+        current
+            .state
+            .persistent_flags
+            .insert("loaded_only".to_owned(), true);
+        current
+            .state
+            .persistent_flags
+            .insert("current_only".to_owned(), true);
+        current.state.flags.insert("loaded_only".to_owned(), false);
+        current.state.unlocked_cgs.insert("cg-current".to_owned());
+        current.state.read_texts.insert("text-current".to_owned());
+        current.state.settings.text_speed_ms = 12;
+        current.state.bus_volumes.insert(AudioBus::Bgm, 0.4);
+        current.state.chapters.insert(
+            "chapter".to_owned(),
+            ChapterState {
+                id: "chapter".to_owned(),
+                title: "current".to_owned(),
+                description: String::new(),
+                thumbnail: None,
+                script: None,
+                unlocked: true,
+                progress: 80,
+            },
+        );
+        current
+            .restore_story_with_current_system_state(snapshot)
+            .unwrap();
+        let restored = current.snapshot();
+        assert!(restored.persistent_flags["loaded_only"]);
+        assert!(restored.flags["loaded_only"]);
+        assert!(restored.flags["current_only"]);
+        assert_eq!(restored.chapters["chapter"].progress, 80);
+        assert!(restored.chapters["chapter"].unlocked);
+        assert!(restored.unlocked_cgs.contains("cg-current"));
+        assert!(restored.read_texts.contains("text-current"));
+        assert_eq!(restored.settings.text_speed_ms, 12);
+        assert_eq!(restored.bus_volumes[&AudioBus::Bgm], 0.4);
+    }
+
+    #[test]
+    fn chapter_selector_is_monotonic_and_rejects_locked_or_mismatched_choices() {
+        let mut selector = vm(
+            "aria; entry start; scene start { screen chapter_select; chapter \"a\" progress 75; chapter \"a\" progress 0; chapter \"b\" progress 0; unlock chapter \"a\" progress 1; choice { \"A\" => done; \"B\" => done; } } scene done { end; }",
+        );
+        let view = selector.step(&InputSnapshot::idle(1, 0)).unwrap().view;
+        assert_eq!(view.chapters[0].progress, 75);
+        assert!(view.choices[0].enabled);
+        assert!(!view.choices[1].enabled);
+        let mut locked = InputSnapshot::idle(2, 0);
+        locked.intents.push(UiIntent::Activate {
+            id: "choice:1".to_owned(),
+        });
+        assert!(matches!(
+            selector.step(&locked),
+            Err(VmError::Runtime {
+                kind: VmErrorKind::LockedChoice(1),
+                ..
+            })
+        ));
+
+        let mut mismatch = vm(
+            "aria; entry start; scene start { screen chapter_select; chapter \"a\" progress 0; choice { \"A\" => done; \"B\" => done; } } scene done { end; }",
+        );
+        assert!(matches!(
+            mismatch.step(&InputSnapshot::idle(1, 0)),
+            Err(VmError::Runtime {
+                kind: VmErrorKind::ChapterChoiceMappingMismatch { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn story_restore_resynchronizes_chapter_selector_options_from_current_progression() {
+        let source = "aria; entry start; scene start { screen chapter_select; chapter \"chapter_00\" progress 0; chapter \"chapter_01\" progress 0; unlock chapter \"chapter_00\" progress 1; choice { \"Day 0\" => done; \"Day 1\" => done; } } scene done { end; }";
+        let mut old = vm(source);
+        old.step(&InputSnapshot::idle(1, 0)).unwrap();
+        let old_save = old.snapshot();
+
+        let mut current = vm(source);
+        current.step(&InputSnapshot::idle(1, 0)).unwrap();
+        let day_one = current.state.chapters.get_mut("chapter_01").unwrap();
+        day_one.unlocked = true;
+        day_one.progress = 40;
+        current
+            .restore_story_with_current_system_state(old_save)
+            .unwrap();
+        let view = current.build_view_model();
+        assert!(view.choices[1].enabled);
+        assert!(view.choices[1].unlocked);
+        let mut activate = InputSnapshot::idle(2, 0);
+        activate.intents.push(UiIntent::Activate {
+            id: "choice:1".to_owned(),
+        });
+        assert!(current.step(&activate).is_ok());
+    }
+
+    #[test]
+    fn story_restore_reapplies_current_setting_derivatives_and_audio_bus_commands() {
+        let mut loaded =
+            Vm::new(CompiledProgram::empty("jp.example.restore.settings"), SIZE).unwrap();
+        loaded.state.text.full_text = "長い文章を読むための境界を保つ。".repeat(20);
+        loaded.state.text.page_columns = 80;
+        loaded.state.text.visible_graphemes = 5;
+        loaded.state.settings.text_speed_ms = 120;
+        loaded.state.text.speed_ms = 120;
+        loaded.state.settings.auto_delay_ms = 3_000;
+        loaded.state.auto_delay_ms = 3_000;
+        loaded.state.bus_volumes.insert(AudioBus::Bgm, 0.9);
+        let snapshot = loaded.snapshot();
+
+        let mut current =
+            Vm::new(CompiledProgram::empty("jp.example.restore.settings"), SIZE).unwrap();
+        current.state.settings.text_speed_ms = 15;
+        current.state.settings.auto_delay_ms = 450;
+        current.state.settings.text_scale = 1.35;
+        current.state.bus_volumes.insert(AudioBus::Bgm, 0.25);
+        current
+            .restore_story_with_current_system_state(snapshot)
+            .unwrap();
+        assert_eq!(current.state.text.speed_ms, 15);
+        assert_eq!(current.state.auto_delay_ms, 450);
+        assert_ne!(current.state.text.page_columns, 80);
+        assert!(current.state.text.visible_graphemes > 0);
+        assert!(current.pending_audio.iter().any(|command| matches!(
+            command,
+            AudioCommand::SetBusVolume { bus: AudioBus::Bgm, volume, .. } if *volume == 0.25
+        )));
+        assert!(!current.pending_audio.iter().any(|command| matches!(
+            command,
+            AudioCommand::SetBusVolume { bus: AudioBus::Bgm, volume, .. } if *volume == 0.9
+        )));
+    }
+
+    #[test]
+    fn pause_menu_emits_quick_save_and_load_commands() {
+        let mut vm = Vm::new(CompiledProgram::empty("jp.example.quick"), SIZE).unwrap();
+        vm.step(&InputSnapshot::pressed(1, 0, InputAction::Menu))
+            .unwrap();
+        let mut save = InputSnapshot::idle(2, 0);
+        save.intents.push(UiIntent::Activate {
+            id: "menu.quick_save".to_owned(),
+        });
+        assert!(
+            vm.step(&save)
+                .unwrap()
+                .runtime
+                .contains(&RuntimeCommand::QuickSave)
+        );
+        vm.step(&InputSnapshot::pressed(3, 0, InputAction::Menu))
+            .unwrap();
+        let mut load = InputSnapshot::idle(4, 0);
+        load.intents.push(UiIntent::Activate {
+            id: "menu.quick_load".to_owned(),
+        });
+        assert!(
+            vm.step(&load)
+                .unwrap()
+                .runtime
+                .contains(&RuntimeCommand::QuickLoad)
+        );
+    }
+
+    #[test]
     fn skip_uses_the_unread_preference_from_settings() {
         let mut vm = Vm::new(CompiledProgram::empty("jp.example.skip"), SIZE).unwrap();
         let mut enable = InputSnapshot::idle(1, 16);
@@ -3958,6 +4516,315 @@ mod tests {
                 assert_eq!(next_page.page_number, 2);
                 assert!(next_page.text.is_empty());
                 assert!(next_page.full_page_text.lines().count() <= 2);
+            }
+        }
+    }
+
+    #[test]
+    fn subtitle_grid_covers_phone_viewports_without_dropping_source_graphemes() {
+        let sources = [
+            "海風が止んだ。次の駅まで、まだ時間がある。",
+            "The tide carries every quiet sentence toward the next station. ",
+            "海风仍在窗外慢慢退去，下一站还很远。",
+            "海風仍在窗外慢慢退去，下一站還很遠。",
+        ];
+        let viewports = [
+            (320, 568, 0.0, 0.0),
+            (375, 812, 0.0, 0.0),
+            (430, 932, 0.0, 0.0),
+            (568, 320, 0.0, 0.0),
+            (812, 375, 24.0, 32.0),
+        ];
+        for source in sources {
+            let source = source.chars().cycle().take(297).collect::<String>();
+            for (width, height, left, right) in viewports {
+                for scale in [0.85, 1.0, 1.35] {
+                    let columns = subtitle_columns(
+                        UiViewport {
+                            width,
+                            height,
+                            scale_factor: 1.0,
+                            safe_area: crate::presentation_state::UiInsets {
+                                left,
+                                right,
+                                ..Default::default()
+                            },
+                        },
+                        scale,
+                    );
+                    let pages = paginate_subtitles(&source, columns, 2);
+                    assert!(pages.iter().all(|page| page.lines().count() <= 2));
+                    assert!(pages.iter().flat_map(|page| page.lines()).all(|line| {
+                        line.chars()
+                            .map(|character| if character.is_ascii() { 1 } else { 2 })
+                            .sum::<usize>()
+                            <= columns
+                    }));
+                    assert_eq!(
+                        pages.concat().replace('\n', ""),
+                        source,
+                        "{width}x{height}, scale {scale}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn active_subtitle_reflows_at_the_same_global_read_boundary() {
+        let source = "海風と英語の sentence を重ねて読む。"
+            .chars()
+            .cycle()
+            .take(297)
+            .collect::<String>();
+        let script = format!(
+            "aria;\nentry start;\nscene start {{ screen dialogue; narrate \"{source}\"; await advance; end; }}\n"
+        );
+        let wide = UiViewport {
+            width: 812,
+            height: 375,
+            scale_factor: 1.0,
+            ..UiViewport::default()
+        };
+        let narrow = UiViewport {
+            width: 320,
+            height: 568,
+            scale_factor: 1.0,
+            safe_area: crate::presentation_state::UiInsets {
+                left: 12.0,
+                right: 18.0,
+                ..Default::default()
+            },
+        };
+        let mut runtime = vm(&script);
+        runtime
+            .step(&InputSnapshot::idle(1, 0).with_viewport(wide))
+            .unwrap();
+        runtime.state.text.visible_graphemes = runtime.current_page_grapheme_count();
+        runtime.record_current_page_if_needed();
+        let preserved_backlog = runtime.backlog().to_vec();
+        assert!(runtime.advance_to_next_subtitle_page());
+        runtime.state.text.visible_graphemes = 7;
+        let before = subtitle_source_boundary(
+            &source,
+            &runtime.subtitle_pages(),
+            runtime.state.text.page_index,
+            runtime.state.text.visible_graphemes,
+        );
+        let output = runtime
+            .step(&InputSnapshot::idle(2, 0).with_viewport(narrow))
+            .unwrap();
+        assert!(output.view.dialogue.expect("subtitle").columns < 70);
+        let after = subtitle_source_boundary(
+            &source,
+            &runtime.subtitle_pages(),
+            runtime.state.text.page_index,
+            runtime.state.text.visible_graphemes,
+        );
+        assert_eq!(after, before);
+        assert_eq!(runtime.subtitle_pages().concat().replace('\n', ""), source);
+        assert_eq!(runtime.backlog(), preserved_backlog.as_slice());
+
+        runtime.state.text.visible_graphemes = runtime.current_page_grapheme_count();
+        let complete_before = subtitle_source_boundary(
+            &source,
+            &runtime.subtitle_pages(),
+            runtime.state.text.page_index,
+            runtime.current_page_grapheme_count(),
+        );
+        runtime
+            .step(&InputSnapshot::idle(3, 0).with_viewport(wide))
+            .unwrap();
+        let complete_after = subtitle_source_boundary(
+            &source,
+            &runtime.subtitle_pages(),
+            runtime.state.text.page_index,
+            runtime.state.text.visible_graphemes,
+        );
+        assert_eq!(complete_after, complete_before);
+
+        let unchanged = runtime.state.text.clone();
+        runtime
+            .step(&InputSnapshot::idle(4, 0).with_viewport(UiViewport {
+                height: 320,
+                ..wide
+            }))
+            .unwrap();
+        assert_eq!(
+            runtime.state.text, unchanged,
+            "height-only resize must not churn pages"
+        );
+
+        for (sequence, scale) in [(5, 0.85), (6, 1.35)] {
+            let boundary_before = subtitle_source_boundary(
+                &source,
+                &runtime.subtitle_pages(),
+                runtime.state.text.page_index,
+                runtime.state.text.visible_graphemes,
+            );
+            let mut input = InputSnapshot::idle(sequence, 0);
+            input.intents.push(UiIntent::SetSetting {
+                name: "text_scale".to_owned(),
+                value: scale,
+            });
+            runtime.step(&input).unwrap();
+            assert_eq!(runtime.subtitle_pages().concat().replace('\n', ""), source);
+            assert!(runtime.current_page_grapheme_count() >= runtime.state.text.visible_graphemes);
+            let boundary_after = subtitle_source_boundary(
+                &source,
+                &runtime.subtitle_pages(),
+                runtime.state.text.page_index,
+                runtime.state.text.visible_graphemes,
+            );
+            assert_eq!(boundary_after, boundary_before);
+        }
+    }
+
+    #[test]
+    fn active_subtitle_reflow_preserves_an_authored_newline_boundary() {
+        let source = "海\n風が窓を叩く夜に、次の駅までの時間を数えていた。".repeat(12);
+        let source_literal = source.replace('\n', "\\n");
+        let script = format!(
+            "aria;\nentry start;\nscene start {{ narrate \"{source_literal}\"; await advance; end; }}\n"
+        );
+        let wide = UiViewport {
+            width: 1_280,
+            height: 720,
+            scale_factor: 1.0,
+            ..UiViewport::default()
+        };
+        let narrow = UiViewport {
+            width: 320,
+            height: 568,
+            scale_factor: 1.0,
+            ..UiViewport::default()
+        };
+        let mut runtime = vm(&script);
+        runtime
+            .step(&InputSnapshot::idle(1, 0).with_viewport(wide))
+            .unwrap();
+        let (page_index, visible_graphemes) =
+            subtitle_display_position_for_source_boundary(&source, &runtime.subtitle_pages(), 2);
+        runtime.state.text.page_index = page_index;
+        runtime.state.text.visible_graphemes = visible_graphemes;
+        assert_eq!(
+            subtitle_source_boundary(
+                &source,
+                &runtime.subtitle_pages(),
+                runtime.state.text.page_index,
+                runtime.state.text.visible_graphemes,
+            ),
+            2
+        );
+        assert!(
+            grapheme_prefix(
+                &runtime.current_subtitle_page(),
+                runtime.state.text.visible_graphemes,
+            )
+            .contains("海\n")
+        );
+
+        runtime
+            .step(&InputSnapshot::idle(2, 0).with_viewport(narrow))
+            .unwrap();
+        assert_eq!(
+            subtitle_source_boundary(
+                &source,
+                &runtime.subtitle_pages(),
+                runtime.state.text.page_index,
+                runtime.state.text.visible_graphemes,
+            ),
+            2
+        );
+        assert!(
+            grapheme_prefix(
+                &runtime.current_subtitle_page(),
+                runtime.state.text.visible_graphemes,
+            )
+            .contains("海\n")
+        );
+
+        for (sequence, viewport, scale) in [(3, wide, 0.85), (4, narrow, 1.35), (5, wide, 1.0)] {
+            let mut input = InputSnapshot::idle(sequence, 0).with_viewport(viewport);
+            input.intents.push(UiIntent::SetSetting {
+                name: "text_scale".to_owned(),
+                value: scale,
+            });
+            runtime.step(&input).unwrap();
+            assert_eq!(
+                subtitle_source_boundary(
+                    &source,
+                    &runtime.subtitle_pages(),
+                    runtime.state.text.page_index,
+                    runtime.state.text.visible_graphemes,
+                ),
+                2
+            );
+            assert!(
+                grapheme_prefix(
+                    &runtime.current_subtitle_page(),
+                    runtime.state.text.visible_graphemes,
+                )
+                .contains("海\n")
+            );
+        }
+    }
+
+    #[test]
+    fn reflow_keeps_page_boundary_affinity_for_authored_and_consecutive_newlines() {
+        for source in ["海風\n空", "海\n\n風"] {
+            let source_literal = source.replace('\n', "\\n");
+            let script = format!(
+                "aria;\nentry start;\nscene start {{ narrate \"{source_literal}\"; await advance; end; }}\n"
+            );
+            let mut runtime = vm(&script);
+            runtime.step(&InputSnapshot::idle(1, 0)).unwrap();
+            // One CJK grapheme per physical line makes the authored LF land
+            // between subtitle pages (two rendered lines per page).
+            runtime.state.text.page_columns = 2;
+            let pages = runtime.spanned_subtitle_pages();
+            let boundary_page = pages
+                .iter()
+                .position(|page| {
+                    page.source_end > page.source_start && page.source_end < grapheme_count(source)
+                })
+                .expect("authored newline page boundary");
+            let boundary = pages[boundary_page].source_end;
+            let next_page = boundary_page + 1;
+            assert_eq!(pages[next_page].source_start, boundary);
+
+            for (page_index, visible) in [
+                (boundary_page, pages[boundary_page].display_grapheme_count()),
+                (next_page, 0),
+                (next_page, 1.min(pages[next_page].display_grapheme_count())),
+            ] {
+                runtime.state.text.page_columns = 2;
+                runtime.state.text.page_index = page_index;
+                runtime.state.text.visible_graphemes = visible;
+                runtime.state.ui.viewport = UiViewport {
+                    width: 1_280,
+                    height: 720,
+                    scale_factor: 1.0,
+                    ..UiViewport::default()
+                };
+                runtime.state.settings.text_scale = 1.0;
+                runtime.repaginate_active_subtitle_if_needed();
+                let wide = runtime.spanned_subtitle_pages();
+                let wide_page = &wide[runtime.state.text.page_index];
+                assert_eq!(
+                    wide_page.source_boundary_at_display(runtime.state.text.visible_graphemes),
+                    boundary + usize::from(page_index == next_page && visible > 0)
+                );
+
+                runtime.state.ui.viewport.width = 1;
+                runtime.state.settings.text_scale = 1.35;
+                runtime.repaginate_active_subtitle_if_needed();
+                let narrow = runtime.spanned_subtitle_pages();
+                let narrow_page = &narrow[runtime.state.text.page_index];
+                assert_eq!(
+                    narrow_page.source_boundary_at_display(runtime.state.text.visible_graphemes),
+                    boundary + usize::from(page_index == next_page && visible > 0)
+                );
             }
         }
     }

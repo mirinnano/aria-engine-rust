@@ -271,6 +271,12 @@ pub struct CompiledProgram {
 }
 
 impl CompiledProgram {
+    /// Stable identity of this exact executable program. Save snapshots use
+    /// it to reject stale program counters rather than translate bytecode.
+    pub fn content_fingerprint(&self) -> Result<String, AriacError> {
+        Ok(blake3::hash(&self.encode()?).to_hex().to_string())
+    }
+
     #[must_use]
     pub fn empty(game_id: impl Into<String>) -> Self {
         Self {

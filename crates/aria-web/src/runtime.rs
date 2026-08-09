@@ -56,6 +56,18 @@ impl PortableWebRuntime {
         self.vm.restore(snapshot).map_err(|error| error.to_string())
     }
 
+    /// Manual and quick records restore story position but retain the live
+    /// system-owned progression and preferences.
+    pub fn restore_story_envelope(&mut self, envelope: &SaveEnvelopeV3) -> Result<(), String> {
+        let snapshot: VmSnapshot = envelope.payload_as().map_err(|error| error.to_string())?;
+        envelope
+            .validate_for_game(&snapshot.game_id)
+            .map_err(|error| error.to_string())?;
+        self.vm
+            .restore_story_with_current_system_state(snapshot)
+            .map_err(|error| error.to_string())
+    }
+
     #[must_use]
     pub fn is_halted(&self) -> bool {
         self.vm.is_halted()

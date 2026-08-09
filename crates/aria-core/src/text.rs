@@ -55,15 +55,153 @@ pub fn wrap_japanese(text: &str, max_cells: usize) -> Vec<String> {
 /// physical lines, so a host never needs a browser-dependent balancing pass.
 #[must_use]
 pub fn paginate_subtitles(text: &str, max_cells: usize, lines_per_page: usize) -> Vec<String> {
-    let lines = wrap_japanese(text, max_cells.max(1));
+    paginate_subtitles_spanned(text, max_cells, lines_per_page)
+        .into_iter()
+        .map(|page| page.text)
+        .collect()
+}
+
+/// A paginated subtitle page with a deterministic mapping from display
+/// boundaries back to source grapheme boundaries. `source_end` may advance
+/// beyond the final visible grapheme when an authored LF lands at a page
+/// boundary and therefore has no rendered separator in this page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpannedSubtitlePage {
+    pub text: String,
+    pub source_start: usize,
+    pub source_end: usize,
+    display_source_boundaries: Vec<usize>,
+}
+
+impl SpannedSubtitlePage {
+    #[must_use]
+    pub fn source_boundary_at_display(&self, visible_graphemes: usize) -> usize {
+        if visible_graphemes >= self.display_source_boundaries.len().saturating_sub(1) {
+            self.source_end
+        } else {
+            self.display_source_boundaries[visible_graphemes]
+        }
+    }
+
+    #[must_use]
+    pub fn display_grapheme_count(&self) -> usize {
+        self.display_source_boundaries.len().saturating_sub(1)
+    }
+}
+
+/// Like [`paginate_subtitles`], while retaining source-boundary provenance for
+/// reflow and save restoration. The string output is intentionally identical.
+#[must_use]
+pub fn paginate_subtitles_spanned(
+    text: &str,
+    max_cells: usize,
+    lines_per_page: usize,
+) -> Vec<SpannedSubtitlePage> {
+    let lines = wrap_japanese_spanned(text, max_cells.max(1));
     let lines_per_page = lines_per_page.max(1);
     if lines.is_empty() {
-        return vec![String::new()];
+        return vec![SpannedSubtitlePage {
+            text: String::new(),
+            source_start: 0,
+            source_end: 0,
+            display_source_boundaries: vec![0],
+        }];
     }
     lines
         .chunks(lines_per_page)
-        .map(|page| page.join("\n"))
+        .map(|chunk| {
+            let source_start = chunk.first().map_or(0, |line| line.source_start);
+            let source_end = chunk.last().map_or(source_start, |line| line.source_end);
+            let mut text = String::new();
+            let mut boundaries = vec![source_start];
+            for (index, line) in chunk.iter().enumerate() {
+                let mut boundary = line.source_start;
+                for grapheme in line.text.graphemes(true) {
+                    text.push_str(grapheme);
+                    boundary = boundary.saturating_add(1);
+                    boundaries.push(boundary);
+                }
+                if index + 1 < chunk.len() {
+                    text.push('\n');
+                    // This display LF either represents an authored LF (the
+                    // next source boundary advances) or a layout-only wrap.
+                    boundaries.push(line.source_end);
+                }
+            }
+            SpannedSubtitlePage {
+                text,
+                source_start,
+                source_end,
+                display_source_boundaries: boundaries,
+            }
+        })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+struct SpannedLine {
+    text: String,
+    source_start: usize,
+    source_end: usize,
+}
+
+fn wrap_japanese_spanned(text: &str, max_cells: usize) -> Vec<SpannedLine> {
+    if max_cells == 0 {
+        return vec![SpannedLine {
+            text: text.to_owned(),
+            source_start: 0,
+            source_end: grapheme_count(text),
+        }];
+    }
+    let mut lines = Vec::new();
+    let paragraphs = text.split('\n').collect::<Vec<_>>();
+    let mut source_cursor = 0_usize;
+    for (paragraph_index, paragraph) in paragraphs.iter().enumerate() {
+        let graphemes = UnicodeSegmentation::graphemes(*paragraph, true).collect::<Vec<_>>();
+        let trailing_lf = usize::from(paragraph_index + 1 < paragraphs.len());
+        if graphemes.is_empty() {
+            lines.push(SpannedLine {
+                text: String::new(),
+                source_start: source_cursor,
+                source_end: source_cursor.saturating_add(trailing_lf),
+            });
+            source_cursor = source_cursor.saturating_add(trailing_lf);
+            continue;
+        }
+        let mut start = 0;
+        while start < graphemes.len() {
+            let mut end = start;
+            let mut width = 0;
+            while end < graphemes.len() {
+                let next = display_cells(graphemes[end]);
+                if end > start && width + next > max_cells {
+                    break;
+                }
+                width += next;
+                end += 1;
+            }
+            if end == start {
+                end += 1;
+            }
+            if end < graphemes.len() {
+                end = choose_line_break(&graphemes, start, end);
+            }
+            let source_start = source_cursor.saturating_add(start);
+            let is_last_line = end == graphemes.len();
+            lines.push(SpannedLine {
+                text: graphemes[start..end].concat(),
+                source_start,
+                source_end: source_cursor
+                    .saturating_add(end)
+                    .saturating_add(usize::from(is_last_line) * trailing_lf),
+            });
+            start = end;
+        }
+        source_cursor = source_cursor
+            .saturating_add(graphemes.len())
+            .saturating_add(trailing_lf);
+    }
+    lines
 }
 
 #[must_use]
@@ -211,5 +349,34 @@ mod tests {
                 .sum::<usize>()
                 <= 44
         }));
+    }
+
+    #[test]
+    fn spanned_pages_consume_authored_newlines_even_at_page_boundaries() {
+        let boundary = paginate_subtitles_spanned("海風\n空", 4, 1);
+        assert_eq!(
+            boundary.iter().map(|page| &page.text).collect::<Vec<_>>(),
+            vec!["海風", "空"]
+        );
+        assert_eq!(
+            boundary[0].source_boundary_at_display(boundary[0].display_grapheme_count()),
+            3
+        );
+        assert_eq!(boundary[1].source_start, 3);
+        assert_eq!(boundary[1].source_end, 4);
+
+        let consecutive = paginate_subtitles_spanned("海\n\n風", 4, 1);
+        assert_eq!(
+            consecutive
+                .iter()
+                .map(|page| &page.text)
+                .collect::<Vec<_>>(),
+            vec!["海", "", "風"]
+        );
+        assert_eq!(consecutive[0].source_end, 2);
+        assert_eq!(consecutive[1].source_start, 2);
+        assert_eq!(consecutive[1].source_end, 3);
+        assert_eq!(consecutive[2].source_start, 3);
+        assert_eq!(consecutive[2].source_end, 4);
     }
 }

@@ -281,6 +281,29 @@ enum NovelControl {
     Direction(NovelDirection),
 }
 
+/// A non-verbal Umikaze cue anchored immediately after one canonical player
+/// beat.  Markdown remains the sole prose authority; this finite table keeps
+/// the sample's pre-existing score placement reviewable and reproducible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UmikazeBgmCueKind {
+    Play {
+        asset: &'static str,
+        looping: bool,
+        fade_ms: u32,
+    },
+    Stop {
+        fade_ms: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UmikazeBgmCue {
+    source_name: &'static str,
+    speaker: Option<&'static str>,
+    text: &'static str,
+    kind: UmikazeBgmCueKind,
+}
+
 /// Executes the command-line form of the importer.
 pub fn command(
     source: &Path,
@@ -928,6 +951,277 @@ const UMIKAZE_CHAPTER_STYLES: [UmikazeChapterStyle; 11] = [
     },
 ];
 
+// These preserve the score cues that were already present in the generated
+// Day 0–10 modules before canonical import became mandatory.  Every anchor is
+// canonical Markdown player text (including an explicit speaker where needed)
+// and is checked for exactly one occurrence during generation and verification.
+const UMIKAZE_BGM_CUES: [UmikazeBgmCue; 18] = [
+    UmikazeBgmCue {
+        source_name: "00_init.md",
+        speaker: None,
+        text: "私はいつものように、窓のむこうを見る。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.ward.first-light.ogg",
+            looping: true,
+            fade_ms: 700,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "00_init.md",
+        speaker: None,
+        text: "母親は、ハンカチで涙を拭いた...",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 900 },
+    },
+    UmikazeBgmCue {
+        source_name: "01_start.md",
+        speaker: None,
+        text: "ガクンと鈍い衝撃があり、列車がゆっくりと滑り出す。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.rail.departure.ogg",
+            looping: true,
+            fade_ms: 500,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "01_start.md",
+        speaker: None,
+        text: "聞いたところで、俺にできることなんて何もないしな。",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 600 },
+    },
+    UmikazeBgmCue {
+        source_name: "04_day4.md",
+        speaker: None,
+        text: "洗濯槽が回り始めると、ミオは鞄からMDウォーカーを出した。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.recording.trace.ogg",
+            looping: false,
+            fade_ms: 450,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "04_day4.md",
+        speaker: None,
+        text: "ミオは録音を止め、ディスクを取り出して、半透明のケースへ戻した。",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 650 },
+    },
+    UmikazeBgmCue {
+        source_name: "05_day5.md",
+        speaker: None,
+        text: "冷えた缶を口に当てると、雨の音が少し遠くなった。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.rain.room.ogg",
+            looping: true,
+            fade_ms: 800,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "05_day5.md",
+        speaker: None,
+        text: "ミオは布団の中で、少しだけ笑った。",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 700 },
+    },
+    UmikazeBgmCue {
+        source_name: "06_day6.md",
+        speaker: None,
+        text: "俺は水２本をカゴに入れ、おにぎりの鮭と昆布、そしてガリガリくんもカゴに入れた。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.everyday.table.ogg",
+            looping: true,
+            fade_ms: 450,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "06_day6.md",
+        speaker: Some("俺"),
+        text: "「……俺の鮭はやらねえからな」",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 550 },
+    },
+    UmikazeBgmCue {
+        source_name: "06_day6.md",
+        speaker: None,
+        text: "俺は社交辞令を呟き、ロビーのドアを開ける。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.clear-between.ogg",
+            looping: true,
+            fade_ms: 600,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "06_day6.md",
+        speaker: None,
+        text: "エンジンは唸りを上げ、窓の外の寂れた街がゆっくりと後方へと流れていった。",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 700 },
+    },
+    UmikazeBgmCue {
+        source_name: "07_day7.md",
+        speaker: None,
+        text: "待合室の窓は白く曇っている。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.waiting.window.ogg",
+            looping: true,
+            fade_ms: 600,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "07_day7.md",
+        speaker: None,
+        text: "甘い匂いが、始発前の待合室に少しだけ残った。",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 700 },
+    },
+    UmikazeBgmCue {
+        source_name: "07_day7.md",
+        speaker: None,
+        text: "俺はペダルを踏み込み、潮風を切り裂いて走り出す。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.island.distance.ogg",
+            looping: false,
+            fade_ms: 650,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "07_day7.md",
+        speaker: Some("俺"),
+        text: "「...ああ」",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 800 },
+    },
+    UmikazeBgmCue {
+        source_name: "09_day9.md",
+        speaker: None,
+        text: "俺は受け取って、黙って食った。",
+        kind: UmikazeBgmCueKind::Play {
+            asset: "assets/audio/bgm/umk.north.grey.ogg",
+            looping: false,
+            fade_ms: 650,
+        },
+    },
+    UmikazeBgmCue {
+        source_name: "09_day9.md",
+        speaker: None,
+        text: "コードが届かないから、俺は向かいの席を立ち、ミオの隣へ座った。",
+        kind: UmikazeBgmCueKind::Stop { fade_ms: 900 },
+    },
+];
+
+// The historical Day 10 dark hold is staging rather than prose.  Retarget it
+// to the canonical final action instead of retaining the hand-authored "……"
+// line that used to trigger it.
+const UMIKAZE_DAY10_FINAL_DARK_HOLD: (&str, &str) =
+    ("10_day10.md", "次の駅で、水を買うことにした。");
+
+fn render_chapter_registration(output: &mut String, chapters: &[NovelChapter]) {
+    // Registration deliberately does not unlock a chapter.  Current Core
+    // semantics assign progress directly, so a later Core lane must make this
+    // initialization monotonic before a selector can safely run after resume.
+    // The generated sequence itself is the stable contract: all records exist,
+    // then only the prologue is initially unlocked.
+    for chapter in chapters {
+        output.push_str(&format!(
+            "  chapter \"{}\" progress 0;\n",
+            chapter.chapter_id
+        ));
+    }
+    if let Some(prologue) = chapters.first() {
+        output.push_str(&format!(
+            "  unlock chapter \"{}\" progress 1;\n",
+            prologue.chapter_id
+        ));
+    }
+}
+
+fn cue_matches_beat(cue: UmikazeBgmCue, beat: &NovelBeat) -> bool {
+    matches!(
+        beat,
+        NovelBeat::Reading { speaker, text }
+            if speaker.as_deref() == cue.speaker && text == cue.text
+    )
+}
+
+fn cue_matches_chapter_beat(cue: UmikazeBgmCue, beats: &[NovelBeat], beat_index: usize) -> bool {
+    if !cue_matches_beat(cue, &beats[beat_index]) {
+        return false;
+    }
+    // Day 7 intentionally repeats this acknowledgement. Its pre-existing
+    // score exit follows Mio's request to travel to the next sea, not the
+    // later acknowledgement near the beach.
+    if cue.source_name == "07_day7.md" && cue.speaker == Some("俺") && cue.text == "「...ああ」"
+    {
+        return beats[..beat_index]
+            .iter()
+            .rev()
+            .find_map(|beat| match beat {
+                NovelBeat::Reading { speaker, text } => Some((speaker.as_deref(), text.as_str())),
+                _ => None,
+            })
+            == Some((Some("ミオ"), "「うん。じゃあ、次の海まで連れてってよ」"));
+    }
+    true
+}
+
+fn validate_umikaze_bgm_cues(chapters: &[NovelChapter]) -> Result<()> {
+    for cue in UMIKAZE_BGM_CUES {
+        let chapter = chapters
+            .iter()
+            .find(|chapter| chapter.source_name == cue.source_name)
+            .with_context(|| format!("BGM cue source '{}' was not imported", cue.source_name))?;
+        let count = chapter
+            .beats
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| cue_matches_chapter_beat(cue, &chapter.beats, *index))
+            .count();
+        if count != 1 {
+            bail!(
+                "BGM cue anchor in {} must occur exactly once (speaker {:?}, text {:?}); found {count}",
+                cue.source_name,
+                cue.speaker,
+                cue.text,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn render_umikaze_bgm_cues_after_beat(
+    output: &mut String,
+    chapter: &NovelChapter,
+    beat_index: usize,
+) {
+    for cue in UMIKAZE_BGM_CUES.iter().copied().filter(|cue| {
+        cue.source_name == chapter.source_name
+            && cue_matches_chapter_beat(*cue, &chapter.beats, beat_index)
+    }) {
+        match cue.kind {
+            UmikazeBgmCueKind::Play {
+                asset,
+                looping,
+                fade_ms,
+            } => {
+                output.push_str(&format!("  play bgm asset(\"{asset}\")"));
+                if looping {
+                    output.push_str(" loop");
+                }
+                output.push_str(&format!(" fade {fade_ms}ms;\n"));
+            }
+            UmikazeBgmCueKind::Stop { fade_ms } => {
+                output.push_str(&format!("  stop bgm fade {fade_ms}ms;\n"));
+            }
+        }
+    }
+}
+
+fn render_umikaze_final_stage_cues_after_beat(
+    output: &mut String,
+    chapter: &NovelChapter,
+    beat: &NovelBeat,
+) {
+    if chapter.source_name == UMIKAZE_DAY10_FINAL_DARK_HOLD.0
+        && matches!(beat, NovelBeat::Reading { text, .. } if text == UMIKAZE_DAY10_FINAL_DARK_HOLD.1)
+    {
+        output.push_str("  effect tint \"#05070b\" amount 64 over 520ms;\n");
+        output.push_str("  wait 620ms;\n");
+    }
+}
+
 fn render_module(
     chapters: &[NovelChapter],
     chapter_select: &str,
@@ -1039,6 +1333,7 @@ fn render_umikaze_module(
             styles.len()
         );
     }
+    validate_umikaze_bgm_cues(chapters)?;
 
     let mut output = String::new();
     output.push_str(
@@ -1050,23 +1345,34 @@ fn render_umikaze_module(
     );
     output.push_str("aria;\n");
     output.push_str("module umikaze.scenario.ja.canonical;\n\n");
+    output.push_str("state mut umikaze_demo_edition: Bool = false;\n\n");
 
     output.push_str(&format!("scene {chapter_select} {{\n"));
     output.push_str("  screen chapter_select;\n");
     output.push_str("  background asset(\"#102b38\") with wipe(260ms);\n");
+    render_chapter_registration(&mut output, chapters);
     output.push_str("  choice {\n");
     for (chapter, style) in chapters.iter().zip(&styles) {
         output.push_str(&format!(
-            "    \"{}\" => {};\n",
+            "    \"{}\\n{}\\n{}\" => {};\n",
             escape_string(style.day),
+            escape_string(style.date),
+            escape_string(style.synopsis),
             chapter.scene
         ));
     }
     output.push_str("  }\n");
     output.push_str("}\n\n");
 
-    for (chapter, style) in chapters.iter().zip(styles) {
-        render_umikaze_chapter_content(&mut output, chapter, style, chapter_select, locale);
+    for (index, (chapter, style)) in chapters.iter().zip(styles).enumerate() {
+        render_umikaze_chapter_content(
+            &mut output,
+            chapter,
+            style,
+            chapters.get(index + 1),
+            chapter_select,
+            locale,
+        );
     }
 
     Ok(output)
@@ -1076,6 +1382,7 @@ fn render_umikaze_chapter_content(
     output: &mut String,
     chapter: &NovelChapter,
     style: &UmikazeChapterStyle,
+    next_chapter: Option<&NovelChapter>,
     chapter_select: &str,
     locale: &str,
 ) {
@@ -1093,10 +1400,6 @@ fn render_umikaze_chapter_content(
     output.push_str(&format!("  locale \"{}\";\n", escape_string(locale)));
     output.push_str(&format!(
         "  persistent flag \"{}_seen\" = true;\n",
-        chapter.chapter_id
-    ));
-    output.push_str(&format!(
-        "  unlock chapter \"{}\" progress 1;\n",
         chapter.chapter_id
     ));
     output.push_str(&format!(
@@ -1126,7 +1429,7 @@ fn render_umikaze_chapter_content(
     let mut current_background = style.background.to_owned();
     let mut heading_seen = false;
     let mut previous_was_scene_cut = false;
-    for beat in &chapter.beats {
+    for (beat_index, beat) in chapter.beats.iter().enumerate() {
         render_umikaze_beat(
             output,
             chapter,
@@ -1136,12 +1439,37 @@ fn render_umikaze_chapter_content(
             &mut heading_seen,
             &mut previous_was_scene_cut,
         );
+        render_umikaze_bgm_cues_after_beat(output, chapter, beat_index);
+        render_umikaze_final_stage_cues_after_beat(output, chapter, beat);
     }
 
     output.push_str(&format!(
         "  chapter \"{}\" progress 100;\n",
         chapter.chapter_id
     ));
+    output.push_str(&format!(
+        "  persistent flag \"{}_completed\" = true;\n",
+        chapter.chapter_id
+    ));
+    if let Some(next_chapter) = next_chapter {
+        // The content-limited demo reuses canonical Day 4 but has no Day 5
+        // selector entry. Its edition flag suppresses only that otherwise
+        // normal successor registration, so replay never accumulates a sixth
+        // chapter and violates the Core selector mapping contract.
+        if chapter.source_name == "04_day4.md" {
+            output.push_str("  if !umikaze_demo_edition {\n");
+            output.push_str(&format!(
+                "    unlock chapter \"{}\" progress 1;\n",
+                next_chapter.chapter_id
+            ));
+            output.push_str("  }\n");
+        } else {
+            output.push_str(&format!(
+                "  unlock chapter \"{}\" progress 1;\n",
+                next_chapter.chapter_id
+            ));
+        }
+    }
     output.push_str("  clear dialogue;\n");
     // A chapter exits after its final subtitle has had a complete frame to
     // land.  The selector (or the demo endpoint) is therefore an arrival,
@@ -1180,10 +1508,12 @@ fn render_umikaze_chapter_layout(
             styles.len()
         );
     }
+    validate_umikaze_bgm_cues(chapters)?;
 
     let mut index = String::new();
     index.push_str("aria;\n");
     index.push_str("module umikaze.scenario.ja;\n\n");
+    index.push_str("state mut umikaze_demo_edition: Bool = false;\n\n");
     index.push_str("// Generated from the canonical Day 0–10 Markdown source.\n");
     index.push_str("// Each chapter remains its own reviewable Aria module.\n");
     for chapter in chapters {
@@ -1193,11 +1523,14 @@ fn render_umikaze_chapter_layout(
     index.push_str(&format!("scene {chapter_select} {{\n"));
     index.push_str("  screen chapter_select;\n");
     index.push_str("  background asset(\"#102b38\") with wipe(260ms);\n");
+    render_chapter_registration(&mut index, chapters);
     index.push_str("  choice {\n");
     for (chapter, style) in chapters.iter().zip(&styles) {
         index.push_str(&format!(
-            "    \"{}\" => {};\n",
+            "    \"{}\\n{}\\n{}\" => {};\n",
             escape_string(style.day),
+            escape_string(style.date),
+            escape_string(style.synopsis),
             chapter.scene
         ));
     }
@@ -1205,7 +1538,7 @@ fn render_umikaze_chapter_layout(
     index.push_str("}\n");
 
     let mut rendered_chapters = Vec::with_capacity(chapters.len());
-    for (chapter, style) in chapters.iter().zip(styles) {
+    for (index, (chapter, style)) in chapters.iter().zip(styles).enumerate() {
         let mut source = String::new();
         source.push_str(
             "// Generated by aria import-novel --presentation umikaze --layout chapters.\n",
@@ -1216,7 +1549,14 @@ fn render_umikaze_chapter_layout(
             "module umikaze.scenario.ja.chapter_{};\n\n",
             chapter_scene_suffix(chapter)
         ));
-        render_umikaze_chapter_content(&mut source, chapter, style, chapter_select, locale);
+        render_umikaze_chapter_content(
+            &mut source,
+            chapter,
+            style,
+            chapters.get(index + 1),
+            chapter_select,
+            locale,
+        );
         // Chapter modules have no following sibling in their own file. Keep
         // the visually useful blank line between scenes in the single-module
         // renderer, but avoid writing a diff-noisy trailing empty line here.
@@ -1339,6 +1679,46 @@ fn verify_chapter_index(
                 options.chapter_select
             )
         })?;
+    let registrations = selector
+        .body
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::SetChapterProgress { id, progress } => Some((id.as_str(), *progress)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let expected_registrations = chapters
+        .iter()
+        .map(|chapter| (chapter.chapter_id.as_str(), 0))
+        .collect::<Vec<_>>();
+    if registrations != expected_registrations {
+        bail!(
+            "chapter selector registration mismatch in {}: expected {:?}, found {:?}",
+            index_path.display(),
+            expected_registrations,
+            registrations,
+        );
+    }
+    let initial_unlocks = selector
+        .body
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::UnlockChapter { id, progress } => Some((id.as_str(), *progress)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let expected_initial_unlocks = chapters
+        .first()
+        .map(|chapter| vec![(chapter.chapter_id.as_str(), 1)])
+        .unwrap_or_default();
+    if initial_unlocks != expected_initial_unlocks {
+        bail!(
+            "chapter selector initial unlock mismatch in {}: expected {:?}, found {:?}",
+            index_path.display(),
+            expected_initial_unlocks,
+            initial_unlocks,
+        );
+    }
     let actual_targets = selector
         .body
         .iter()
@@ -1535,6 +1915,17 @@ fn verify_umikaze_chapter_presentation(
             expected_story
         );
     }
+    if entry_scene
+        .body
+        .iter()
+        .any(|statement| matches!(&statement.kind, StatementKind::UnlockChapter { .. }))
+    {
+        bail!(
+            "{} chapter entry '{}' must not unlock itself",
+            path.display(),
+            chapter.scene,
+        );
+    }
 
     let story = module
         .scenes
@@ -1570,6 +1961,233 @@ fn verify_umikaze_chapter_presentation(
     verify_structural_turn(path, chapter, &story.body)?;
     verify_automatic_statements(path, chapter, &story.body)?;
     verify_stage_directions(path, chapter, &story.body)?;
+    verify_umikaze_chapter_progression(path, chapter, &story.body)?;
+    verify_umikaze_bgm_cues(path, chapter, &story.body)?;
+    verify_umikaze_final_stage_cues(path, chapter, &story.body)?;
+    Ok(())
+}
+
+fn verify_umikaze_final_stage_cues(
+    path: &Path,
+    chapter: &NovelChapter,
+    statements: &[Statement],
+) -> Result<()> {
+    if chapter.source_name != UMIKAZE_DAY10_FINAL_DARK_HOLD.0 {
+        return Ok(());
+    }
+    let preserved = statements.windows(4).any(|window| {
+        matches!(
+            &window[0].kind,
+            StatementKind::Narrate { text } if text == UMIKAZE_DAY10_FINAL_DARK_HOLD.1
+        ) && matches!(&window[1].kind, StatementKind::AwaitAdvance)
+            && matches!(
+                &window[2].kind,
+                StatementKind::Effect { kind, color, amount, duration_ms, .. }
+                    if kind == "tint" && color == "#05070b"
+                        && (*amount - 64.0).abs() < f64::EPSILON && *duration_ms == 520
+            )
+            && matches!(
+                &window[3].kind,
+                StatementKind::Wait { duration_ms, .. } if *duration_ms == 620
+            )
+    });
+    if !preserved {
+        bail!(
+            "{} does not preserve Day 10's final dark hold after canonical prose",
+            path.display(),
+        );
+    }
+    Ok(())
+}
+
+fn verify_umikaze_chapter_progression(
+    path: &Path,
+    chapter: &NovelChapter,
+    statements: &[Statement],
+) -> Result<()> {
+    let completion = statements
+        .iter()
+        .position(|statement| {
+            matches!(
+                &statement.kind,
+                StatementKind::SetChapterProgress { id, progress }
+                    if id == &chapter.chapter_id && *progress == 100
+            )
+        })
+        .with_context(|| {
+            format!(
+                "{} does not complete {}",
+                path.display(),
+                chapter.chapter_id
+            )
+        })?;
+    let following = &statements[completion.saturating_add(1)..];
+    let completed_flag = format!("{}_completed", chapter.chapter_id);
+    if !matches!(
+        following.first().map(|statement| &statement.kind),
+        Some(StatementKind::SetFlag { name, value: true, persistent: true })
+            if name == &completed_flag
+    ) {
+        bail!(
+            "{} must persist '{}' immediately after chapter completion",
+            path.display(),
+            completed_flag,
+        );
+    }
+
+    let chapter_index = UMIKAZE_CHAPTER_STYLES
+        .iter()
+        .position(|style| style.source_name == chapter.source_name)
+        .context("chapter progression is not defined for a non-canonical source")?;
+    let mut unlocks = Vec::new();
+    collect_chapter_unlocks(following, &mut unlocks);
+    let expected_unlocks = if chapter_index + 1 < UMIKAZE_CHAPTER_STYLES.len() {
+        vec![(format!("canonical_chapter_{:02}", chapter_index + 1), 1_u8)]
+    } else {
+        Vec::new()
+    };
+    if unlocks.len() != expected_unlocks.len()
+        || unlocks.iter().zip(&expected_unlocks).any(
+            |((id, progress), (expected_id, expected_progress))| {
+                *id != expected_id || *progress != *expected_progress
+            },
+        )
+    {
+        bail!(
+            "{} chapter progression mismatch: expected {:?}, found {:?}",
+            path.display(),
+            expected_unlocks,
+            unlocks,
+        );
+    }
+    Ok(())
+}
+
+fn collect_chapter_unlocks<'a>(statements: &'a [Statement], unlocks: &mut Vec<(&'a str, u8)>) {
+    for statement in statements {
+        match &statement.kind {
+            StatementKind::UnlockChapter { id, progress } => unlocks.push((id.as_str(), *progress)),
+            StatementKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_chapter_unlocks(then_branch, unlocks);
+                collect_chapter_unlocks(else_branch, unlocks);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn verify_umikaze_bgm_cues(
+    path: &Path,
+    chapter: &NovelChapter,
+    statements: &[Statement],
+) -> Result<()> {
+    let expected_cues = UMIKAZE_BGM_CUES
+        .iter()
+        .filter(|cue| cue.source_name == chapter.source_name)
+        .copied()
+        .collect::<Vec<_>>();
+    let expected = expected_cues
+        .iter()
+        .map(|cue| match cue.kind {
+            UmikazeBgmCueKind::Play {
+                asset,
+                looping,
+                fade_ms,
+            } => ("play", asset, looping, fade_ms),
+            UmikazeBgmCueKind::Stop { fade_ms } => ("stop", "", false, fade_ms),
+        })
+        .collect::<Vec<_>>();
+    let actual = statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Play {
+                bus: aria_core::modern::AudioBus::Bgm,
+                asset,
+                looping,
+                fade_ms: Some(fade_ms),
+            } => Some(("play", asset.path.as_str(), *looping, *fade_ms)),
+            StatementKind::Stop {
+                bus: aria_core::modern::AudioBus::Bgm,
+                fade_ms: Some(fade_ms),
+            } => Some(("stop", "", false, *fade_ms)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if actual != expected {
+        bail!(
+            "{} BGM cue mismatch for {}: expected {:?}, found {:?}",
+            path.display(),
+            chapter.source_name,
+            expected,
+            actual,
+        );
+    }
+    let actual_positions = statements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| {
+            matches!(
+                &statement.kind,
+                StatementKind::Play {
+                    bus: aria_core::modern::AudioBus::Bgm,
+                    fade_ms: Some(_),
+                    ..
+                } | StatementKind::Stop {
+                    bus: aria_core::modern::AudioBus::Bgm,
+                    fade_ms: Some(_),
+                }
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let player_positions = statements
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| {
+            matches!(
+                &statement.kind,
+                StatementKind::Say { .. } | StatementKind::Narrate { .. }
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    for (cue, actual_position) in expected_cues.iter().zip(actual_positions) {
+        let anchor_beat_index = chapter
+            .beats
+            .iter()
+            .enumerate()
+            .find_map(|(index, _)| {
+                cue_matches_chapter_beat(*cue, &chapter.beats, index).then_some(index)
+            })
+            .expect("BGM cue anchors were validated before verification");
+        let player_ordinal = chapter.beats[..=anchor_beat_index]
+            .iter()
+            .filter(|beat| is_player_text(beat))
+            .count()
+            .saturating_sub(1);
+        let anchor_position = *player_positions
+            .get(player_ordinal)
+            .context("generated player text was verified before BGM anchors")?;
+        if !matches!(
+            statements
+                .get(anchor_position.saturating_add(1))
+                .map(|statement| &statement.kind),
+            Some(StatementKind::AwaitAdvance)
+        ) || actual_position != anchor_position.saturating_add(2)
+        {
+            bail!(
+                "{} BGM cue for {:?} is not immediately after its canonical player-text anchor (anchor statement {}, cue statement {})",
+                path.display(),
+                cue.text,
+                anchor_position,
+                actual_position,
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1743,18 +2361,42 @@ fn verify_paragraph_breaths(
         })
         .collect::<Vec<_>>();
     let actual = statements
-        .windows(3)
-        .filter_map(|window| {
-            if !matches!(&window[0].kind, StatementKind::AwaitAdvance)
-                || !matches!(&window[1].kind, StatementKind::ClearDialogue)
-            {
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| {
+            if !matches!(&statement.kind, StatementKind::AwaitAdvance) {
                 return None;
             }
-            match &window[2].kind {
-                StatementKind::Wait {
+            let mut following = index.saturating_add(1);
+            // A score cue is deliberately anchored between a released line
+            // and its ordinary breath. It must not turn that reader pacing
+            // into an unverifiable implementation detail.
+            if matches!(
+                statements.get(following).map(|statement| &statement.kind),
+                Some(StatementKind::Play {
+                    bus: aria_core::modern::AudioBus::Bgm,
+                    ..
+                }) | Some(StatementKind::Stop {
+                    bus: aria_core::modern::AudioBus::Bgm,
+                    ..
+                })
+            ) {
+                following = following.saturating_add(1);
+            }
+            if !matches!(
+                statements.get(following).map(|statement| &statement.kind),
+                Some(StatementKind::ClearDialogue)
+            ) {
+                return None;
+            }
+            match statements
+                .get(following.saturating_add(1))
+                .map(|statement| &statement.kind)
+            {
+                Some(StatementKind::Wait {
                     duration_ms,
                     release_after_ms: Some(160),
-                } => Some(*duration_ms),
+                }) => Some(*duration_ms),
                 _ => None,
             }
         })
@@ -2357,6 +2999,49 @@ mod tests {
     use super::*;
     use aria_core::compiler::{CompileInput, SourceUnit, compile};
 
+    fn append_umikaze_bgm_anchor_lines(source_name: &str, markdown: &mut String) {
+        for cue in UMIKAZE_BGM_CUES
+            .iter()
+            .filter(|cue| cue.source_name == source_name)
+        {
+            // The Day 7 exit is deliberately tied to this specific of two
+            // identical acknowledgements, matching the production cue-table
+            // context check rather than merely satisfying its text.
+            if cue.source_name == "07_day7.md"
+                && cue.speaker == Some("俺")
+                && cue.text == "「...ああ」"
+            {
+                markdown.push_str("ミオ「うん。じゃあ、次の海まで連れてってよ」\n\n");
+            }
+            if let Some(speaker) = cue.speaker {
+                markdown.push_str(speaker);
+            }
+            markdown.push_str(cue.text);
+            markdown.push_str("\n\n");
+        }
+    }
+
+    fn write_umikaze_fixture_sources(source: &Path) {
+        for style in &UMIKAZE_CHAPTER_STYLES {
+            let mut markdown = if style.source_name == "10_day10.md" {
+                "本文。\n\n次の駅で、水を買うことにした。\n\n".to_owned()
+            } else {
+                "本文。\n\n".to_owned()
+            };
+            append_umikaze_bgm_anchor_lines(style.source_name, &mut markdown);
+            fs::write(source.join(style.source_name), markdown).unwrap();
+        }
+    }
+
+    fn write_umikaze_fixture_chapter(source: &Path, source_name: &str, mut markdown: String) {
+        if !markdown.ends_with('\n') {
+            markdown.push('\n');
+        }
+        markdown.push('\n');
+        append_umikaze_bgm_anchor_lines(source_name, &mut markdown);
+        fs::write(source.join(source_name), markdown).unwrap();
+    }
+
     #[test]
     fn imports_canonical_beats_without_inventing_prose() {
         let temp = tempfile::tempdir().unwrap();
@@ -2508,14 +3193,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(
-            source.join("00_init.md"),
-            "pacing explicit\n\n前の文。\n\nstatement ash\n\n白い。\n\n次の文。\n",
-        )
-        .unwrap();
+        write_umikaze_fixture_sources(&source);
+        write_umikaze_fixture_chapter(
+            &source,
+            "00_init.md",
+            "pacing explicit\n\n前の文。\n\nstatement ash\n\n白い。\n\n次の文。\n".to_owned(),
+        );
         let output = temp.path().join("scenario/ja-JP");
         let include = UMIKAZE_CHAPTER_STYLES
             .iter()
@@ -2547,20 +3230,24 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(
-            source.join("00_init.md"),
-            "**9月18日　保健室**\n\n本文。\n\n余白。\n\npause ash 720\n\n# side2\n\n...\n",
-        )
-        .unwrap();
-        fs::write(
-            source.join("05_day5.md"),
-            "雨の夜。\n; 暗転・雨の音フェードアウト\nfadeout 2\nstopbgm\nwait 2000\n; 病院回想\nfadein\n白い天井。\n",
-        )
-        .unwrap();
-        fs::write(source.join("10_day10.md"), "終わり。\n……\n").unwrap();
+        write_umikaze_fixture_sources(&source);
+        write_umikaze_fixture_chapter(
+            &source,
+            "00_init.md",
+            "**9月18日　保健室**\n\n本文。\n\n余白。\n\npause ash 720\n\n# side2\n\n...\n"
+                .to_owned(),
+        );
+        write_umikaze_fixture_chapter(
+            &source,
+            "05_day5.md",
+            "雨の夜。\n; 暗転・雨の音フェードアウト\nfadeout 2\nstopbgm\nwait 2000\n; 病院回想\nfadein\n白い天井。\n"
+                .to_owned(),
+        );
+        write_umikaze_fixture_chapter(
+            &source,
+            "10_day10.md",
+            "終わり。\n……\n次の駅で、水を買うことにした。\n".to_owned(),
+        );
         let output_path = temp.path().join("generated/umikaze.aria");
         let include = UMIKAZE_CHAPTER_STYLES
             .iter()
@@ -2622,14 +3309,13 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(
-            source.join("00_init.md"),
-            "pacing explicit\n\n**春**\n\n最初。\n\n**道**\n\n二つ目。\n\n# side2\n\n**保健室**\n\n三つ目。\n",
-        )
-        .unwrap();
+        write_umikaze_fixture_sources(&source);
+        write_umikaze_fixture_chapter(
+            &source,
+            "00_init.md",
+            "pacing explicit\n\n**春**\n\n最初。\n\n**道**\n\n二つ目。\n\n# side2\n\n**保健室**\n\n三つ目。\n"
+                .to_owned(),
+        );
         let output = temp.path().join("generated/umikaze.aria");
         let include = UMIKAZE_CHAPTER_STYLES
             .iter()
@@ -2668,9 +3354,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
+        write_umikaze_fixture_sources(&source);
         let output = temp.path().join("scenario/ja-JP");
         let include = UMIKAZE_CHAPTER_STYLES
             .iter()
@@ -2708,9 +3392,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
+        write_umikaze_fixture_sources(&source);
         let output = temp.path().join("scenario/ja-JP");
         let options = NovelImportOptions {
             chapter_select: "chapter_select_ja".to_owned(),
@@ -2742,10 +3424,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(source.join("00_init.md"), "...\n").unwrap();
+        write_umikaze_fixture_sources(&source);
+        write_umikaze_fixture_chapter(&source, "00_init.md", "...\n".to_owned());
         let output = temp.path().join("scenario/ja-JP");
         let options = NovelImportOptions {
             chapter_select: "chapter_select_ja".to_owned(),

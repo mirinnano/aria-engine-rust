@@ -7,11 +7,10 @@ module umikaze.scenario.ja.chapter_08;
 scene novel_chapter_08 {
   locale "ja-JP";
   persistent flag "canonical_chapter_08_seen" = true;
-  unlock chapter "canonical_chapter_08" progress 1;
   background asset("assets/bg/scenes/mountain-room-dawn-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 8\nVIII\n他者の幸福を、ひとは決定できない。\n山あいの居間\n遠い場所の映像が、静かな朝を占めていく。" => novel_chapter_08_story;
+    "DAY 8\n山あいの居間\n遠い場所の映像が、静かな朝を占めていく。" => novel_chapter_08_story;
   }
 }
 
@@ -629,6 +628,8 @@ scene novel_chapter_08_story {
   clear dialogue;
   wait 820ms;
   chapter "canonical_chapter_08" progress 100;
+  persistent flag "canonical_chapter_08_completed" = true;
+  unlock chapter "canonical_chapter_09" progress 1;
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

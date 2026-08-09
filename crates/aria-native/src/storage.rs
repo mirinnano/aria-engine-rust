@@ -64,6 +64,23 @@ impl AtomicSaveStore {
         write_atomic(&current, &encoded)
     }
 
+    /// Promotes a recovered older generation to current without rotating the
+    /// existing current file into `previous`. This is deliberately separate
+    /// from [`Self::save`]: the current file may be checksum-valid yet belong
+    /// to incompatible bytecode, while `previous` is the only compatible
+    /// recovery point and must survive an interrupted promotion.
+    pub fn promote_recovered(
+        &self,
+        slot: u32,
+        envelope: &SaveEnvelopeV3,
+    ) -> Result<(), SaveStoreError> {
+        envelope.validate()?;
+        let directory = self.directory();
+        fs::create_dir_all(&directory)?;
+        let encoded = envelope.encode()?;
+        write_atomic(&self.current_path(slot), &encoded)
+    }
+
     pub fn load(&self, slot: u32) -> Result<Option<LoadedSave>, SaveStoreError> {
         let current = self.current_path(slot);
         match fs::read(&current) {
@@ -109,6 +126,42 @@ impl AtomicSaveStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(SaveStoreError::Io(error)),
         }
+    }
+
+    /// Returns every checksum-valid generation in newest-first order. Callers
+    /// must still validate game/schema/program compatibility before replacing
+    /// a live VM, because an envelope can be structurally sound yet belong to
+    /// retired content.
+    pub fn load_candidates(&self, slot: u32) -> Result<Vec<LoadedSave>, SaveStoreError> {
+        let mut candidates = Vec::with_capacity(2);
+        let mut found = false;
+        let mut first_error = None;
+        for (path, recovered_from_previous) in [
+            (self.current_path(slot), false),
+            (self.previous_path(slot), true),
+        ] {
+            match fs::read(path) {
+                Ok(bytes) => {
+                    found = true;
+                    match SaveEnvelopeV3::decode(&bytes) {
+                        Ok(envelope) => candidates.push(LoadedSave {
+                            envelope,
+                            recovered_from_previous,
+                        }),
+                        Err(error) if first_error.is_none() => first_error = Some(error),
+                        Err(_) => {}
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(SaveStoreError::Io(error)),
+            }
+        }
+        if candidates.is_empty() && found {
+            return Err(SaveStoreError::InvalidCurrent(
+                first_error.expect("a present invalid generation has a decode error"),
+            ));
+        }
+        Ok(candidates)
     }
 
     #[must_use]
@@ -194,6 +247,36 @@ mod tests {
         let loaded = store.load(1).unwrap().unwrap();
         assert_eq!(loaded.envelope.payload_as::<i32>().unwrap(), 1);
         assert!(loaded.recovered_from_previous);
+    }
+
+    #[test]
+    fn candidates_keep_checksum_valid_current_and_previous_generations() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AtomicSaveStore::new(temp.path(), "game").unwrap();
+        store.save(1, &save(1, 1)).unwrap();
+        store.save(1, &save(2, 2)).unwrap();
+        let candidates = store.load_candidates(1).unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].envelope.payload_as::<i32>().unwrap(), 2);
+        assert!(!candidates[0].recovered_from_previous);
+        assert_eq!(candidates[1].envelope.payload_as::<i32>().unwrap(), 1);
+        assert!(candidates[1].recovered_from_previous);
+    }
+
+    #[test]
+    fn recovered_promotion_replaces_current_without_rotating_previous() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AtomicSaveStore::new(temp.path(), "game").unwrap();
+        let compatible = save(1, 1);
+        let incompatible = save(2, 2);
+        store.save(1, &compatible).unwrap();
+        store.save(1, &incompatible).unwrap();
+        store.promote_recovered(1, &compatible).unwrap();
+
+        let current = SaveEnvelopeV3::decode(&fs::read(store.current_path(1)).unwrap()).unwrap();
+        let previous = SaveEnvelopeV3::decode(&fs::read(store.previous_path(1)).unwrap()).unwrap();
+        assert_eq!(current.payload_as::<i32>().unwrap(), 1);
+        assert_eq!(previous.payload_as::<i32>().unwrap(), 1);
     }
 
     #[test]

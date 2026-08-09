@@ -7,11 +7,10 @@ module umikaze.scenario.ja.chapter_05;
 scene novel_chapter_05 {
   locale "ja-JP";
   persistent flag "canonical_chapter_05_seen" = true;
-  unlock chapter "canonical_chapter_05" progress 1;
   background asset("assets/bg/scenes/rain-street-evening-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 5\nV\n幸福への問いは、答えがなくとも消えない。\n9月25日・益田\n強い雨が、進む理由を足止めする。" => novel_chapter_05_story;
+    "DAY 5\n9月25日・益田\n強い雨が、進む理由を足止めする。" => novel_chapter_05_story;
   }
 }
 
@@ -223,8 +222,8 @@ scene novel_chapter_05_story {
   wait breath 220ms;
   narrate "冷えた缶を口に当てると、雨の音が少し遠くなった。";
   await advance;
-  clear dialogue;
   play bgm asset("assets/audio/bgm/umk.rain.room.ogg") loop fade 800ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "「なあ」";
   await advance;
@@ -669,8 +668,8 @@ scene novel_chapter_05_story {
   wait breath 220ms;
   narrate "ミオは布団の中で、少しだけ笑った。";
   await advance;
-  clear dialogue;
   stop bgm fade 700ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "俺は財布を取り、濡れた靴を履いた。";
   await advance;
@@ -1029,6 +1028,8 @@ scene novel_chapter_05_story {
   narrate "しばらくして、ミオの寝息が整っていった。";
   await advance;
   chapter "canonical_chapter_05" progress 100;
+  persistent flag "canonical_chapter_05_completed" = true;
+  unlock chapter "canonical_chapter_06" progress 1;
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

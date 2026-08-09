@@ -106,8 +106,8 @@ fn save_slot_directory(app: &AppHandle, namespace: &str, slot: &str) -> Result<P
 }
 
 fn save_slot_component(slot: &str) -> Result<String, String> {
-    if slot == "autosave" {
-        return Ok("autosave".to_owned());
+    if matches!(slot, "autosave" | "quick") {
+        return Ok(slot.to_owned());
     }
     let manual = slot
         .parse::<u32>()
@@ -198,6 +198,7 @@ mod tests {
     #[test]
     fn automatic_checkpoint_has_a_dedicated_directory() {
         assert_eq!(save_slot_component("autosave").unwrap(), "autosave");
+        assert_eq!(save_slot_component("quick").unwrap(), "quick");
         assert_eq!(save_slot_component("1").unwrap(), "slot-1");
         assert!(save_slot_component("0").is_err());
         assert!(save_slot_component("11").is_err());

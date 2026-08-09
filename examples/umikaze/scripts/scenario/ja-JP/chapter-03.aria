@@ -7,11 +7,10 @@ module umikaze.scenario.ja.chapter_03;
 scene novel_chapter_03 {
   locale "ja-JP";
   persistent flag "canonical_chapter_03_seen" = true;
-  unlock chapter "canonical_chapter_03" progress 1;
   background asset("assets/bg/scenes/okayama-rail-window-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 3\nIII\n幸福は、苦痛の不在を意味しない。\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03_story;
+    "DAY 3\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03_story;
   }
 }
 
@@ -553,6 +552,8 @@ scene novel_chapter_03_story {
   narrate "俺は部屋の明かりを消し、冷たいシーツの中で目を閉じた。";
   await advance;
   chapter "canonical_chapter_03" progress 100;
+  persistent flag "canonical_chapter_03_completed" = true;
+  unlock chapter "canonical_chapter_04" progress 1;
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

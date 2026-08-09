@@ -146,7 +146,7 @@ if (bundle.pak_profile !== profile) fail(`bundle has ${bundle.pak_profile} PAK p
 if (bundle.content_root_blake3 !== manifest.bundle_content_root_blake3) {
   fail("bundle content root does not match the release manifest");
 }
-const expectedSaveNamespace = edition === "demo" ? "umikaze-demo-v1" : "umikaze-v4";
+const expectedSaveNamespace = edition === "demo" ? "umikaze-demo-v2" : "umikaze-v5";
 if (bundle.save_namespace !== expectedSaveNamespace) {
   fail(`expected save namespace ${expectedSaveNamespace}, received ${bundle.save_namespace}`);
 }

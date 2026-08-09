@@ -3,15 +3,14 @@
 aria;
 module umikaze.scenario.ja.chapter_01;
 
-// Source: 01_start.md — 294 player-visible beats
+// Source: 01_start.md — 289 player-visible beats
 scene novel_chapter_01 {
   locale "ja-JP";
   persistent flag "canonical_chapter_01_seen" = true;
-  unlock chapter "canonical_chapter_01" progress 1;
   background asset("assets/bg/scenes/platform-sea-dawn-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 1\nI\n幸福は、理由ではなく現在に示される。\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01_story;
+    "DAY 1\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01_story;
   }
 }
 
@@ -61,19 +60,19 @@ scene novel_chapter_01_story {
   narrate "俺は少し急いで吸い、数口で灰皿へ押しつけた。";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "煙草吸ってて、電車を逃すなんてあまりにもアホだし。";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "「...悪いな」";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "「...お父さんも吸ってたから、いいよ」";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "「...そうか」";
   await advance;
   clear dialogue;
@@ -125,7 +124,7 @@ scene novel_chapter_01_story {
   narrate "たかだか数十センチの車両の段差を越えるだけで、ミオの肩が微かに上下した。";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "俺はドアの前で足を止めた。";
   await advance;
   clear dialogue;
@@ -133,15 +132,15 @@ scene novel_chapter_01_story {
   narrate "今なら、まだ戻れる。";
   await advance;
   clear dialogue;
-  wait 620ms;
+  wait breath 220ms;
   narrate "...";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait 620ms;
   narrate "発車ベルが鳴る。";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "考えるより先に、足が出た。";
   await advance;
   clear dialogue;
@@ -169,8 +168,8 @@ scene novel_chapter_01_story {
   wait breath 220ms;
   narrate "ガクンと鈍い衝撃があり、列車がゆっくりと滑り出す。";
   await advance;
-  clear dialogue;
   play bgm asset("assets/audio/bgm/umk.rail.departure.ogg") loop fade 500ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "ホームの景色が後ろへ後ろへと流れていく。";
   await advance;
@@ -208,7 +207,7 @@ scene novel_chapter_01_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "それだけ聞いて、俺は窓の外に目を戻した。 ";
+  narrate "それだけ聞いて、俺は窓の外に目を戻した。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -258,8 +257,8 @@ scene novel_chapter_01_story {
   wait breath 220ms;
   narrate "聞いたところで、俺にできることなんて何もないしな。";
   await advance;
-  clear dialogue;
   stop bgm fade 600ms;
+  clear dialogue;
   wait 680ms;
   narrate "列車はどんどん進み、小田原に着いた。";
   await advance;
@@ -340,24 +339,16 @@ scene novel_chapter_01_story {
   narrate "「……綺麗じゃん」";
   await advance;
   clear dialogue;
-  wait 420ms;
+  wait 520ms;
   narrate "「まあな」";
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "電車は神奈川県を抜け、熱海へと到着した。";
+  narrate "熱海で乗り換え、長いトンネルを抜ける。";
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "ここからはJR東海だ。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "長い丹那トンネルを抜け、ついにこの電車の終点・沼津に着いた。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "俺たちは電車を降り、ホームのキヨスクへと向かう。";
+  narrate "沼津で列車を降り、ホームのキヨスクへ向かった。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -445,7 +436,7 @@ scene novel_chapter_01_story {
   await advance;
   clear dialogue;
   wait 620ms;
-  narrate "静岡で乗り換え。浜松で乗り換え。";
+  narrate "静岡で乗り換え。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -501,7 +492,7 @@ scene novel_chapter_01_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "ふと隣を見ると、ミオがカバンからMDウォーカーを取り出し、イヤホンを耳に突っ込んでいた。";
+  narrate "ふと隣を見ると、ミオがカバンから録音もできるMDウォーカーを取り出し、イヤホンを耳に突っ込んでいた。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -643,36 +634,22 @@ scene novel_chapter_01_story {
   narrate "俺たちは急いで荷物をまとめ、列車を降りた。";
   await advance;
   clear dialogue;
+  wait breath 220ms;
+  narrate "浜松で乗り換えた。";
+  await advance;
+  clear dialogue;
   wait 260ms;
-  narrate "愛知県に入ってからも、無機質な移動は続いた。";
+  narrate "豊橋。名古屋。駅名だけが変わり、";
+  await advance;
+  narrate "ビル群はまた田園へ戻った。";
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "豊橋で特別快速に乗り換え、名古屋という馬鹿でかいターミナルを通過する。";
+  narrate "西へ向かうにつれて、窓の外が茜色に染まり始めた。";
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "窓の外の景色はビル群に変わり、そしてまたすぐに田園風景に戻っていった。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "西へ向かうにつれて、窓の外の景色が茜色に染まり始めた。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "太陽が沈んでいく。俺たちの最初の一日目が、終わろうとしていた。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "列車の中は混み合っていて、俺たちは座ることができたが、周りには立っている客がたくさんいた。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "スーツ姿のサラリーマン。部活帰りの高校生。";
-  await advance;
-  clear dialogue;
-  wait breath 220ms;
-  narrate "誰も俺たちのことなんか気に留めない。";
+  narrate "列車の中は混み合い、周りには立っている客がいた。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -680,7 +657,7 @@ scene novel_chapter_01_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "その頭の重さが、妙にリアルだった。";
+  narrate "その頭の重さだけが、妙にリアルだった。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -863,11 +840,11 @@ scene novel_chapter_01_story {
   narrate "ミオが足を止める。";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "「戻るか」";
   await advance;
   clear dialogue;
-  wait breath 300ms;
+  wait breath 220ms;
   narrate "「戻って、どこ行くの」";
   await advance;
   clear dialogue;
@@ -1104,7 +1081,7 @@ scene novel_chapter_01_story {
   await advance;
   clear dialogue;
   wait breath 220ms;
-  narrate "毒々しい緑色の液体が、ミオの青白い肌とは対照的だった。";
+  narrate "毒々しい緑色の液体が、けばけばしい照明の下で光っていた。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -1196,7 +1173,7 @@ scene novel_chapter_01_story {
   await advance;
   clear dialogue;
   wait 640ms;
-  narrate "布団にくるまって、財布の中の茶封筒を思い出した。";
+  narrate "布団にくるまって、鞄の底の茶封筒を思い出した。";
   await advance;
   clear dialogue;
   wait breath 220ms;
@@ -1214,6 +1191,8 @@ scene novel_chapter_01_story {
   narrate "天井のネオンの反射を見上げているうちに、いつの間にか俺も眠りについていた。";
   await advance;
   chapter "canonical_chapter_01" progress 100;
+  persistent flag "canonical_chapter_01_completed" = true;
+  unlock chapter "canonical_chapter_02" progress 1;
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

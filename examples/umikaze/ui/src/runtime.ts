@@ -10,6 +10,7 @@ type WasmRuntime = {
   step(input: string): string;
   save_envelope_json(timestamp: bigint): string;
   restore_envelope_json(envelope: string): void;
+  restore_story_envelope_json(envelope: string): void;
 };
 
 type WasmRuntimeConstructor = new (
@@ -61,7 +62,7 @@ type AudioAdapter = {
 };
 
 type SaveGeneration = { generation: number; payload: string; writtenAt?: number };
-type SaveKey = number | "autosave";
+type SaveKey = number | "quick" | "autosave";
 type SaveStore = {
   open(): Promise<void>;
   put(namespace: string, slot: SaveKey, payload: string): Promise<number>;
@@ -95,6 +96,7 @@ export type SaveSlotSummary = {
 // slot zero. Manual records remain one through ten, and the checkpoint never
 // appears in an archive the player is expected to manage.
 const AUTO_SAVE_SLOT = "autosave" as const;
+const QUICK_SAVE_SLOT = "quick" as const;
 
 function languagePreferenceKey(namespace: string): string {
   return `aria-v3:${namespace}:preferred-locale`;
@@ -145,7 +147,8 @@ async function purgeLegacySaveNamespaces(
   }
 }
 
-function isTauri(): boolean {
+/** Host capability boundary for presentation code. Core never observes Web APIs. */
+export function isTauriHost(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
@@ -153,7 +156,7 @@ async function createSaveStore(
   namespace: string,
   BrowserSaveStore: new (name: string, generations: number) => SaveStore,
 ): Promise<SaveStore> {
-  if (!isTauri()) {
+  if (!isTauriHost()) {
     const store = new BrowserSaveStore(`aria-v3-${namespace}`, 3);
     await store.open();
     return store;
@@ -222,8 +225,26 @@ function renderScale(): number {
   // WebKit GTK becomes fill-rate bound surprisingly quickly on HiDPI screens.
   // Scene art remains crisp at 1.5x while reserving the browser's compositor
   // budget for the text that the player is actively reading.
-  const cap = isTauri() ? 1.5 : 2;
+  const cap = isTauriHost() ? 1.5 : 2;
   return Math.min(cap, Math.max(1, window.devicePixelRatio || 1));
+}
+
+function safeAreaInsets() {
+  // CSS owns `env(safe-area-inset-*)`; reading the fixed probe keeps the JS
+  // protocol in CSS pixels and works on WebKit where custom-property strings
+  // themselves are not consistently resolved by getComputedStyle.
+  const probe = document.getElementById("aria-safe-area-probe");
+  const style = probe ? getComputedStyle(probe) : null;
+  const pixels = (value: string | undefined) => {
+    const parsed = Number.parseFloat(value || "0");
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  };
+  return {
+    top: pixels(style?.paddingTop),
+    right: pixels(style?.paddingRight),
+    bottom: pixels(style?.paddingBottom),
+    left: pixels(style?.paddingLeft),
+  };
 }
 
 function viewportFor(canvas: HTMLCanvasElement) {
@@ -232,14 +253,17 @@ function viewportFor(canvas: HTMLCanvasElement) {
   // Its compatibility canvas is intentionally not painted, so it has no CSS
   // box from which to derive a viewport. Input/replay coordinates must still
   // describe the actual WebView, not a 0×0 hidden element.
-  const cssWidth = bounds.width || window.innerWidth || document.documentElement.clientWidth || 1;
-  const cssHeight = bounds.height || window.innerHeight || document.documentElement.clientHeight || 1;
+  const visualViewport = window.visualViewport;
+  const cssWidth = bounds.width || visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || 1;
+  const cssHeight = bounds.height || visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1;
   const scaleFactor = renderScale();
   return {
     width: Math.max(1, Math.round(cssWidth * scaleFactor)),
     height: Math.max(1, Math.round(cssHeight * scaleFactor)),
     scale_factor: scaleFactor,
-    safe_area: { top: 0, right: 0, bottom: 0, left: 0 },
+    // Insets remain logical CSS units. `UiViewport::content_width` divides
+    // the physical dimensions by `scale_factor` before subtracting them.
+    safe_area: safeAreaInsets(),
   };
 }
 
@@ -279,6 +303,8 @@ function viewFingerprint(view: UiViewModel): string {
     dialogue?.page_id ?? "",
     dialogue?.page_number ?? "",
     dialogue?.page_count ?? "",
+    dialogue?.columns ?? "",
+    dialogue?.full_page_text ?? "",
     dialogue?.text ?? "",
     dialogue?.complete ? "1" : "0",
     dialogue?.awaiting_advance ? "1" : "0",
@@ -290,6 +316,7 @@ function viewFingerprint(view: UiViewModel): string {
     view.confirmation?.resume_id ?? "",
     view.backlog_total,
     view.backlog_start,
+    view.chapters.map((chapter) => `${chapter.id}:${Number(chapter.unlocked)}:${chapter.progress}`).join(","),
     view.gallery.map((item) => `${item.id}:${Number(item.unlocked)}:${Number(item.selected)}`).join(","),
     view.settings.text_speed_ms,
     view.settings.auto_delay_ms,
@@ -303,7 +330,7 @@ function viewFingerprint(view: UiViewModel): string {
     Number(view.settings.reduced_motion),
     Number(view.settings.stage_effects),
     Number(view.settings.skip_unread),
-    view.choices.map((choice) => `${choice.id}:${Number(choice.selected)}`).join(","),
+    view.choices.map((choice) => `${choice.id}:${Number(choice.selected)}:${Number(choice.enabled)}:${Number(choice.unlocked)}`).join(","),
     view.actions.map((action) => `${action.id}:${Number(action.enabled)}:${Number(action.active)}`).join(","),
   ].join("|");
 }
@@ -326,7 +353,7 @@ function autosaveFingerprint(view: UiViewModel): string {
     dialogue: dialogue
       ? [dialogue.page_id, dialogue.page_number, dialogue.page_count, dialogue.complete, dialogue.awaiting_advance]
       : null,
-    choices: view.choices.map((choice) => [choice.id, choice.selected]),
+    choices: view.choices.map((choice) => [choice.id, choice.selected, choice.enabled, choice.unlocked]),
     settings: view.settings,
     chapters: view.chapters.map((chapter) => [chapter.id, chapter.unlocked, chapter.progress]),
     gallery: view.gallery.map((item) => [item.id, item.unlocked, item.selected]),
@@ -646,6 +673,21 @@ export async function bootPresentation(
   });
 
   let runtime = new wasm.WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
+  // Startup is the one restore mode that is exact: an automatic checkpoint
+  // owns the complete suspended runtime, including its route and audio state.
+  const autosaveGenerations = await saves.generations(bundle.save_namespace, AUTO_SAVE_SLOT);
+  let restoredAutosaveGeneration: number | null = null;
+  for (const generation of autosaveGenerations) {
+    try {
+      const probe = new wasm.WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
+      probe.restore_envelope_json(generation.payload);
+      runtime.restore_envelope_json(generation.payload);
+      restoredAutosaveGeneration = generation.generation;
+      break;
+    } catch (error) {
+      console.warn("Skipping invalid automatic save generation", generation.generation, error);
+    }
+  }
   let disposed = false;
   let frameRequest = 0;
   let timerRequest: number | null = null;
@@ -666,6 +708,11 @@ export async function bootPresentation(
   let autosaveRequested = false;
   let autosaveInFlight = false;
   let autosaveTimer: number | null = null;
+  let autosaveAfterRestore = false;
+  const RESTORE_AUTOSAVE_RETRY_DELAYS_MS = [250, 1000, 3000] as const;
+  let restoreAutosaveRetryActive = false;
+  let restoreAutosaveRetryAttempt = 0;
+  let restoreAutosaveRetryTimer: number | null = null;
   // A scene may intentionally switch to the dialogue surface one VM
   // instruction before it emits its first page. Keep at most one one-shot
   // bootstrap frame for that boundary: a reader never lands on a blank band,
@@ -690,6 +737,25 @@ export async function bootPresentation(
   // output intact makes first light identical to later launches.
   let prefetchedOutput: AriaStepOutput | null = stepRuntime(0, []);
   assertViewModel(prefetchedOutput.view);
+  if (restoredAutosaveGeneration !== null) {
+    // A current generation is already a valid recovery point: merely opening
+    // it must not rotate IndexedDB history. A recovered older generation is
+    // promoted once so the next launch need not repeat the fallback scan.
+    lastAutosaveFingerprint = autosaveFingerprint(prefetchedOutput.view);
+    const currentGeneration = autosaveGenerations[0]?.generation ?? null;
+    if (restoredAutosaveGeneration !== currentGeneration) {
+      try {
+        await saves.put(
+          bundle.save_namespace,
+          AUTO_SAVE_SLOT,
+          runtime.save_envelope_json(BigInt(Date.now())),
+        );
+      } catch (cause) {
+        console.warn("Unable to promote recovered automatic save", cause);
+        lastAutosaveFingerprint = "";
+      }
+    }
+  }
 
   const flushAutosave = async (): Promise<void> => {
     if (autosaveInFlight || disposed) return;
@@ -703,6 +769,14 @@ export async function bootPresentation(
           // settings, unlocks, and the replay trace.
           const envelope = runtime.save_envelope_json(BigInt(Date.now()));
           await saves.put(bundle.save_namespace, AUTO_SAVE_SLOT, envelope);
+          if (restoreAutosaveRetryActive) {
+            restoreAutosaveRetryActive = false;
+            restoreAutosaveRetryAttempt = 0;
+            if (restoreAutosaveRetryTimer !== null) {
+              window.clearTimeout(restoreAutosaveRetryTimer);
+              restoreAutosaveRetryTimer = null;
+            }
+          }
           const route = activeOutput ? routeName(activeOutput.view.route) : "";
           // The archive table is only materialized while it can be seen.
           // Ordinary reading never creates a UI update for a background save.
@@ -712,6 +786,7 @@ export async function bootPresentation(
           // turn a transient IndexedDB/WebView error into a fatal screen.
           console.warn("Unable to write automatic save", cause);
           lastAutosaveFingerprint = "";
+          if (restoreAutosaveRetryActive) scheduleRestoreAutosaveRetry();
         }
       }
     } finally {
@@ -720,7 +795,33 @@ export async function bootPresentation(
     }
   };
 
-  const queueAutosave = (view: UiViewModel, force = false) => {
+  const cancelRestoreAutosaveRetry = () => {
+    restoreAutosaveRetryActive = false;
+    restoreAutosaveRetryAttempt = 0;
+    if (restoreAutosaveRetryTimer !== null) {
+      window.clearTimeout(restoreAutosaveRetryTimer);
+      restoreAutosaveRetryTimer = null;
+    }
+  };
+
+  const scheduleRestoreAutosaveRetry = () => {
+    if (disposed || restoreAutosaveRetryTimer !== null) return;
+    const delay = RESTORE_AUTOSAVE_RETRY_DELAYS_MS[restoreAutosaveRetryAttempt];
+    if (delay === undefined) {
+      restoreAutosaveRetryActive = false;
+      return;
+    }
+    restoreAutosaveRetryAttempt += 1;
+    restoreAutosaveRetryTimer = window.setTimeout(() => {
+      restoreAutosaveRetryTimer = null;
+      if (restoreAutosaveRetryActive && activeOutput) {
+        queueAutosave(activeOutput.view, true, true);
+      }
+    }, delay);
+  };
+
+  const queueAutosave = (view: UiViewModel, force = false, restoreRetry = false) => {
+    if (!restoreRetry) cancelRestoreAutosaveRetry();
     const route = routeName(view.route);
     const typing = Boolean(view.dialogue && !view.dialogue.complete);
     // The record table is an operation *on* a checkpoint, never a new
@@ -748,6 +849,15 @@ export async function bootPresentation(
         void flushAutosave();
       }, 120);
     }
+  };
+
+  const discardQueuedAutosave = () => {
+    autosaveRequested = false;
+    if (autosaveTimer !== null) {
+      window.clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+    cancelRestoreAutosaveRetry();
   };
 
   const saveBeforeExit = () => {
@@ -852,6 +962,8 @@ export async function bootPresentation(
     wake();
   };
   window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", resize);
+  window.visualViewport?.addEventListener("resize", resize);
   let syncGamepadPolling = () => {};
   const onGamepadConnection = () => {
     syncGamepadPolling();
@@ -876,9 +988,19 @@ export async function bootPresentation(
     const visibleChromeControl = event.target instanceof Element
       && Boolean(event.target.closest(".quiet-chrome.is-visible [data-aria-action]"));
     const command = event.key.toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && (command === "a" || command === "c" || command === "x")) {
+    const quickKey = event.code === "F5" || event.key === "F5"
+      ? "menu.quick_save"
+      : event.code === "F9" || event.key === "F9"
+        ? "menu.quick_load"
+        : null;
+    if (!event.repeat && quickKey) {
+      // Own the desktop shortcuts before browser/WebView defaults (reload,
+      // find, or host bindings) can consume them. They remain semantic menu
+      // actions so all platforms share the same VM command path.
       event.preventDefault();
       event.stopPropagation();
+      queued.push({ kind: "activate", id: quickKey });
+      wake();
       return;
     }
     const advanceKey = event.key === "Enter"
@@ -951,14 +1073,7 @@ export async function bootPresentation(
       wake();
     }
   };
-  const preventTextExtraction = (event: Event) => {
-    if (!isEditableTarget(event.target)) event.preventDefault();
-  };
   window.addEventListener("keydown", onKeyDown, true);
-  document.addEventListener("copy", preventTextExtraction, true);
-  document.addEventListener("cut", preventTextExtraction, true);
-  document.addEventListener("dragstart", preventTextExtraction, true);
-  document.addEventListener("selectstart", preventTextExtraction, true);
 
   const previousPadPresses = new Set<string>();
   const pollGamepad = (pads = connectedGamepads()) => {
@@ -1069,19 +1184,30 @@ export async function bootPresentation(
   const saveOrLoad = async (output: AriaStepOutput): Promise<boolean> => {
     let restored = false;
     for (const command of output.runtime) {
-      if (command.kind === "save" && typeof command.slot === "number") {
+      const saveSlot: SaveKey | null = command.kind === "save" && typeof command.slot === "number"
+        ? command.slot
+        : command.kind === "quick_save" ? QUICK_SAVE_SLOT : null;
+      if (saveSlot !== null) {
         const envelope = runtime.save_envelope_json(BigInt(Date.now()));
-        await saves.put(bundle.save_namespace, command.slot, envelope);
-        await refreshSaveSlots();
+        await saves.put(bundle.save_namespace, saveSlot, envelope);
+        if (typeof saveSlot === "number") await refreshSaveSlots();
       }
-      if (command.kind === "load" && typeof command.slot === "number") {
-        const generations = await saves.generations(bundle.save_namespace, command.slot);
+      const loadSlot: SaveKey | null = command.kind === "load" && typeof command.slot === "number"
+        ? command.slot
+        : command.kind === "quick_load" ? QUICK_SAVE_SLOT : null;
+      if (loadSlot !== null) {
+        const generations = await saves.generations(bundle.save_namespace, loadSlot);
         for (const generation of generations) {
           try {
             const probe = new wasm.WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
             probe.restore_envelope_json(generation.payload);
             audio.stopAll();
-            runtime.restore_envelope_json(generation.payload);
+            runtime.restore_story_envelope_json(generation.payload);
+            discardQueuedAutosave();
+            // The following restored VM view is the only authoritative
+            // checkpoint. Deferring one forced write avoids serializing both
+            // this pre-view runtime and the next tick of the same restore.
+            autosaveAfterRestore = true;
             restored = true;
             break;
           } catch (error) {
@@ -1090,7 +1216,7 @@ export async function bootPresentation(
         }
       }
       if (command.kind === "return_to_title") window.location.reload();
-      if (command.kind === "quit" && isTauri()) {
+      if (command.kind === "quit" && isTauriHost()) {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await getCurrentWindow().close();
       }
@@ -1188,6 +1314,12 @@ export async function bootPresentation(
         // separate input or resize happens.
         wakeRequested = true;
       } else {
+        if (autosaveAfterRestore) {
+          autosaveAfterRestore = false;
+          restoreAutosaveRetryActive = true;
+          restoreAutosaveRetryAttempt = 0;
+          queueAutosave(output.view, true, true);
+        }
         // Intent-triggered snapshots also cover invisible script mutations
         // such as a flag set immediately before a wait. Stable view changes
         // cover auto/skip progression without touching the typewriter loop.
@@ -1254,15 +1386,14 @@ export async function bootPresentation(
         window.clearTimeout(autosaveTimer);
         autosaveTimer = null;
       }
+      cancelRestoreAutosaveRetry();
       window.removeEventListener("resize", resize);
+      window.removeEventListener("orientationchange", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
       window.removeEventListener("gamepadconnected", onGamepadConnection);
       window.removeEventListener("gamepaddisconnected", onGamepadConnection);
       window.removeEventListener("pagehide", saveBeforeExit);
       window.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("copy", preventTextExtraction, true);
-      document.removeEventListener("cut", preventTextExtraction, true);
-      document.removeEventListener("dragstart", preventTextExtraction, true);
-      document.removeEventListener("selectstart", preventTextExtraction, true);
       // Do not clear persisted saves or mutate the VM during React teardown.
       audio.stopAll();
       void activeOutput;

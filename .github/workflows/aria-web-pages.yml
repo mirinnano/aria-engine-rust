@@ -1,4 +1,4 @@
-name: Deploy Umikaze demo to GitHub Pages
+name: Deploy Umikaze Web editions to GitHub Pages
 
 on:
   push:
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: umikaze-demo-pages
+  group: umikaze-pages
   cancel-in-progress: true
 
 permissions:
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build:
-    name: Build signed demo site
+    name: Build signed full and demo sites
     runs-on: ubuntu-latest
     env:
       ARIA_PAK_PROFILE: signed
@@ -61,6 +61,16 @@ jobs:
         run: |
           npm ci --prefix examples/umikaze/ui
           npx --prefix examples/umikaze/ui playwright install --with-deps chromium
+      - name: Build and verify the full presentation
+        run: |
+          npm --prefix examples/umikaze/ui run prepare:desktop
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory examples/umikaze/dist/build/full/web >/tmp/umikaze-pages-full-http.log 2>&1 &
+          full_server_pid=$!
+          trap 'kill "$full_server_pid"' EXIT
+          for attempt in {1..40}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && break; sleep 0.25; done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          ARIA_UI_URL=http://127.0.0.1:4173/ npm --prefix examples/umikaze/ui test
+
       - name: Build and verify the content-limited demo
         run: |
           npm --prefix examples/umikaze/ui run prepare:demo
@@ -74,17 +84,22 @@ jobs:
           cargo test --locked -p aria-cli --no-default-features --test umikaze_sample demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four
       - name: Produce the signed static release
         run: |
+          npm --prefix examples/umikaze/ui run release:web
           npm --prefix examples/umikaze/ui run release:demo:web
-          touch dist/releases/demo-web/site/.nojekyll
+          pages_root="$GITHUB_WORKSPACE/dist/pages"
+          mkdir -p "$pages_root/demo"
+          cp -a "$GITHUB_WORKSPACE/dist/releases/web/site/." "$pages_root/"
+          cp -a "$GITHUB_WORKSPACE/dist/releases/demo-web/site/." "$pages_root/demo/"
+          touch "$pages_root/.nojekyll"
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: dist/releases/demo-web/site
+          path: dist/pages
 
   deploy:
-    name: Deploy demo
+    name: Deploy full and demo
     needs: build
     runs-on: ubuntu-latest
     environment:

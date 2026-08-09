@@ -179,6 +179,14 @@ mod wasm_api {
                 .restore_envelope(&envelope)
                 .map_err(|error| JsValue::from_str(&error))
         }
+
+        pub fn restore_story_envelope_json(&mut self, envelope_json: &str) -> Result<(), JsValue> {
+            let envelope = serde_json::from_str(envelope_json)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            self.inner
+                .restore_story_envelope(&envelope)
+                .map_err(|error| JsValue::from_str(&error))
+        }
     }
 }
 

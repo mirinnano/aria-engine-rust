@@ -6,13 +6,14 @@ use aria_web::PortableWebRuntime;
 const SCRIPT: &str = include_str!("../../../examples/v3-minimal/scripts/main.aria");
 const INPUTS: &str = include_str!("../../../compatibility/v3/vertical-slice-inputs.json");
 // The story source remains the structured vertical slice, while its UI now
-// travels through ARIAC7 and snapshot schema 9. Deterministic subtitle
-// paging, replay targets, and semantic gallery state are part of the current
-// single-language surface, even when their collections are empty.
+// travels through ARIAC7 and snapshot schema 10. Program fingerprints,
+// adaptive subtitle page identities, replay targets, and semantic gallery
+// state are part of the current single-language surface, even when their
+// collections are empty.
 // This baseline is updated only after Native/Web parity and bytecode
 // encode/decode equality are asserted above.
 const ARIA_SINGLE_LANGUAGE_VERTICAL_SLICE_SNAPSHOT_HASH: &str =
-    "342e5c445a120253a38af7ac920340d4cc2eb30a0184352b2fca058926c1afff";
+    "d351caa5cd5cd1f29e02512b62ecaeea08d5cc324cb7eb7f97da025a6be7fd8a";
 
 #[test]
 fn native_and_web_replay_hashes_match_the_single_language_golden_corpus() {

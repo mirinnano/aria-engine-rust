@@ -62,7 +62,7 @@ OS署名またはnotarizationでインストーラ本体が変わった場合は
 
 ## 公開直前の確認
 
-- [ ] 通常版artifactは`umikaze-v4`、体験版artifactは`umikaze-demo-v1`である。
+- [ ] 通常版artifactは`umikaze-v5`、体験版artifactは`umikaze-demo-v2`である。
 - [ ] 体験版の`game.ariac`/PAK/source mapにDAY 5–10が含まれない。
 - [ ] 体験版はDAY 4後に`demo_end`へ到達し、再読/タイトル帰還だけを提示する。
 - [ ] 署名済みPAKとchecksumの検証が成功する。

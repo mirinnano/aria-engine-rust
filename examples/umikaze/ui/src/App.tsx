@@ -17,7 +17,7 @@ import {
 } from "@aria/ui-sdk";
 
 import { languageNames, localeFor, strings } from "./copy";
-import { bootPresentation, type PresentationRuntime, type SaveSlotSummary } from "./runtime";
+import { bootPresentation, isTauriHost, type PresentationRuntime, type SaveSlotSummary } from "./runtime";
 import { chapterPreviewByLabel } from "#chapter-preview";
 import {
   dayCardThemeByHeading,
@@ -75,11 +75,11 @@ function fallbackChapterNumeral(key: string): string {
 }
 
 /**
- * Umikaze chapter labels are an Aria-authored five-line record:
- * key / Roman numeral / proposition / date-place / invitation.
+ * Generated canonical labels are compact key/date/invitation records (for
+ * example PROLOGUE or DAY 1). The older five-line proposition record remains
+ * readable only for historical package compatibility.
  *
- * TSX owns no duplicate literary copy. The compact legacy shape remains
- * readable so an older hand-written sample does not become an empty screen.
+ * TSX owns no duplicate literary copy.
  */
 function chapterIdentity(label: string, fallbackDescription = ""): ChapterIdentity {
   const [rawKey = "", rawNumeral = "", rawProposition = "", rawDate = "", ...rawSynopsis] = label.split("\n");
@@ -93,13 +93,13 @@ function chapterIdentity(label: string, fallbackDescription = ""): ChapterIdenti
       synopsis: rawSynopsis.join("\n").trim() || fallbackDescription,
     };
   }
-  const legacy = label.split("\n");
+  const canonical = label.split("\n");
   return {
     key,
     numeral: fallbackChapterNumeral(key),
     proposition: key,
-    date: legacy[1]?.trim() ?? "",
-    synopsis: legacy.slice(2).join("\n").trim() || fallbackDescription,
+    date: canonical[1]?.trim() ?? "",
+    synopsis: canonical.slice(2).join("\n").trim() || fallbackDescription,
   };
 }
 
@@ -322,6 +322,7 @@ function ChoiceButton({ choice, onAction, wide = false }: {
       className={`choice-button${choice.selected ? " is-selected" : ""}${wide ? " is-wide" : ""}`}
       data-aria-focusable
       data-aria-action={choice.id}
+      isDisabled={!choice.enabled || !choice.unlocked}
       onPress={() => onAction(choice.id)}
     >
       <span>{choice.label}</span>
@@ -572,100 +573,32 @@ const titleQuotations = [
 
 type TitleQuotation = typeof titleQuotations[number];
 
-type TitleQuotationFragment = {
+type TitleQuotationBand = {
   id: string;
-  sourceId: string;
-  source: string;
   text: string;
-  anchor: boolean;
+  sourceIds: string[];
 };
 
-const titleQuotationFragmentCount = 360;
+// Whole citations are bundled into a small number of deterministic bands.
+// This retains every authored source while avoiding hundreds of independently
+// positioned layers on a title that otherwise remains perfectly still.
+const titleQuotationBandCount = 24;
 
-function splitCitation(text: string, count: number): string[] {
-  const glyphs = Array.from(text);
-  const fragments: string[] = [];
-  let start = 0;
-
-  for (let fragment = 0; fragment < count; fragment += 1) {
-    const remainingFragments = count - fragment;
-    const remainingGlyphs = glyphs.length - start;
-    const minimumEnd = start + 1;
-    const maximumEnd = glyphs.length - (remainingFragments - 1);
-    const idealEnd = Math.min(maximumEnd, Math.max(minimumEnd, Math.round(start + remainingGlyphs / remainingFragments)));
-    let end = idealEnd;
-
-    // Break near a Japanese clause boundary when one is close.  These are
-    // deliberately fragments, but they must still carry the grain of the
-    // source rather than look like arbitrary character slices.
-    for (let distance = 0; distance <= 3; distance += 1) {
-      const candidates = [idealEnd - distance, idealEnd + distance];
-      const punctuationEnd = candidates.find((candidate) =>
-        candidate >= minimumEnd
-        && candidate <= maximumEnd
-        && "、。！？…".includes(glyphs[candidate - 1] || ""));
-      if (punctuationEnd !== undefined) {
-        end = punctuationEnd;
-        break;
-      }
-    }
-
-    fragments.push(glyphs.slice(start, end).join(""));
-    start = end;
-  }
-
-  return fragments;
-}
-
-function fragmentCounts(quotations: readonly TitleQuotation[], target: number): number[] {
-  // One fragment per source is the baseline.  The remaining allocation fills
-  // the target only after the forty-five intact anchor quotations are set
-  // aside.
-  const fragmentTarget = target - quotations.length;
-  const extraTarget = fragmentTarget - quotations.length;
-  const totalLength = quotations.reduce((sum, quotation) => sum + Array.from(quotation.text).length, 0);
-  const rawExtras = quotations.map((quotation) => Array.from(quotation.text).length / totalLength * extraTarget);
-  const counts = rawExtras.map((raw) => 1 + Math.floor(raw));
-  let remaining = fragmentTarget - counts.reduce((sum, count) => sum + count, 0);
-  const order = rawExtras
-    .map((raw, index) => ({ index, remainder: raw - Math.floor(raw) }))
-    .sort((left, right) => right.remainder - left.remainder)
-    .map(({ index }) => index);
-
-  for (let index = 0; remaining > 0; index += 1, remaining -= 1) {
-    counts[order[index % order.length]] += 1;
-  }
-
-  return counts;
-}
-
-function createTitleQuotationFragments(quotations: readonly TitleQuotation[]): TitleQuotationFragment[] {
-  const anchors = quotations.map((quotation) => ({
-    id: `${quotation.id}-anchor`,
-    sourceId: quotation.id,
-    source: quotation.source,
-    text: quotation.text,
-    anchor: true,
+function createTitleQuotationBands(quotations: readonly TitleQuotation[]): TitleQuotationBand[] {
+  const bands = Array.from({ length: titleQuotationBandCount }, (_, index) => ({
+    id: `band-${String(index + 1).padStart(2, "0")}`,
+    text: "",
+    sourceIds: [] as string[],
   }));
-  const counts = fragmentCounts(quotations, titleQuotationFragmentCount);
-  const fragments = quotations.flatMap((quotation, quotationIndex) =>
-    splitCitation(quotation.text, counts[quotationIndex]).map((text, fragmentIndex) => ({
-      id: `${quotation.id}-fragment-${fragmentIndex + 1}`,
-      sourceId: quotation.id,
-      source: quotation.source,
-      text,
-      anchor: false,
-    })));
-  const terrain = [...anchors, ...fragments];
-
-  if (terrain.length !== titleQuotationFragmentCount) {
-    throw new Error(`Expected ${titleQuotationFragmentCount} title quotation fragments, received ${terrain.length}.`);
-  }
-
-  return terrain;
+  quotations.forEach((quotation, index) => {
+    const band = bands[index % bands.length];
+    band.sourceIds.push(quotation.id);
+    band.text = band.text ? `${band.text}　／　${quotation.text}` : quotation.text;
+  });
+  return bands;
 }
 
-const titleQuotationFragments = createTitleQuotationFragments(titleQuotations);
+const titleQuotationBands = createTitleQuotationBands(titleQuotations);
 
 function fractional(value: number): number {
   return value - Math.floor(value);
@@ -677,27 +610,24 @@ function fractional(value: number): number {
  * from a shallow central ridge and seven overlapping sediment layers.  The
  * output reads as a terrain, but opening the title twice leaves it unchanged.
  */
-function quotationTerrain(index: number, anchor: boolean): React.CSSProperties {
-  const cluster = Math.floor(index / 3);
-  const member = index % 3;
-  const clusterX = -0.5 + fractional((cluster + 1) * 0.61803398875) * 99;
-  const x = clusterX + [-1.8, 0.25, 1.55][member];
+function quotationTerrain(index: number): React.CSSProperties {
+  const x = -2 + fractional((index + 1) * 0.61803398875) * 99;
   const horizon = 1 + 20 * Math.pow((x - 46) / 46, 2);
-  const stratum = cluster % 13;
-  const jitter = fractional((cluster + 1) * 0.41421356237) * 2.2 - 1.1 + [-1.1, 0.2, 1.15][member];
-  const y = Math.min(96, horizon + stratum * 5.45 + jitter);
+  const stratum = index % 8;
+  const jitter = fractional((index + 1) * 0.41421356237) * 3.4 - 1.7;
+  const y = Math.min(96, horizon + stratum * 10.7 + jitter);
   const depth = fractional((index + 1) * 0.75487766625);
-  const mobileLane = index % 5;
-  const mobileLayer = Math.floor(index / 5) % 6;
+  const mobileLane = index % 3;
+  const mobileLayer = Math.floor(index / 3) % 8;
 
   return {
     "--quotation-x": x,
     "--quotation-y": y,
-    "--quotation-lean": `${(depth - 0.5) * 1.4}deg`,
-    "--quotation-opacity": anchor ? 0.39 + depth * 0.14 : 0.16 + depth * 0.24,
-    "--quotation-size": anchor ? 1.02 + depth * 0.34 : 0.56 + depth * 0.54,
-    "--quotation-mobile-x": [0, 20, 40, 60, 80][mobileLane],
-    "--quotation-mobile-y": [10, 1, 12, 4, 16][mobileLane] + mobileLayer * 15,
+    "--quotation-lean": `${(depth - 0.5) * 2.1}deg`,
+    "--quotation-opacity": 0.25 + depth * 0.27,
+    "--quotation-size": 0.76 + depth * 0.52,
+    "--quotation-mobile-x": [0, 31, 62][mobileLane],
+    "--quotation-mobile-y": [7, 1, 12][mobileLane] + mobileLayer * 11,
   } as React.CSSProperties;
 }
 
@@ -715,11 +645,12 @@ function StageBackdrop({ kind = "record" }: { kind?: string }) {
       <img className={`record-stage-photograph record-stage-photograph--${photo.name}`} src={photo.source} alt="" decoding="async" />
       {isTitle && (
         <div className="record-stage-quotations" lang="ja">
-          {titleQuotationFragments.map((quotation, index) => (
+          {titleQuotationBands.map((quotation, index) => (
             <p
               key={quotation.id}
-              className={`record-stage-quotation record-stage-quotation--source-${quotation.sourceId}${quotation.anchor ? ` record-stage-quotation--${quotation.sourceId} is-anchor` : " is-fragment"}`}
-              style={quotationTerrain(index, quotation.anchor)}
+              className="record-stage-quotation record-stage-quotation--band"
+              data-quotation-sources={quotation.sourceIds.join(" ")}
+              style={quotationTerrain(index)}
             >
               {quotation.text}
             </p>
@@ -877,6 +808,8 @@ function SettingRail({
   max,
   step,
   valueLabel,
+  decreaseLabel,
+  increaseLabel,
   onChange,
 }: {
   label: string;
@@ -885,6 +818,8 @@ function SettingRail({
   max: number;
   step: number;
   valueLabel: string;
+  decreaseLabel: string;
+  increaseLabel: string;
   onChange(value: number): void;
 }) {
   const labelId = useId();
@@ -906,9 +841,9 @@ function SettingRail({
     >
       <span id={labelId} className="setting-rail-label">{label}</span>
       <div className="setting-rail-controls" role="group" aria-labelledby={labelId}>
-        <Button className="setting-rail-button" data-aria-focusable aria-label={`${label}: decrease`} onPress={decrease}>◀</Button>
+        <Button className="setting-rail-button" data-aria-focusable aria-label={decreaseLabel} onPress={decrease}>◀</Button>
         <output className="setting-rail-value" aria-live="off">{valueLabel}</output>
-        <Button className="setting-rail-button" data-aria-focusable aria-label={`${label}: increase`} onPress={increase}>▶</Button>
+        <Button className="setting-rail-button" data-aria-focusable aria-label={increaseLabel} onPress={increase}>▶</Button>
       </div>
     </div>
   );
@@ -1018,23 +953,23 @@ function SettingsSheet({ view, copy, dispatch }: {
           {section === "text" && (
             <div className="settings-rails">
               <SettingRail label={copy.textSpeed} value={view.settings.text_speed_ms} min={0} max={120} step={4}
-                valueLabel={copy.valueMs(view.settings.text_speed_ms)} onChange={(value) => set("text_speed_ms", value)} />
+                valueLabel={copy.valueMs(view.settings.text_speed_ms)} decreaseLabel={copy.decreaseSetting(copy.textSpeed)} increaseLabel={copy.increaseSetting(copy.textSpeed)} onChange={(value) => set("text_speed_ms", value)} />
               <SettingRail label={copy.autoDelay} value={view.settings.auto_delay_ms} min={100} max={3000} step={100}
-                valueLabel={copy.valueMs(view.settings.auto_delay_ms)} onChange={(value) => set("auto_delay_ms", value)} />
+                valueLabel={copy.valueMs(view.settings.auto_delay_ms)} decreaseLabel={copy.decreaseSetting(copy.autoDelay)} increaseLabel={copy.increaseSetting(copy.autoDelay)} onChange={(value) => set("auto_delay_ms", value)} />
               <SettingRail label={copy.textSize} value={view.settings.text_scale} min={0.85} max={1.35} step={0.05}
-                valueLabel={copy.valuePercent(view.settings.text_scale)} onChange={(value) => set("text_scale", value)} />
+                valueLabel={copy.valuePercent(view.settings.text_scale)} decreaseLabel={copy.decreaseSetting(copy.textSize)} increaseLabel={copy.increaseSetting(copy.textSize)} onChange={(value) => set("text_scale", value)} />
               <SettingRail label={copy.subtitleOpacity} value={view.settings.text_opacity} min={0.72} max={1} step={0.04}
-                valueLabel={copy.valuePercent(view.settings.text_opacity)} onChange={(value) => set("text_opacity", value)} />
+                valueLabel={copy.valuePercent(view.settings.text_opacity)} decreaseLabel={copy.decreaseSetting(copy.subtitleOpacity)} increaseLabel={copy.increaseSetting(copy.subtitleOpacity)} onChange={(value) => set("text_opacity", value)} />
             </div>
           )}
           {section === "sound" && (
             <div className="settings-rails">
               <SettingRail label={copy.music} value={view.settings.bgm_volume} min={0} max={1} step={0.05}
-                valueLabel={copy.valuePercent(view.settings.bgm_volume)} onChange={(value) => set("bgm_volume", value)} />
+                valueLabel={copy.valuePercent(view.settings.bgm_volume)} decreaseLabel={copy.decreaseSetting(copy.music)} increaseLabel={copy.increaseSetting(copy.music)} onChange={(value) => set("bgm_volume", value)} />
               <SettingRail label={copy.effects} value={view.settings.sound_effect_volume} min={0} max={1} step={0.05}
-                valueLabel={copy.valuePercent(view.settings.sound_effect_volume)} onChange={(value) => set("sound_effect_volume", value)} />
+                valueLabel={copy.valuePercent(view.settings.sound_effect_volume)} decreaseLabel={copy.decreaseSetting(copy.effects)} increaseLabel={copy.increaseSetting(copy.effects)} onChange={(value) => set("sound_effect_volume", value)} />
               <SettingRail label={copy.voice} value={view.settings.voice_volume} min={0} max={1} step={0.05}
-                valueLabel={copy.valuePercent(view.settings.voice_volume)} onChange={(value) => set("voice_volume", value)} />
+                valueLabel={copy.valuePercent(view.settings.voice_volume)} decreaseLabel={copy.decreaseSetting(copy.voice)} increaseLabel={copy.increaseSetting(copy.voice)} onChange={(value) => set("voice_volume", value)} />
             </div>
           )}
           {section === "display" && (
@@ -1073,12 +1008,14 @@ function RMenu({ view, copy, onAction, dispatch }: {
     { id: "menu.auto", label: "AUTO", description: copy.menuDescription.auto, active: action("menu.auto")?.active, disabled: !action("menu.auto")?.enabled },
     { id: "menu.skip", label: "SKIP", description: copy.menuDescription.skip, active: action("menu.skip")?.active, disabled: !action("menu.skip")?.enabled },
     { id: "menu.backlog", label: "LOG", description: copy.menuDescription.log, disabled: !action("menu.backlog")?.enabled },
+    { id: "menu.quick_save", label: "QUICK SAVE", description: copy.menuDescription.quickSave, disabled: !action("menu.quick_save")?.enabled },
+    { id: "menu.quick_load", label: "QUICK LOAD", description: copy.menuDescription.quickLoad, disabled: !action("menu.quick_load")?.enabled },
     { id: "menu.save", label: "SAVE", description: copy.menuDescription.save, disabled: !action("menu.save")?.enabled },
     { id: "menu.load", label: "LOAD", description: copy.menuDescription.load, disabled: !action("menu.load")?.enabled },
     { id: "menu.gallery", label: "EXTRA", description: copy.menuDescription.extra, disabled: !action("menu.gallery")?.enabled },
     { id: "menu.settings", label: "CONFIG", description: copy.menuDescription.config, disabled: !action("menu.settings")?.enabled },
     { id: "menu.reset", label: "TITLE", description: copy.menuDescription.title, disabled: !action("menu.reset")?.enabled },
-    { id: "menu.quit", label: "EXIT", description: copy.menuDescription.exit, disabled: !action("menu.quit")?.enabled },
+    ...(isTauriHost() ? [{ id: "menu.quit", label: "EXIT", description: copy.menuDescription.exit, disabled: !action("menu.quit")?.enabled }] : []),
   ];
   return (
     <ModalOverlay className="rmenu-overlay" isOpen isDismissable onOpenChange={(open) => { if (!open) dispatch({ kind: "dismiss" }); }}>
@@ -1326,37 +1263,46 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
     unlocked: boolean;
     selected: boolean;
   };
-  const cards: ChapterCard[] = view.choices.length ? view.choices.map((choice) => {
-    const identity = chapterIdentity(choice.label);
+  const chapterActions = new Set(view.actions.map((action) => action.id));
+  const registeredIds = new Set(view.chapters.map((chapter) => chapter.id));
+  // A choice carries no chapter id in the public protocol, so its index is
+  // meaningful only when the whole registered catalogue and its stable Core
+  // action identities agree. Any incomplete or stale view fails closed.
+  const mappingValid = view.choices.length > 0
+    && view.choices.length === view.chapters.length
+    && registeredIds.size === view.chapters.length
+    && view.choices.every((choice, index) => choice.id === `choice:${index}` && Boolean(chapterIdentity(choice.label).key))
+    && view.chapters.every((chapter) => Boolean(chapter.id) && chapterActions.has(`chapter:${chapter.id}`));
+  const cards: ChapterCard[] = view.chapters.map((chapter, index) => {
+    const choice = view.choices[index];
+    const identity = chapterIdentity(choice?.label || chapter.title || chapter.id, chapter.description);
     const preview = chapterPreviewByLabel[identity.key];
+    const action = view.actions.find((item) => item.id === `chapter:${chapter.id}`);
+    const unlocked = Boolean(
+      mappingValid
+      && choice
+      && choice.enabled
+      && choice.unlocked
+      && chapter.unlocked
+      && action?.enabled,
+    );
     return {
-      id: choice.id,
+      id: choice?.id || `chapter:${chapter.id}`,
       identity,
       preview,
-      unlocked: true,
-      selected: choice.selected,
-    };
-  }) : view.chapters.map((chapter) => {
-    const label = chapter.title || chapter.id;
-    const identity = chapterIdentity(label, chapter.description);
-    const preview = chapterPreviewByLabel[identity.key];
-    return {
-      id: `chapter:${chapter.id}`,
-      identity,
-      preview,
-      unlocked: chapter.unlocked,
-      selected: false,
+      unlocked,
+      selected: Boolean(choice?.selected && unlocked),
     };
   });
   const initialPreviewId = cards.find((card) => card.selected)?.id
     ?? cards.find((card) => card.unlocked)?.id
-    ?? cards[0]?.id
     ?? "";
   const [previewChapterId, setPreviewChapterId] = useState(initialPreviewId);
   useEffect(() => {
     if (!cards.some((card) => card.id === previewChapterId)) setPreviewChapterId(initialPreviewId);
   }, [cards, initialPreviewId, previewChapterId]);
-  const featured = cards.find((card) => card.id === previewChapterId) ?? cards.find((card) => card.id === initialPreviewId);
+  const featured = cards.find((card) => card.id === previewChapterId && card.unlocked)
+    ?? cards.find((card) => card.id === initialPreviewId && card.unlocked);
   const featuredIndex = Math.max(0, cards.findIndex((card) => card.id === featured?.id));
   const previewSource = (featured?.preview && sceneSources[featured.preview.scene])
     ?? chapterFallbackSources[featuredIndex % chapterFallbackSources.length];
@@ -1407,9 +1353,11 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
             return (
             <Button key={card.id} data-aria-focusable data-aria-action={card.id} data-chapter-index-item
               className={`chapter-index-row${card.unlocked ? "" : " is-locked"}${card.id === featured?.id ? " is-preview" : ""}`}
-              aria-label={card.unlocked ? card.identity.key : copy.locked}
+              aria-label={card.unlocked ? card.identity.key : `${card.identity.key} — ${copy.locked}`}
               aria-describedby={card.unlocked ? `${propositionId} ${dateId}` : undefined}
-              isDisabled={!card.unlocked} onFocus={() => setPreviewChapterId(card.id)} onPointerEnter={() => setPreviewChapterId(card.id)}
+              isDisabled={!card.unlocked} onFocus={() => setPreviewChapterId(card.id)} onPointerEnter={() => {
+                if (card.unlocked) setPreviewChapterId(card.id);
+              }}
               onPress={() => onAction(card.id)}>
               <span className="chapter-index-numeral" aria-hidden="true">{card.unlocked ? card.identity.numeral : "—"}</span>
               <span className="chapter-index-copy">
@@ -1543,9 +1491,9 @@ type DayCardContent = {
 
 function dayCardFor(view: UiViewModel): DayCardContent | null {
   const choice = view.choices[0];
-  if (!choice) return null;
+  if (!choice || !choice.enabled || !choice.unlocked) return null;
   const identity = chapterIdentity(choice.label);
-  if (!identity.key || !identity.proposition || !identity.date || !identity.synopsis) return null;
+  if (!identity.key) return null;
   return { choice, identity };
 }
 
@@ -1570,13 +1518,13 @@ function DayCard({ view, copy, onAction }: {
       <div className="day-card-copy">
         <div className="day-card-coordinate">
           <p className="day-card-key">{identity.key}</p>
-          <p className="day-card-date">{identity.date}</p>
+          {identity.date && <p className="day-card-date">{identity.date}</p>}
         </div>
         <div className="day-card-heading">
           <span className="day-card-numeral" aria-hidden="true">{identity.numeral}</span>
           <h1 id="day-card-title">{identity.proposition}</h1>
         </div>
-        <p className="day-card-synopsis">{identity.synopsis}</p>
+        {identity.synopsis && <p className="day-card-synopsis">{identity.synopsis}</p>}
       </div>
       <Button
         autoFocus
@@ -1712,9 +1660,9 @@ function Title({ view, copy, onAction }: {
     { id: "route:load", label: "LOAD", description: copy.menuDescription.load, disabled: !actionEnabled(view, "route:load") },
     { id: "route:gallery", label: "EXTRA", description: copy.menuDescription.extra, disabled: !actionEnabled(view, "route:gallery") },
     { id: "route:settings", label: "CONFIG", description: copy.menuDescription.config, disabled: !actionEnabled(view, "route:settings") },
-    // The VM already owns this stable action for RMenu. It intentionally
-    // remains the same action here so no title-only API is needed.
-    { id: "menu.quit", label: "EXIT", description: copy.menuDescription.exit },
+    // A browser cannot quit its host. Tauri keeps the VM action and native
+    // window close path, while ordinary Web never offers a false promise.
+    ...(isTauriHost() ? [{ id: "menu.quit", label: "EXIT", description: copy.menuDescription.exit }] : []),
   ];
   return (
     <section className="record-title-screen record-title-screen--home" aria-label={copy.title}>
@@ -1872,8 +1820,11 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [bootSlow, setBootSlow] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hostStatus, setHostStatus] = useState("");
   const [chromeVisible, setChromeVisible] = useState(false);
   const [saveSlots, setSaveSlots] = useState<SaveSlotSummary[]>([]);
+  const fullscreenReconciliation = useRef<boolean | null>(null);
+  const lastActualFullscreen = useRef<boolean | null>(null);
 
   useEffect(() => {
     const target = canvas.current;
@@ -1952,13 +1903,7 @@ export default function App() {
   useEffect(() => {
     if (!view) return;
     document.documentElement.lang = localeFor(view.game.locale);
-    if (view.settings.fullscreen && !document.fullscreenElement) {
-      void document.documentElement.requestFullscreen?.().catch(() => {});
-    }
-    if (!view.settings.fullscreen && document.fullscreenElement) {
-      void document.exitFullscreen?.().catch(() => {});
-    }
-  }, [view?.game.locale, view?.settings.fullscreen]);
+  }, [view?.game.locale]);
 
   // React Aria presents sheets in a document-level overlay container. Mirror
   // the two visual accessibility states onto <html> so those non-reading
@@ -2029,6 +1974,54 @@ export default function App() {
     }
     runtime.current?.intent(intent);
   };
+
+  useEffect(() => {
+    if (!view) return;
+    const desired = view.settings.fullscreen;
+    const actual = Boolean(document.fullscreenElement);
+    lastActualFullscreen.current = actual;
+    if (desired === actual) {
+      fullscreenReconciliation.current = null;
+      return;
+    }
+    let cancelled = false;
+    const request = desired
+      ? document.documentElement.requestFullscreen?.bind(document.documentElement)
+      : document.exitFullscreen?.bind(document);
+    if (!request) {
+      setHostStatus(fallbackCopy.fullscreenUnavailable);
+      if (fullscreenReconciliation.current !== actual) {
+        fullscreenReconciliation.current = actual;
+        dispatch({ kind: "toggle_setting", name: "fullscreen" });
+      }
+      return;
+    }
+    void request().catch(() => {
+      if (cancelled) return;
+      setHostStatus(fallbackCopy.fullscreenUnavailable);
+      const current = Boolean(document.fullscreenElement);
+      lastActualFullscreen.current = current;
+      if (fullscreenReconciliation.current !== current) {
+        fullscreenReconciliation.current = current;
+        dispatch({ kind: "toggle_setting", name: "fullscreen" });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [view?.settings.fullscreen, fallbackCopy.fullscreenUnavailable]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      const actual = Boolean(document.fullscreenElement);
+      if (lastActualFullscreen.current === actual) return;
+      lastActualFullscreen.current = actual;
+      setHostStatus(actual ? fallbackCopy.fullscreenEntered : fallbackCopy.fullscreenExited);
+      if (!view || view.settings.fullscreen === actual || fullscreenReconciliation.current === actual) return;
+      fullscreenReconciliation.current = actual;
+      dispatch({ kind: "toggle_setting", name: "fullscreen" });
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, [view, fallbackCopy.fullscreenEntered, fallbackCopy.fullscreenExited]);
   const rememberFocusable = (target: EventTarget | null) => {
     const element = target instanceof Element ? target : null;
     const control = element?.closest<HTMLElement>("[data-aria-focusable]");
@@ -2146,6 +2139,7 @@ export default function App() {
         {error && <RuntimeProblem copy={fallbackCopy} detail={error} />}
       </div>
       {!error && view && status && <p className="runtime-status" role="status" aria-live="polite">{status}</p>}
+      {!error && view && hostStatus && <p className="runtime-status runtime-status--host" role="status" aria-live="polite">{hostStatus}</p>}
     </main>
   );
 }

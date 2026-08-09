@@ -7,11 +7,10 @@ module umikaze.scenario.ja.chapter_07;
 scene novel_chapter_07 {
   locale "ja-JP";
   persistent flag "canonical_chapter_07_seen" = true;
-  unlock chapter "canonical_chapter_07" progress 1;
   background asset("assets/bg/scenes/ferry-night-deck-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 7\nVII\n幸福は、像の限界においてのみ示される。\n始発前の待合室\n海を渡るあいだ、記録の外側が近づいてくる。" => novel_chapter_07_story;
+    "DAY 7\n始発前の待合室\n海を渡るあいだ、記録の外側が近づいてくる。" => novel_chapter_07_story;
   }
 }
 
@@ -35,8 +34,8 @@ scene novel_chapter_07_story {
   wait breath 220ms;
   narrate "待合室の窓は白く曇っている。";
   await advance;
-  clear dialogue;
   play bgm asset("assets/audio/bgm/umk.waiting.window.ogg") loop fade 600ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "ベンチの隣で、ミオが温かいココアの缶を持っていた。";
   await advance;
@@ -72,8 +71,8 @@ scene novel_chapter_07_story {
   wait breath 220ms;
   narrate "甘い匂いが、始発前の待合室に少しだけ残った。";
   await advance;
-  clear dialogue;
   stop bgm fade 700ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "「今日、行けるか」";
   await advance;
@@ -252,8 +251,8 @@ scene novel_chapter_07_story {
   wait breath 220ms;
   narrate "俺はペダルを踏み込み、潮風を切り裂いて走り出す。";
   await advance;
-  clear dialogue;
   play bgm asset("assets/audio/bgm/umk.island.distance.ogg") fade 650ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "緩やかな坂道を下ると、眼下にキラキラと光る瀬戸内海が広がった。";
   await advance;
@@ -399,8 +398,8 @@ scene novel_chapter_07_story {
   wait 720ms;
   say 俺: "「...ああ」";
   await advance;
-  clear dialogue;
   stop bgm fade 800ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "俺はゆっくりとペダルを漕ぐ。";
   await advance;
@@ -1624,6 +1623,8 @@ scene novel_chapter_07_story {
   clear dialogue;
   wait 1200ms;
   chapter "canonical_chapter_07" progress 100;
+  persistent flag "canonical_chapter_07_completed" = true;
+  unlock chapter "canonical_chapter_08" progress 1;
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

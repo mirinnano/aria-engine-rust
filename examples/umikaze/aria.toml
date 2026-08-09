@@ -72,8 +72,8 @@ asset_pack_roles = {
 # This manuscript revision intentionally invalidates earlier routes and
 # checkpoints. Only this exact predecessor is purged; other Aria games and
 # namespaces are never touched.
-save_namespace = "umikaze-v4"
-legacy_save_namespaces = ["umikaze-v3"]
+save_namespace = "umikaze-v5"
+legacy_save_namespaces = ["umikaze-v3", "umikaze-v4"]
 
 [presentation]
 frontend = "ui"

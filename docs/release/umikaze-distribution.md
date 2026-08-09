@@ -128,9 +128,11 @@ audio, and preload references reachable from that entry, plus the mandatory
 inventory with a reviewed DAY 0–4 allowlist, so later-game media cannot drift
 into the public archive unnoticed.
 
-The demo owns its save namespace (`umikaze-demo-v1`) and desktop identity
+The demo owns its save namespace (`umikaze-demo-v2`) and desktop identity
 (`jp.example.umikaze.demo`). It neither reads nor clears the complete game's
-`umikaze-v4` records. The desktop build uses
+`umikaze-v5` records. The current content-edition override emits an empty
+`legacy_save_namespaces` list, so it does not declare or purge the historical
+`umikaze-demo-v1` namespace. The desktop build uses
 `src-tauri/tauri.demo.conf.json`, so an installed demo and full game can stay
 side by side during playtesting or commercial release.
 

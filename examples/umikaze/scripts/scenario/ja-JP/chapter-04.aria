@@ -7,11 +7,10 @@ module umikaze.scenario.ja.chapter_04;
 scene novel_chapter_04 {
   locale "ja-JP";
   persistent flag "canonical_chapter_04_seen" = true;
-  unlock chapter "canonical_chapter_04" progress 1;
   background asset("assets/bg/scenes/shore-storm-sunset-v1.webp") with fade_through_black(640ms);
   screen day_card;
   choice {
-    "DAY 4\nIV\n記録されるのは、幸福の痕跡だけである。\n9月24日・松江\n残そうとする音が、静かな海辺へ続く道を指している。" => novel_chapter_04_story;
+    "DAY 4\n9月24日・松江\n残そうとする音が、静かな海辺へ続く道を指している。" => novel_chapter_04_story;
   }
 }
 
@@ -100,8 +99,8 @@ scene novel_chapter_04_story {
   wait breath 220ms;
   narrate "洗濯槽が回り始めると、ミオは鞄からMDウォーカーを出した。";
   await advance;
-  clear dialogue;
   play bgm asset("assets/audio/bgm/umk.recording.trace.ogg") fade 450ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "小さなマイクをつなぎ、回る洗濯機へ向ける。";
   await advance;
@@ -133,8 +132,8 @@ scene novel_chapter_04_story {
   wait breath 220ms;
   narrate "ミオは録音を止め、ディスクを取り出して、半透明のケースへ戻した。";
   await advance;
-  clear dialogue;
   stop bgm fade 650ms;
+  clear dialogue;
   wait breath 220ms;
   narrate "洗濯槽が止まるまで、俺たちはほとんど話さなかった。";
   await advance;
@@ -550,6 +549,10 @@ scene novel_chapter_04_story {
   clear dialogue;
   wait 720ms;
   chapter "canonical_chapter_04" progress 100;
+  persistent flag "canonical_chapter_04_completed" = true;
+  if !umikaze_demo_edition {
+    unlock chapter "canonical_chapter_05" progress 1;
+  }
   clear dialogue;
   background asset("#05070b") with fade(480ms);
   wait 480ms;

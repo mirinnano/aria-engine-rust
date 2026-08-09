@@ -6,7 +6,7 @@
  * consume the deterministic WASM VM without recreating a renderer DSL.
  */
 
-export const UI_VIEW_MODEL_SCHEMA = 7 as const;
+export const UI_VIEW_MODEL_SCHEMA = 8 as const;
 
 export type StandardRoute =
   | "setup"
@@ -66,6 +66,8 @@ export interface ChoiceView {
   id: string;
   label: string;
   selected: boolean;
+  enabled: boolean;
+  unlocked: boolean;
 }
 
 export interface ActionView {

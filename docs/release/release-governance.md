@@ -12,11 +12,13 @@
 
 | Edition | Entry | Save namespace | Desktop identity | 内容境界 |
 | --- | --- | --- | --- | --- |
-| 完成版 | `scripts/main.aria` | `umikaze-v4` | `jp.example.umikaze` | DAY 0–10 |
-| 体験版 | `scripts/main-demo.aria` | `umikaze-demo-v1` | `jp.example.umikaze.demo` / `umikaze-demo` | DAY 0–4、`demo_end` |
+| 完成版 | `scripts/main.aria` | `umikaze-v5` | `jp.example.umikaze` | DAY 0–10 |
+| 体験版 | `scripts/main-demo.aria` | `umikaze-demo-v2` | `jp.example.umikaze.demo` / `umikaze-demo` | DAY 0–4、`demo_end` |
 
 体験版は完成版の停止フラグではない。ビルド時に別入口を選び、DAY 5以降を
 import closureにもPAKにも含めない。体験版は完成版の保存を移行・消去・読込してはならない。
+現在のcontent-edition overrideは体験版bundleの`legacy_save_namespaces`を空で出力するため、
+旧`umikaze-demo-v1`をlegacy purgeとして宣言・削除してはならない。
 
 ## Artifact policy
 

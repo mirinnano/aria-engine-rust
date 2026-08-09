@@ -239,7 +239,7 @@ if (edition === "demo") {
   // Keep the full scenario modules out of the compiled import closure and
   // save independently from the commercial edition. The manifest on disk is
   // never modified by a build invocation.
-  buildArgs.push("--entry", "scripts/main-demo.aria", "--save-namespace", "umikaze-demo-v1");
+  buildArgs.push("--entry", "scripts/main-demo.aria", "--save-namespace", "umikaze-demo-v2");
 }
 if (release) buildArgs.push("--release");
 run(cargo, buildArgs, {

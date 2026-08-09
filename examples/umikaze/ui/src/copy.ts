@@ -8,6 +8,8 @@ type MenuDescription = {
   log: string;
   save: string;
   load: string;
+  quickSave: string;
+  quickLoad: string;
   extra: string;
   config: string;
   title: string;
@@ -84,6 +86,11 @@ type Copy = {
   skipUnread: string;
   startupIssue: string;
   reopenRecord: string;
+  decreaseSetting: (label: string) => string;
+  increaseSetting: (label: string) => string;
+  fullscreenEntered: string;
+  fullscreenExited: string;
+  fullscreenUnavailable: string;
   menuDescription: MenuDescription;
   valuePercent: (value: number) => string;
   valueMs: (value: number) => string;
@@ -168,11 +175,18 @@ const copy: Record<Locale, Copy> = {
       log: "読んだ文章を確認する",
       save: "現在位置を記録する",
       load: "保存した記録を開く",
+      quickSave: "現在位置をすぐに記録する",
+      quickLoad: "直前のクイック記録を開く",
       extra: "解放済みの記憶を見る",
       config: "表示と音を設定する",
       title: "タイトル画面へ戻る",
       exit: "「無意味な生にて、なお。」を終了する",
     },
+    decreaseSetting: (label) => `${label}を下げる`,
+    increaseSetting: (label) => `${label}を上げる`,
+    fullscreenEntered: "フルスクリーンにしました。",
+    fullscreenExited: "フルスクリーンを終了しました。",
+    fullscreenUnavailable: "フルスクリーンに切り替えられませんでした。",
     valuePercent: (value) => `${Math.round(value * 100)}%`,
     valueMs: (value) => `${Math.round(value)} ms`,
   },
@@ -254,11 +268,18 @@ const copy: Record<Locale, Copy> = {
       log: "Review the text you have read.",
       save: "Record the current position.",
       load: "Open a saved record.",
+      quickSave: "Save the current position immediately.",
+      quickLoad: "Open the latest quick record.",
       extra: "View unlocked memories.",
       config: "Adjust display and sound.",
       title: "Return to the title screen.",
       exit: "Exit the record.",
     },
+    decreaseSetting: (label) => `Decrease ${label}`,
+    increaseSetting: (label) => `Increase ${label}`,
+    fullscreenEntered: "Entered fullscreen.",
+    fullscreenExited: "Exited fullscreen.",
+    fullscreenUnavailable: "Fullscreen could not be changed.",
     valuePercent: (value) => `${Math.round(value * 100)}%`,
     valueMs: (value) => `${Math.round(value)} ms`,
   },
@@ -340,11 +361,18 @@ const copy: Record<Locale, Copy> = {
       log: "确认已经读过的文字。",
       save: "记录当前位置。",
       load: "打开已保存的记录。",
+      quickSave: "立即保存当前位置。",
+      quickLoad: "打开最近的快速记录。",
       extra: "查看已解锁的记忆。",
       config: "调整显示与声音。",
       title: "回到标题画面。",
       exit: "退出这份记录。",
     },
+    decreaseSetting: (label) => `降低${label}`,
+    increaseSetting: (label) => `提高${label}`,
+    fullscreenEntered: "已进入全屏。",
+    fullscreenExited: "已退出全屏。",
+    fullscreenUnavailable: "无法切换全屏。",
     valuePercent: (value) => `${Math.round(value * 100)}%`,
     valueMs: (value) => `${Math.round(value)} ms`,
   },
@@ -426,11 +454,18 @@ const copy: Record<Locale, Copy> = {
       log: "確認已經讀過的文字。",
       save: "記錄目前位置。",
       load: "開啟已儲存的記錄。",
+      quickSave: "立即記錄目前位置。",
+      quickLoad: "開啟最近的快速記錄。",
       extra: "查看已解鎖的記憶。",
       config: "調整顯示與聲音。",
       title: "回到標題畫面。",
       exit: "結束這份記錄。",
     },
+    decreaseSetting: (label) => `降低${label}`,
+    increaseSetting: (label) => `提高${label}`,
+    fullscreenEntered: "已進入全螢幕。",
+    fullscreenExited: "已退出全螢幕。",
+    fullscreenUnavailable: "無法切換全螢幕。",
     valuePercent: (value) => `${Math.round(value * 100)}%`,
     valueMs: (value) => `${Math.round(value)} ms`,
   },
