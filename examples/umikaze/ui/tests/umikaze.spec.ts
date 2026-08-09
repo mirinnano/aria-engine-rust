@@ -47,15 +47,16 @@ async function waitForCompletedPage(page: import("@playwright/test").Page) {
 }
 
 async function autosaveGenerations(page: import("@playwright/test").Page): Promise<number[]> {
+  const namespace = process.env.UMIKAZE_DEMO === "true" ? "umikaze-demo-v2" : "umikaze-v5";
   return page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("aria-v3-umikaze-v5", 1);
+      const request = indexedDB.open(`aria-v3-${namespace}`, 1);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
     try {
       const transaction = database.transaction("generations", "readonly");
-      const request = transaction.objectStore("generations").index("slot").getAll("umikaze-v5:autosave");
+      const request = transaction.objectStore("generations").index("slot").getAll(`${namespace}:autosave`);
       const records = await new Promise<Array<{ generation: number }>>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
