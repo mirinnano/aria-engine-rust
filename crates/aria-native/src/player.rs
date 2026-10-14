@@ -43,6 +43,7 @@ const MAX_FRAME_DELTA_MS: u32 = 250;
 pub struct NativePlayerConfig {
     pub title: String,
     pub program: CompiledProgram,
+    pub plugins: Vec<aria_core::PluginRegistration>,
     pub logical_size: LogicalSize,
     /// Parent directory; `AtomicSaveStore` adds `save_namespace` beneath it.
     pub save_root: PathBuf,
@@ -61,6 +62,7 @@ impl std::fmt::Debug for NativePlayerConfig {
             .debug_struct("NativePlayerConfig")
             .field("title", &self.title)
             .field("program_game_id", &self.program.game_id)
+            .field("plugins", &self.plugins)
             .field("logical_size", &self.logical_size)
             .field("save_root", &self.save_root)
             .field("save_namespace", &self.save_namespace)
@@ -205,6 +207,7 @@ impl NativeApplication {
         let NativePlayerConfig {
             title,
             program,
+            plugins,
             logical_size,
             save_root,
             save_namespace,
@@ -277,7 +280,7 @@ impl NativeApplication {
             WgpuRenderer::new_with_fonts(device, queue, surface_config.format, bundled_fonts)
                 .map_err(|error| NativePlayerError::Renderer(error.to_string()))?;
 
-        let mut vm = Vm::new(program, logical_size)?;
+        let mut vm = Vm::with_plugins(program, logical_size, &plugins)?;
         let output = vm.step(&InputSnapshot::idle(1, 0))?;
         let viewport = renderer.viewport_transform(
             &output.scene,

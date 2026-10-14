@@ -9,8 +9,13 @@ use "scenario/demo.aria";
 scene start {
   locale "ja-JP";
   text_speed 48;
-  background asset("#264450") with fade(240ms);
   persistent flag "umikaze_demo_setup_complete" = true;
+  jump title_screen;
+}
+
+scene title_screen {
+  background asset("#264450") with fade(240ms);
+  stage tide;
   screen title;
   choice { "体験版をはじめる" => demo_chapter_select; }
 }

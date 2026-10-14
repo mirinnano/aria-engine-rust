@@ -11,6 +11,9 @@ pub const ARIAC_FORMAT_VERSION: u16 = 7;
 pub const ARIAC_MAGIC: [u8; 8] = *b"ARIAC7\0\0";
 pub const ARIAC_VM_ABI_VERSION: u16 = 4;
 
+/// Resume anchors are `Nop` instructions whose single operand names them.
+pub const SCENE_ANCHOR_PREFIX: &str = "scene:";
+
 const CHECKSUM_LENGTH: usize = 32;
 const FIXED_HEADER_LENGTH: usize = 34;
 const MAX_BODY_LENGTH: usize = 256 * 1024 * 1024;
@@ -87,6 +90,14 @@ pub enum ByteOp {
     PreloadAsset,
     OpenScreen,
     GetFlag,
+    SetStage,
+    /// Program data read at load: id, label, numeral, title, date, synopsis, image.
+    DeclareChapter,
+    /// (label, target, chapter, condition); a `None` label is the cancel
+    /// target, and an option whose condition register is 0 is not offered.
+    PresentChoiceEx,
+    /// zoom %, pan x %, pan y %, duration ms, easing.
+    SetCamera,
 }
 
 impl ByteOp {
@@ -133,6 +144,10 @@ impl ByteOp {
             Self::PreloadAsset => 41,
             Self::OpenScreen => 42,
             Self::GetFlag => 43,
+            Self::SetStage => 44,
+            Self::DeclareChapter => 45,
+            Self::PresentChoiceEx => 46,
+            Self::SetCamera => 47,
         }
     }
 
@@ -179,15 +194,21 @@ impl ByteOp {
             41 => Ok(Self::PreloadAsset),
             42 => Ok(Self::OpenScreen),
             43 => Ok(Self::GetFlag),
+            44 => Ok(Self::SetStage),
+            45 => Ok(Self::DeclareChapter),
+            46 => Ok(Self::PresentChoiceEx),
+            47 => Ok(Self::SetCamera),
             value => Err(AriacError::InvalidOpcode(value)),
         }
     }
 
     fn validates_arity(self, operand_count: usize) -> bool {
         match self {
-            Self::Nop | Self::TextClear | Self::Return | Self::End => operand_count == 0,
-            Self::Text
-            | Self::SetInt
+            // Nop may carry one resume-anchor name; Text may carry a line key.
+            Self::Nop => operand_count <= 1,
+            Self::Text => (2..=4).contains(&operand_count),
+            Self::TextClear | Self::Return | Self::End => operand_count == 0,
+            Self::SetInt
             | Self::SetString
             | Self::Background
             | Self::SpriteVisibility
@@ -206,6 +227,9 @@ impl ByteOp {
             Self::SpriteImage | Self::SpriteText | Self::PlayAudio => operand_count == 6,
             Self::SpriteRect => operand_count == 7,
             Self::PresentChoice => operand_count >= 2 && operand_count.is_multiple_of(2),
+            Self::PresentChoiceEx => operand_count >= 4 && operand_count.is_multiple_of(4),
+            Self::DeclareChapter => operand_count == 7,
+            Self::SetCamera => operand_count == 5,
             Self::SetFlag
             | Self::SetPersistentFlag
             | Self::UnlockChapter
@@ -214,6 +238,7 @@ impl ByteOp {
             | Self::SetAutoMode
             | Self::SetSkipMode
             | Self::SetLocale
+            | Self::SetStage
             | Self::UnlockCg
             | Self::PreloadAsset => operand_count == 1,
             Self::TweenSprite => operand_count == 5,

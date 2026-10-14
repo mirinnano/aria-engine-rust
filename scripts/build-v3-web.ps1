@@ -11,10 +11,10 @@ if (-not (Get-Command wasm-bindgen -ErrorAction SilentlyContinue)) {
     throw "wasm-bindgen CLI is required (matching wasm-bindgen 0.2.126)"
 }
 
-cargo build --locked --release -p aria-web --target wasm32-unknown-unknown --features web-gpu
+cargo build --locked --profile web-release -p aria-web --target wasm32-unknown-unknown --features web-gpu
 if ($LASTEXITCODE -ne 0) { throw "aria-web WASM build failed" }
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
-wasm-bindgen --target web --out-dir $RuntimeDir --out-name aria_web target/wasm32-unknown-unknown/release/aria_web.wasm
+wasm-bindgen --target web --out-dir $RuntimeDir --out-name aria_web target/wasm32-unknown-unknown/web-release/aria_web.wasm
 if ($LASTEXITCODE -ne 0) { throw "wasm-bindgen packaging failed" }
 
 $previousRuntimeDir = $env:ARIA_WEB_RUNTIME_DIR

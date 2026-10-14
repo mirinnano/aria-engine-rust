@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use aria_core::bytecode::{ByteOp, Constant, Operand};
 use aria_core::{
     CompileInput, CompileOutput, CompiledProgram, Diagnostic, DiagnosticCode, ProjectManifest,
-    SourceSpan, SourceUnit, compile,
+    SourceSpan, SourceUnit, compile_with_routes,
 };
 use walkdir::{DirEntry, WalkDir};
 
@@ -29,7 +29,7 @@ pub struct AssetInventory {
 
 impl AssetInventory {
     #[must_use]
-    #[cfg(test)]
+    #[cfg(all(test, feature = "desktop-player", not(target_arch = "wasm32")))]
     pub(crate) fn empty() -> Self {
         Self {
             entries: BTreeMap::new(),
@@ -106,6 +106,27 @@ impl LoadedProject {
             root: self.root.clone(),
             manifest,
         })
+    }
+
+    /// Validates every declared Wasm plugin and rejects cross-plugin route
+    /// collisions before a check/build or runtime can start executing prose.
+    pub fn plugins(&self) -> Result<Vec<aria_core::PluginRegistration>> {
+        let inventory = self.asset_inventory()?;
+        let mut registry = aria_core::PluginRegistry::default();
+        let mut plugins = Vec::new();
+        for logical_path in &self.manifest.runtime.plugins {
+            let path = inventory
+                .path(logical_path)
+                .with_context(|| format!("missing plugin asset '{logical_path}'"))?;
+            if fs::metadata(path)?.len() > aria_plugin_host::MAX_PLUGIN_BYTES as u64 {
+                bail!("plugin '{logical_path}' exceeds the 4 MiB binary limit");
+            }
+            let plugin = aria_plugin_host::load_plugin(&fs::read(path)?)
+                .with_context(|| format!("cannot load plugin '{logical_path}'"))?;
+            registry.register(plugin.clone())?;
+            plugins.push(plugin);
+        }
+        Ok(plugins)
     }
 
     pub fn sources(&self) -> Result<Vec<SourceUnit>> {
@@ -238,15 +259,33 @@ impl LoadedProject {
     pub fn compile(&self) -> Result<CompileOutput> {
         let assets = self.asset_inventory()?;
         self.validate_bundled_fonts(&assets, false)?;
-        let mut output = compile(CompileInput {
-            game_id: self.manifest.game.id.clone(),
-            entry: self.manifest.runtime.entry.clone(),
-            sources: self.sources()?,
-        });
+        let custom_routes = self
+            .plugins()?
+            .iter()
+            .flat_map(|plugin| {
+                plugin
+                    .manifest
+                    .routes
+                    .iter()
+                    .map(|policy| policy.route.clone())
+            })
+            .collect();
+        let mut output = compile_with_routes(
+            CompileInput {
+                game_id: self.manifest.game.id.clone(),
+                entry: self.manifest.runtime.entry.clone(),
+                sources: self.sources()?,
+            },
+            &custom_routes,
+        );
         if let Some(program) = &output.program {
             output
                 .diagnostics
                 .extend(validate_program_asset_references(program, &assets));
+            output.diagnostics.extend(validate_stage_cues(
+                program,
+                &self.manifest.presentation.stages,
+            ));
         }
         Ok(output)
     }
@@ -344,6 +383,33 @@ fn validate_program_asset_references(
     diagnostics
 }
 
+/// When `[presentation] stages` lists the cue names the frontend knows, a
+/// `stage` outside it is a typo the presentation would silently ignore.
+fn validate_stage_cues(program: &CompiledProgram, known: &[String]) -> Vec<Diagnostic> {
+    if known.is_empty() {
+        return Vec::new();
+    }
+    program
+        .instructions
+        .iter()
+        .enumerate()
+        .filter(|(_, instruction)| instruction.op == ByteOp::SetStage)
+        .filter_map(|(index, instruction)| {
+            let cue = constant_string(program, instruction.operands.first()?)?;
+            (!known.iter().any(|name| name == cue)).then(|| {
+                asset_diagnostic(
+                    program,
+                    index,
+                    format!(
+                        "stage '{cue}' is not in [presentation] stages; known: {}",
+                        known.join(", ")
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
 /// Returns the literal assets reachable from the selected source import
 /// closure. Manifest fonts are deliberately not included here: every Player
 /// needs those regardless of whether the story mentions them explicitly.
@@ -369,6 +435,7 @@ fn asset_operand(op: ByteOp) -> Option<(usize, bool, &'static str)> {
         ByteOp::SpriteImage => Some((1, false, "image")),
         ByteOp::PlayAudio => Some((2, false, "audio")),
         ByteOp::PreloadAsset => Some((0, false, "preload")),
+        ByteOp::DeclareChapter => Some((6, false, "chapter image")),
         _ => None,
     }
 }
@@ -399,4 +466,37 @@ fn asset_diagnostic(
             length: 1,
         });
     Diagnostic::error(DiagnosticCode::MissingSource, message, span)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aria_core::{CompileInput, SourceUnit, compile};
+
+    fn program(source: &str) -> CompiledProgram {
+        compile(CompileInput {
+            game_id: "jp.example.stages".to_owned(),
+            entry: "scripts/main.aria".to_owned(),
+            sources: vec![SourceUnit {
+                logical_path: "scripts/main.aria".to_owned(),
+                source: source.to_owned(),
+            }],
+        })
+        .program
+        .unwrap()
+    }
+
+    #[test]
+    fn stage_cues_outside_the_declared_vocabulary_are_errors() {
+        let program = program(
+            "aria;\nentry start;\nscene start {\n  stage ward;\n  stage wrad;\n  end;\n}\n",
+        );
+        let known = vec!["ward".to_owned(), "tide".to_owned()];
+        let diagnostics = validate_stage_cues(&program, &known);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("'wrad'"));
+        assert_eq!(diagnostics[0].span.as_ref().map(|span| span.line), Some(5));
+        // Without a declared vocabulary there is nothing to compare against.
+        assert!(validate_stage_cues(&program, &[]).is_empty());
+    }
 }

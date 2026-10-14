@@ -6,7 +6,7 @@
 //! narrowly defined non-verbal presentation profile, but the source text
 //! remains the authority and the result stays deterministic and reviewable.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -177,6 +177,8 @@ enum NovelDirection {
     /// field used when a landscape would over-explain a thought.
     AshPause {
         duration_ms: u32,
+        /// `#6d706f` for `pause ash`, `#05070b` for `pause black`.
+        field: &'static str,
     },
     /// A deliberate beat after a reader has released the preceding line.
     /// The source names it either `breath` or `drift`; runtime work is the
@@ -199,6 +201,7 @@ enum NovelDirection {
 enum StatementField {
     Ash,
     Sea,
+    Black,
 }
 
 impl StatementField {
@@ -206,6 +209,7 @@ impl StatementField {
         match self {
             Self::Ash => "#6d706f",
             Self::Sea => "#244e5a",
+            Self::Black => "#05070b",
         }
     }
 
@@ -213,6 +217,7 @@ impl StatementField {
         match value.trim().to_ascii_lowercase().as_str() {
             "ash" => Some(Self::Ash),
             "sea" => Some(Self::Sea),
+            "black" => Some(Self::Black),
             _ => None,
         }
     }
@@ -230,6 +235,9 @@ enum BackdropTone {
     Rail,
     Rain,
     City,
+    /// The grey field, held as a place rather than a pause.
+    Ash,
+    Ferry,
 }
 
 impl BackdropTone {
@@ -242,6 +250,8 @@ impl BackdropTone {
             Self::Rail => "assets/bg/scenes/rail-window-sunset-v1.webp",
             Self::Rain => "assets/bg/scenes/rain-street-evening-v1.webp",
             Self::City => "assets/bg/scenes/neon-alley-v1.webp",
+            Self::Ash => "#6d706f",
+            Self::Ferry => "assets/bg/scenes/ferry-fog-morning-v1.webp",
         }
     }
 
@@ -254,6 +264,8 @@ impl BackdropTone {
             "rail" => Some(Self::Rail),
             "rain" => Some(Self::Rain),
             "city" => Some(Self::City),
+            "ash" => Some(Self::Ash),
+            "ferry" => Some(Self::Ferry),
             _ => None,
         }
     }
@@ -670,11 +682,14 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
             duration_ms,
         })));
     }
-    if let Some(milliseconds) = normalized.strip_prefix("pause ash ") {
-        let duration_ms = parse_control_duration("pause ash", milliseconds)?;
-        return Ok(Some(NovelControl::Direction(NovelDirection::AshPause {
-            duration_ms,
-        })));
+    for (prefix, field) in [("pause ash ", "#6d706f"), ("pause black ", "#05070b")] {
+        if let Some(milliseconds) = normalized.strip_prefix(prefix) {
+            let duration_ms = parse_control_duration(prefix.trim_end(), milliseconds)?;
+            return Ok(Some(NovelControl::Direction(NovelDirection::AshPause {
+                duration_ms,
+                field,
+            })));
+        }
     }
     if let Some(rest) = normalized.strip_prefix("pause ") {
         let mut parts = rest.split_whitespace();
@@ -682,7 +697,7 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
         let duration = parts.next().unwrap_or_default();
         if parts.next().is_some() || !matches!(style, "breath" | "drift") {
             bail!(
-                "unsupported pause directive '{command}'; use 'pause breath <milliseconds>' or 'pause drift <milliseconds>'"
+                "unsupported pause directive '{command}'; use 'pause breath|drift|ash|black <milliseconds>'"
             );
         }
         let duration_ms = parse_control_duration(&format!("pause {style}"), duration)?;
@@ -693,7 +708,7 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
     if let Some(tone) = normalized.strip_prefix("backdrop ") {
         let Some(tone) = BackdropTone::parse(tone) else {
             bail!(
-                "unsupported backdrop directive '{command}'; use ward, platform, hotel, shore, rail, rain, or city"
+                "unsupported backdrop directive '{command}'; use ward, platform, hotel, shore, rail, rain, city, ash, or ferry"
             );
         };
         return Ok(Some(NovelControl::Direction(NovelDirection::Backdrop {
@@ -702,7 +717,7 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
     }
     if let Some(field) = normalized.strip_prefix("statement ") {
         let Some(field) = StatementField::parse(field) else {
-            bail!("unsupported statement directive '{command}'; use ash or sea");
+            bail!("unsupported statement directive '{command}'; use ash, sea, or black");
         };
         return Ok(Some(NovelControl::Statement(field)));
     }
@@ -815,94 +830,159 @@ fn chapter_label(stem: &str) -> String {
 
 struct UmikazeChapterStyle {
     source_name: &'static str,
+    /// Catalogue label ("DAY 1"), numeral, and short title of the chapter.
     day: &'static str,
+    numeral: &'static str,
+    title: &'static str,
     date: &'static str,
     synopsis: &'static str,
+    /// The `stage` cue authored on the day card. The presentation package
+    /// maps it to the card's weather; the importer never writes colours.
+    stage: &'static str,
     /// A project-relative scene photograph.  The ID is the path itself so a
     /// background change can be compared deterministically by every host.
     background: &'static str,
+    /// The chapter catalogue's preview photograph.
+    image: &'static str,
 }
 
 // These are navigation metadata rather than new story text. Each line names
-// only a place, weather, or motion already present in that chapter; the
+// only a place, weather, or event already present in that chapter; the
 // actual prose always comes directly from the canonical Markdown below.
-const UMIKAZE_CHAPTER_STYLES: [UmikazeChapterStyle; 11] = [
+const UMIKAZE_CHAPTER_STYLES: [UmikazeChapterStyle; 12] = [
     UmikazeChapterStyle {
         source_name: "00_init.md",
         day: "PROLOGUE",
-        date: "春から九月",
-        synopsis: "季節だけが先に進む窓辺で、まだ名もない願いが揺れている。",
+        numeral: "P",
+        title: "病室の窓",
+        date: "春から秋",
+        synopsis: "病室の窓から季節を見送る日々に、一時帰宅の話が出る。",
+        stage: "ward",
         background: "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
+        image: "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "01_start.md",
         day: "DAY 1",
+        numeral: "I",
+        title: "西へ",
         date: "9月21日・横浜駅",
         synopsis: "西へ向かう最初の列車が、朝のホームを離れる。",
+        stage: "departure",
         background: "assets/bg/scenes/platform-sea-dawn-v1.webp",
+        image: "assets/bg/scenes/station-night-pass-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "02_day2.md",
         day: "DAY 2",
+        numeral: "II",
+        title: "雨上がり",
         date: "9月22日・三ノ宮",
-        synopsis: "雨の気配が近づく街で、二人は次の行き先を探している。",
+        synopsis: "雨上がりの三ノ宮の街へ出る。",
+        stage: "rain",
         background: "assets/bg/scenes/sannomiya-rain-platform-v1.webp",
+        image: "assets/bg/scenes/rain-window-dusk-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "03_day3.md",
         day: "DAY 3",
+        numeral: "III",
+        title: "宍道湖まで",
         date: "9月23日・岡山",
-        synopsis: "遠ざかる景色の先で、言葉にできないものと向き合う。",
+        synopsis: "岡山を発ち、夕暮れの宍道湖へ歩いていく。",
+        stage: "rail",
         background: "assets/bg/scenes/okayama-rail-window-v1.webp",
+        image: "assets/bg/scenes/rail-window-sunset-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "04_day4.md",
         day: "DAY 4",
+        numeral: "IV",
+        title: "波の音",
         date: "9月24日・松江",
-        synopsis: "残そうとする音が、静かな海辺へ続く道を指している。",
+        synopsis: "ミオがMDを持って、日本海の波の音を録りに行く。",
+        stage: "shore",
         background: "assets/bg/scenes/shore-storm-sunset-v1.webp",
+        image: "assets/bg/scenes/shore-storm-sunset-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "05_day5.md",
         day: "DAY 5",
+        numeral: "V",
+        title: "雨の日",
         date: "9月25日・益田",
-        synopsis: "強い雨が、進む理由を足止めする。",
+        synopsis: "朝から降る雨が、昼になっても弱まらない。",
+        stage: "rain",
         background: "assets/bg/scenes/rain-street-evening-v1.webp",
+        image: "assets/bg/scenes/rain-street-evening-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "06_day6.md",
         day: "DAY 6",
-        date: "晴れた移動の途中",
-        synopsis: "夜の駅を越え、海の気配へ向かう。",
+        numeral: "VI",
+        title: "尾道へ",
+        date: "9月26日・益田",
+        synopsis: "晴れた朝、益田を出て尾道へ向かう。",
+        stage: "clear",
         background: "assets/bg/scenes/coast-road-dawn-v1.webp",
+        image: "assets/bg/scenes/rail-platform-dawn-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "07_day7.md",
         day: "DAY 7",
-        date: "始発前の待合室",
-        synopsis: "海を渡るあいだ、記録の外側が近づいてくる。",
+        numeral: "VII",
+        title: "島へ",
+        date: "9月27日・尾道",
+        synopsis: "宇野港から連絡船に乗り、瀬戸内の島へ渡る。",
+        stage: "island",
         background: "assets/bg/scenes/ferry-night-deck-v1.webp",
+        image: "assets/bg/scenes/mist-window-rail-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "08_day8.md",
         day: "DAY 8",
-        date: "山あいの居間",
-        synopsis: "遠い場所の映像が、静かな朝を占めていく。",
+        numeral: "VIII",
+        title: "霧の海",
+        date: "9月28日・直島",
+        synopsis: "民宿で朝を迎え、霧の濃くなる海を本州行きの船で戻る。",
+        stage: "harbor",
         background: "assets/bg/scenes/mountain-room-dawn-v1.webp",
+        image: "assets/bg/scenes/understructure-evening-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "09_day9.md",
         day: "DAY 9",
-        date: "北へ向かう列車",
-        synopsis: "足元の地図を離れ、線路だけが先へ続いている。",
+        numeral: "IX",
+        title: "北へ",
+        date: "9月29日・山陰",
+        synopsis: "いちばん安い切符で、北へ向かうローカル線を乗り継ぐ。",
+        stage: "north",
         background: "assets/bg/scenes/train-rain-grey-v1.webp",
+        image: "assets/bg/scenes/night-window-motion-v1.webp",
     },
     UmikazeChapterStyle {
         source_name: "10_day10.md",
         day: "DAY 10",
-        date: "終点を知らない列車",
+        numeral: "X",
+        title: "灰色の海",
+        date: "9月30日・駅の待合室",
         synopsis: "灰色の海のそばを、降りる理由のないまま進む。",
+        stage: "terminus",
         background: "assets/bg/scenes/terminus-grey-sea-v1.webp",
+        image: "assets/bg/scenes/terminus-grey-sea-v1.webp",
+    },
+    UmikazeChapterStyle {
+        source_name: "11_day11.md",
+        day: "DAY 11",
+        numeral: "XI",
+        title: "小さな駅",
+        date: "10月1日・山陰本線",
+        synopsis: "山陰本線の小さな駅で降り、夜の商店で水を買う。",
+        stage: "north",
+        // Dusk over low buildings: the closest existing photograph to Day 11's
+        // small rural station; the station-night-pass frame shows a Shizuoka sign.
+        background: "assets/bg/scenes/blue-twilight-v1.webp",
+        image: "assets/bg/scenes/blue-twilight-v1.webp",
     },
 ];
 
@@ -1012,7 +1092,7 @@ fn render_umikaze_module(
         .collect::<Result<Vec<_>>>()?;
     if styles.len() != UMIKAZE_CHAPTER_STYLES.len() {
         bail!(
-            "the Umikaze presentation requires all {} canonical Day 0–10 sources; received {}",
+            "the Umikaze presentation requires all {} canonical Day 0–11 sources; received {}",
             UMIKAZE_CHAPTER_STYLES.len(),
             styles.len()
         );
@@ -1033,13 +1113,10 @@ fn render_umikaze_module(
     output.push_str("  screen chapter_select;\n");
     output.push_str("  background asset(\"#102b38\") with wipe(260ms);\n");
     output.push_str("  choice {\n");
-    for (chapter, style) in chapters.iter().zip(&styles) {
-        output.push_str(&format!(
-            "    \"{}\" => {};\n",
-            escape_string(style.day),
-            chapter.scene
-        ));
+    for chapter in chapters {
+        output.push_str(&format!("    chapter {};\n", chapter.chapter_id));
     }
+    output.push_str("    cancel => title_screen;\n");
     output.push_str("  }\n");
     output.push_str("}\n\n");
 
@@ -1047,7 +1124,7 @@ fn render_umikaze_module(
         render_umikaze_chapter_content(&mut output, chapter, style, chapter_select, locale);
     }
 
-    Ok(output)
+    Ok(proseify_story_scenes(&annotate_umikaze_stage_cues(&output)))
 }
 
 fn render_umikaze_chapter_content(
@@ -1058,6 +1135,24 @@ fn render_umikaze_chapter_content(
     locale: &str,
 ) {
     let story_scene = format!("{}_story", chapter.scene);
+    // Catalogue metadata lives here once; the chapter select and day card
+    // refer to it by id instead of packing it into choice labels.
+    output.push_str("// Catalogue metadata for the chapter select and the day card.\n");
+    output.push_str(&format!("chapter {} {{\n", chapter.chapter_id));
+    output.push_str(&format!("  label \"{}\";\n", escape_string(style.day)));
+    output.push_str(&format!(
+        "  numeral \"{}\";\n",
+        escape_string(style.numeral)
+    ));
+    output.push_str(&format!("  title \"{}\";\n", escape_string(style.title)));
+    output.push_str(&format!("  date \"{}\";\n", escape_string(style.date)));
+    output.push_str(&format!(
+        "  synopsis \"{}\";\n",
+        escape_string(style.synopsis)
+    ));
+    output.push_str(&format!("  image asset(\"{}\");\n", style.image));
+    output.push_str(&format!("  start {};\n", chapter.scene));
+    output.push_str("}\n\n");
     output.push_str(&format!(
         "// Source: {} — {} player-visible beats\n",
         chapter.source_name,
@@ -1081,14 +1176,12 @@ fn render_umikaze_chapter_content(
         "  background asset(\"{}\") with fade_through_black(640ms);\n",
         style.background
     ));
+    output.push_str(&format!("  stage {};\n", style.stage));
     output.push_str("  screen day_card;\n");
     output.push_str("  choice {\n");
     output.push_str(&format!(
-        "    \"{}\\n{}\\n{}\" => {};\n",
-        escape_string(style.day),
-        escape_string(style.date),
-        escape_string(style.synopsis),
-        story_scene
+        "    chapter {} => {story_scene};\n",
+        chapter.chapter_id
     ));
     output.push_str("  }\n");
     output.push_str("}\n\n");
@@ -1132,6 +1225,122 @@ struct GeneratedChapterFile {
     source: String,
 }
 
+/// Solid fields have no photograph to speak for them, so each one is followed
+/// by the semantic cue the presentation uses to choose its treatment.
+fn umikaze_solid_stage_cue(colour: &str) -> Option<&'static str> {
+    Some(match colour {
+        "#05070b" => "blackout",
+        "#6d706f" => "stillness",
+        "#ded7c9" => "whiteout",
+        "#102b38" => "tide",
+        "#284b59" => "school",
+        "#244e5a" => "blue",
+        _ => return None,
+    })
+}
+
+fn annotate_umikaze_stage_cues(source: &str) -> String {
+    let mut output = String::with_capacity(source.len() + 256);
+    for line in source.split_inclusive('\n') {
+        output.push_str(line);
+        let trimmed = line.trim();
+        let Some(cue) = trimmed
+            .strip_prefix("background asset(\"")
+            .and_then(|rest| rest.split('"').next())
+            .and_then(umikaze_solid_stage_cue)
+        else {
+            continue;
+        };
+        let indent = &line[..line.len() - line.trim_start().len()];
+        output.push_str(&format!("{indent}stage {cue};\n"));
+    }
+    output
+}
+
+/// Rewrites each generated `*_story` scene as one `prose` block. The parser
+/// expands `prose` back into exactly these statements, so the bytecode and
+/// the verifier's view are unchanged; only the source becomes readable.
+/// The most common breath in the scene becomes the block default; a line
+/// with another breath gets `pause`, a line with no clear gets `+`, and a
+/// clear without a breath gets `pause 0ms`.
+fn proseify_story_scenes(source: &str) -> String {
+    fn narration(line: &str) -> Option<&str> {
+        line.strip_prefix("  narrate ")?.strip_suffix(';')
+    }
+    fn breath(line: &str) -> Option<u32> {
+        line.strip_prefix("  wait breath ")?
+            .strip_suffix("ms;")?
+            .parse()
+            .ok()
+    }
+    let lines: Vec<&str> = source.split('\n').collect();
+    let mut output: Vec<String> = Vec::with_capacity(lines.len());
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        let is_story = line.starts_with("scene ") && line.ends_with("_story {");
+        let Some(close) = is_story
+            .then(|| lines[index + 1..].iter().position(|line| *line == "}"))
+            .flatten()
+            .map(|offset| index + 1 + offset)
+        else {
+            output.push(line.to_owned());
+            index += 1;
+            continue;
+        };
+        let body = &lines[index + 1..close];
+        let mut counts = BTreeMap::<u32, usize>::new();
+        for duration in body.iter().filter_map(|line| breath(line)) {
+            *counts.entry(duration).or_default() += 1;
+        }
+        // Ties resolve to the shorter breath for a stable choice.
+        let default = counts
+            .iter()
+            .max_by(|left, right| left.1.cmp(right.1).then(right.0.cmp(left.0)))
+            .map(|(duration, _)| *duration);
+        output.push(line.to_owned());
+        output.push(match default {
+            Some(duration) => format!("  prose breath {duration}ms {{"),
+            None => "  prose {".to_owned(),
+        });
+        let mut at = 0;
+        while at < body.len() {
+            if let Some(text) = narration(body[at])
+                && body.get(at + 1) == Some(&"  await advance;")
+            {
+                at += 2;
+                if body.get(at) == Some(&"  clear dialogue;") {
+                    output.push(format!("    {text};"));
+                    match body.get(at + 1).and_then(|line| breath(line)) {
+                        Some(duration) if Some(duration) == default => at += 2,
+                        Some(duration) => {
+                            output.push(format!("    pause {duration}ms;"));
+                            at += 2;
+                        }
+                        None => {
+                            output.push("    pause 0ms;".to_owned());
+                            at += 1;
+                        }
+                    }
+                } else {
+                    output.push(format!("    {text} +;"));
+                }
+                continue;
+            }
+            output.push(if body[at].is_empty() {
+                String::new()
+            } else {
+                format!("  {}", body[at])
+            });
+            at += 1;
+        }
+        output.push("  }".to_owned());
+        output.push("}".to_owned());
+        index = close + 1;
+    }
+    output.join("\n")
+}
+
 fn render_umikaze_chapter_layout(
     chapters: &[NovelChapter],
     chapter_select: &str,
@@ -1143,7 +1352,7 @@ fn render_umikaze_chapter_layout(
         .collect::<Result<Vec<_>>>()?;
     if styles.len() != UMIKAZE_CHAPTER_STYLES.len() {
         bail!(
-            "the Umikaze chapter-file layout requires all {} canonical Day 0–10 sources; received {}",
+            "the Umikaze chapter-file layout requires all {} canonical Day 0–11 sources; received {}",
             UMIKAZE_CHAPTER_STYLES.len(),
             styles.len()
         );
@@ -1152,7 +1361,7 @@ fn render_umikaze_chapter_layout(
     let mut index = String::new();
     index.push_str("aria;\n");
     index.push_str("module umikaze.scenario.ja;\n\n");
-    index.push_str("// Generated from the canonical Day 0–10 Markdown source.\n");
+    index.push_str("// Generated from the canonical Day 0–11 Markdown source.\n");
     index.push_str("// Each chapter remains its own reviewable Aria module.\n");
     for chapter in chapters {
         index.push_str(&format!("use \"{}\";\n", chapter_file_name(chapter)));
@@ -1162,15 +1371,14 @@ fn render_umikaze_chapter_layout(
     index.push_str("  screen chapter_select;\n");
     index.push_str("  background asset(\"#102b38\") with wipe(260ms);\n");
     index.push_str("  choice {\n");
-    for (chapter, style) in chapters.iter().zip(&styles) {
-        index.push_str(&format!(
-            "    \"{}\" => {};\n",
-            escape_string(style.day),
-            chapter.scene
-        ));
+    for chapter in chapters {
+        index.push_str(&format!("    chapter {};\n", chapter.chapter_id));
     }
+    // Backing out of the catalogue returns to the title scene of main.aria.
+    index.push_str("    cancel => title_screen;\n");
     index.push_str("  }\n");
     index.push_str("}\n");
+    let index = annotate_umikaze_stage_cues(&index);
 
     let mut rendered_chapters = Vec::with_capacity(chapters.len());
     for (chapter, style) in chapters.iter().zip(styles) {
@@ -1192,7 +1400,7 @@ fn render_umikaze_chapter_layout(
         source.push('\n');
         rendered_chapters.push(GeneratedChapterFile {
             file_name: chapter_file_name(chapter),
-            source,
+            source: proseify_story_scenes(&annotate_umikaze_stage_cues(&source)),
         });
     }
 
@@ -1311,10 +1519,23 @@ fn verify_chapter_index(
         .body
         .iter()
         .find_map(|statement| match &statement.kind {
+            // A `chapter id;` option takes its target from the declaration,
+            // which lives in the chapter file; resolve it by chapter id here.
+            // The unshown `cancel` option is not a chapter.
             StatementKind::Choice { options } => Some(
                 options
                     .iter()
-                    .map(|option| option.scene.clone())
+                    .filter(|option| !option.cancel)
+                    .map(|option| match (&option.chapter, option.scene.is_empty()) {
+                        (Some(id), true) => chapters
+                            .iter()
+                            .find(|chapter| &chapter.chapter_id == id)
+                            .map_or_else(
+                                || format!("<undeclared {id}>"),
+                                |chapter| chapter.scene.clone(),
+                            ),
+                        _ => option.scene.clone(),
+                    })
                     .collect::<Vec<_>>(),
             ),
             _ => None,
@@ -1509,13 +1730,20 @@ fn verify_umikaze_chapter_presentation(
         .iter()
         .find(|scene| scene.name == expected_story)
         .expect("story scene was verified before presentation");
+    // Stage cues annotate a backdrop; they are not timing beats, so the
+    // windowed pacing checks below read the story without them.
+    let story_body: Vec<Statement> = story
+        .body
+        .iter()
+        .filter(|statement| !matches!(statement.kind, StatementKind::SetStage { .. }))
+        .cloned()
+        .collect();
     let expected_interludes = chapter
         .beats
         .iter()
         .filter(|beat| matches!(beat, NovelBeat::Heading { .. }))
         .count();
-    let actual_interludes = story
-        .body
+    let actual_interludes = story_body
         .iter()
         .filter(|statement| {
             matches!(
@@ -1533,11 +1761,11 @@ fn verify_umikaze_chapter_presentation(
             actual_interludes
         );
     }
-    verify_silence_holds(path, chapter, &story.body)?;
-    verify_paragraph_breaths(path, chapter, &story.body)?;
-    verify_structural_turn(path, chapter, &story.body)?;
-    verify_automatic_statements(path, chapter, &story.body)?;
-    verify_stage_directions(path, chapter, &story.body)?;
+    verify_silence_holds(path, chapter, &story_body)?;
+    verify_paragraph_breaths(path, chapter, &story_body)?;
+    verify_structural_turn(path, chapter, &story_body)?;
+    verify_automatic_statements(path, chapter, &story_body)?;
+    verify_stage_directions(path, chapter, &story_body)?;
     Ok(())
 }
 
@@ -1798,15 +2026,17 @@ fn verify_stage_directions(
     let expected_ash_holds = directions
         .iter()
         .filter_map(|direction| match direction {
-            NovelDirection::AshPause { duration_ms } => Some(*duration_ms),
+            NovelDirection::AshPause { duration_ms, field } => Some((*field, *duration_ms)),
             _ => None,
         })
         .collect::<Vec<_>>();
     let actual_ash_holds = statements
         .windows(5)
         .filter_map(|window| {
+            let field = ["#6d706f", "#05070b"]
+                .into_iter()
+                .find(|field| is_background_fade(&window[1], field, 260))?;
             if !matches!(&window[0].kind, StatementKind::ClearDialogue)
-                || !is_background_fade(&window[1], "#6d706f", 260)
                 || !is_any_background_fade(&window[3], 360)
                 || !matches!(
                     &window[4].kind,
@@ -1819,7 +2049,7 @@ fn verify_stage_directions(
                 return None;
             }
             match &window[2].kind {
-                StatementKind::Wait { duration_ms, .. } => Some(*duration_ms),
+                StatementKind::Wait { duration_ms, .. } => Some((field, *duration_ms)),
                 _ => None,
             }
         })
@@ -2035,7 +2265,7 @@ fn render_plain_direction(output: &mut String, direction: &NovelDirection) {
         NovelDirection::Wait { duration_ms } => {
             output.push_str(&format!("  wait {duration_ms}ms;\n"))
         }
-        NovelDirection::AshPause { duration_ms } => {
+        NovelDirection::AshPause { duration_ms, .. } => {
             output.push_str("  clear dialogue;\n");
             output.push_str(&format!("  wait {duration_ms}ms;\n"));
         }
@@ -2148,9 +2378,11 @@ fn render_umikaze_beat(
                 output.push_str("  wait 180ms;\n");
                 *current_background = "#ded7c9".to_owned();
             }
-            NovelDirection::AshPause { duration_ms } => {
+            NovelDirection::AshPause { duration_ms, field } => {
                 output.push_str("  clear dialogue;\n");
-                output.push_str("  background asset(\"#6d706f\") with fade(260ms);\n");
+                output.push_str(&format!(
+                    "  background asset(\"{field}\") with fade(260ms);\n"
+                ));
                 output.push_str(&format!("  wait {duration_ms}ms;\n"));
                 output.push_str(&format!(
                     "  background asset(\"{}\") with fade(360ms);\n",
@@ -2300,7 +2532,10 @@ mod tests {
                     speaker: None,
                     text: "次の文。".to_owned(),
                 },
-                NovelBeat::Direction(NovelDirection::AshPause { duration_ms: 720 }),
+                NovelBeat::Direction(NovelDirection::AshPause {
+                    duration_ms: 720,
+                    field: "#6d706f"
+                }),
                 NovelBeat::Reading {
                     speaker: None,
                     text: "その後。".to_owned(),
@@ -2372,10 +2607,12 @@ mod tests {
         .unwrap();
 
         let generated = fs::read_to_string(output.join("chapter-00.aria")).unwrap();
+        // Inside `prose`, `pause 0ms` is the clear before the statement field.
         assert!(generated.contains(
-            "clear dialogue;\n  screen statement;\n  background asset(\"#6d706f\") with fade(260ms);\n  narrate \"白い。\";\n  wait 1600ms;\n  background asset(\"assets/bg/scenes/hospital-corridor-overcast-v1.webp\") with fade(360ms);\n  screen dialogue;\n  clear dialogue;\n  wait 180ms;"
+            "\"前の文。\";\n    pause 0ms;\n    screen statement;\n    background asset(\"#6d706f\") with fade(260ms);\n    stage stillness;\n    narrate \"白い。\";\n    wait 1600ms;\n    background asset(\"assets/bg/scenes/hospital-corridor-overcast-v1.webp\") with fade(360ms);\n    screen dialogue;\n    clear dialogue;\n    wait 180ms;"
         ));
-        assert!(!generated.contains("narrate \"白い。\";\n  await advance;"));
+        // The statement is never a reading line the player advances.
+        assert!(!generated.contains("\n    \"白い。\";"));
     }
 
     #[test]
@@ -2415,7 +2652,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(report.chapters.len(), 11);
+        assert_eq!(report.chapters.len(), 12);
         assert_eq!(report.structural_breaks, 1);
         assert_eq!(report.stage_directions, 5);
 
@@ -2426,30 +2663,29 @@ mod tests {
         assert!(generated.contains("narrate \"9月18日　保健室\";"));
         assert!(generated.contains("background asset(\"#05070b\") with fade(2000ms);"));
         assert!(generated.contains("background asset(\"#ded7c9\") with fade(420ms);"));
+        assert!(generated.contains("prose breath 300ms {"));
+        assert!(generated.contains("\"本文。\";\n    \"余白。\";"));
         assert!(generated.contains(
-            "await advance;\n  clear dialogue;\n  wait breath 300ms;\n  narrate \"余白。\";"
-        ));
-        assert!(generated.contains(
-            "background asset(\"#6d706f\") with fade(260ms);\n  wait 720ms;\n  background asset(\"assets/bg/scenes/hospital-corridor-overcast-v1.webp\") with fade(360ms);\n  wait 180ms;"
+            "background asset(\"#6d706f\") with fade(260ms);\n    stage stillness;\n    wait 720ms;\n    background asset(\"assets/bg/scenes/hospital-corridor-overcast-v1.webp\") with fade(360ms);\n    wait 180ms;"
         ));
         assert!(generated.contains("effect tint \"#05070b\" amount 64 over 520ms;"));
         assert!(!generated.contains("fadeout 2"));
         assert!(!generated.contains("病院回想"));
 
-        let compiled = compile(CompileInput {
+        let compiled = aria_core::compile_with_routes(CompileInput {
             game_id: "jp.example.umikaze-import".to_owned(),
             entry: "scripts/main.aria".to_owned(),
             sources: vec![
                 SourceUnit {
                     logical_path: "scripts/main.aria".to_owned(),
-                    source: "aria;\nuse \"scenario/umikaze.aria\";\nentry start;\nscene start { jump chapter_select_ja; }\n".to_owned(),
+                    source: "aria;\nuse \"scenario/umikaze.aria\";\nentry start;\nscene start { jump chapter_select_ja; }\nscene title_screen { end; }\n".to_owned(),
                 },
                 SourceUnit {
                     logical_path: "scripts/scenario/umikaze.aria".to_owned(),
                     source: generated,
                 },
             ],
-        });
+        }, &["day_card", "interlude", "statement"].into_iter().map(str::to_owned).collect());
         assert!(!compiled.has_errors(), "{:#?}", compiled.diagnostics);
     }
 
@@ -2515,10 +2751,13 @@ mod tests {
         import_novel_with_options(&source, &output, options.clone()).unwrap();
 
         let day_ten = output.join("chapter-10.aria");
-        let modified = fs::read_to_string(&day_ten).unwrap().replacen(
-            "narrate \"本文。\";",
-            "narrate \"改ざん。\";",
-            1,
+        // Generated stories are `prose` blocks, where a reading line is the
+        // bare string.
+        let original = fs::read_to_string(&day_ten).unwrap();
+        let modified = original.replacen("\"本文。\"", "\"改ざん。\"", 1);
+        assert_ne!(
+            original, modified,
+            "the fixture line must be present to tamper with"
         );
         fs::write(&day_ten, &modified).unwrap();
 

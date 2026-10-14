@@ -15,10 +15,17 @@ scene start {
   // Ordinary reading starts at a slower 48ms/grapheme; the settings screen
   // can still choose a faster pace without mutating the manuscript.
   text_speed 48;
+  persistent flag "umikaze_setup_complete" = true;
+  jump title_screen;
+}
+
+// Returning to the title (from chapter select or the demo end) lands here, so
+// it never re-applies the startup text speed over the reader's setting.
+scene title_screen {
   // The React presentation owns the stage treatment. A plain, deterministic
   // scene colour keeps the title free of the old generative-looking backdrop.
   background asset("#264450") with fade(240ms);
-  persistent flag "umikaze_setup_complete" = true;
+  stage tide;
   screen title;
   choice { "記録をはじめる" => chapter_select_ja; }
 }

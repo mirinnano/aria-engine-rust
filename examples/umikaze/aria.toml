@@ -1,15 +1,16 @@
-schema = 4
+schema = 5
 
 [game]
 id = "jp.example.umikaze"
 version = "3.2.0"
-title = "海風 — The Records of Autumn"
+title = "HesPhoros"
 
 [runtime]
 entry = "scripts/main.aria"
 logical_width = 1280
 logical_height = 720
 asset_roots = ["assets"]
+plugins = ["assets/plugins/umikaze-story.wasm"]
 # These remain as source/reference material, but the React presentation does
 # not read them. Keep the shipping pak limited to the two role fonts instead
 # of paying startup memory for unused decorative rasters and typefaces.
@@ -72,8 +73,8 @@ asset_pack_roles = {
 # This manuscript revision intentionally invalidates earlier routes and
 # checkpoints. Only this exact predecessor is purged; other Aria games and
 # namespaces are never touched.
-save_namespace = "umikaze-v4"
-legacy_save_namespaces = ["umikaze-v3"]
+save_namespace = "umikaze-v5"
+legacy_save_namespaces = ["umikaze-v3", "umikaze-v4"]
 
 [presentation]
 frontend = "ui"

@@ -22,6 +22,14 @@ impl PortableWebRuntime {
         Self::new(program, logical_size).map_err(|error| error.to_string())
     }
 
+    /// Loads a bounded, import-free Wasm plugin before execution starts.
+    pub fn register_plugin(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let plugin = aria_plugin_host::load_plugin(bytes).map_err(|error| error.to_string())?;
+        self.vm
+            .register_plugin(plugin)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn step(&mut self, input: &InputSnapshot) -> Result<StepOutput, VmError> {
         self.vm.step(input)
     }

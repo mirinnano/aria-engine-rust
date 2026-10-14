@@ -34,7 +34,7 @@ export class WebAudioAdapter {
     this.context = new AudioContext();
     this.master = this.context.createGain();
     this.master.connect(this.context.destination);
-    for (const bus of ["bgm", "sound_effect", "voice"]) {
+    for (const bus of ["bgm", "sound_effect", "voice", "ambient"]) {
       const gain = this.context.createGain();
       gain.connect(this.master);
       this.buses.set(bus, gain);

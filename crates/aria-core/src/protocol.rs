@@ -337,6 +337,8 @@ pub enum AudioBus {
     Bgm,
     SoundEffect,
     Voice,
+    /// Environmental loops (rain, waves) layered independently of music.
+    Ambient,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

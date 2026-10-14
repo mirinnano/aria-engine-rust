@@ -5,9 +5,11 @@ use thiserror::Error;
 
 use crate::bytecode::{ByteOp, CompiledProgram, Constant, EncodedInstruction, Operand};
 use crate::input::{InputAction, InputSnapshot};
+use crate::plugins::{PluginRegistration, PluginRegistry};
 use crate::presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,
-    GalleryItemView, GameView, InterludeView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute, UiViewModel,
+    GalleryItemView, GameView, StorySurfaceView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
+    UiViewModel,
 };
 use crate::presentation_state::{PendingConfirmation, UiRuntimeState, UiViewport};
 use crate::protocol::{
@@ -17,14 +19,75 @@ use crate::protocol::{
 };
 use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
 
-/// Schema 9 removes retired script-owned theme/textbox state. Deterministic
-/// subtitle paging, replayable history targets, gallery viewing state, and
-/// structured confirmation state remain persisted. Older saves are rejected
-/// explicitly rather than silently guessing at a page boundary.
-pub const VM_SNAPSHOT_SCHEMA: u32 = 9;
+/// Schema 10 binds the exact registered plugin inventory and stores generic
+/// story-surface timing state. Deterministic subtitle paging, replay targets,
+/// gallery state, and structured confirmation remain persisted. Older saves
+/// are rejected explicitly rather than guessing at a changed route policy.
+pub const VM_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
+/// Reads every `DeclareChapter` (id, label, numeral, title, date, synopsis,
+/// image) into catalogue entries that start locked.
+fn chapter_catalogue(program: &CompiledProgram) -> Vec<ChapterView> {
+    let text = |operand: Option<&Operand>| match operand {
+        Some(Operand::Constant(index)) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| program.constants.get(index))
+            .and_then(|constant| match constant {
+                crate::bytecode::Constant::String(value) => Some(value.clone()),
+                _ => None,
+            }),
+        _ => None,
+    };
+    program
+        .instructions
+        .iter()
+        .filter(|instruction| instruction.op == ByteOp::DeclareChapter)
+        .filter_map(|instruction| {
+            let operand = |index: usize| text(instruction.operands.get(index));
+            Some(ChapterView {
+                id: operand(0)?,
+                label: operand(1),
+                numeral: operand(2),
+                title: operand(3).unwrap_or_default(),
+                date: operand(4),
+                description: operand(5).unwrap_or_default(),
+                thumbnail: operand(6),
+                script: None,
+                unlocked: false,
+                progress: 0,
+            })
+        })
+        .collect()
+}
+
+/// Saves written before state keys became name-only stored them as
+/// `v3:state:<name>:<n>`. Rename them so those values still apply.
+fn migrate_state_register_keys(snapshot: &mut VmSnapshot) {
+    fn migrate<T>(registers: &mut BTreeMap<String, T>) {
+        let old: Vec<String> = registers
+            .keys()
+            .filter(|key| key.starts_with("v3:state:"))
+            .cloned()
+            .collect();
+        for key in old {
+            let Some(name) = key
+                .strip_prefix("v3:state:")
+                .and_then(|rest| rest.rsplit_once(':'))
+                .map(|(name, _)| name.to_owned())
+            else {
+                continue;
+            };
+            if let Some(value) = registers.remove(&key) {
+                registers.entry(format!("state:{name}")).or_insert(value);
+            }
+        }
+    }
+    migrate(&mut snapshot.int_registers);
+    migrate(&mut snapshot.string_registers);
+}
+
 /// A malformed bytecode program must not turn an unbounded recursive Call
 /// cycle into host-memory exhaustion. Aria rejects recursive calls at
 /// compile time; this is the matching runtime guard for untrusted .ariac.
@@ -34,6 +97,9 @@ const MAX_CALL_DEPTH: usize = 1_024;
 pub struct VmSnapshot {
     pub schema_version: u32,
     pub game_id: String,
+    /// Exact plugin binaries and validated policies required by this save.
+    #[serde(default)]
+    pub plugin_fingerprints: BTreeMap<String, String>,
     pub pc: u32,
     pub frame_number: u64,
     pub logical_time_ms: u64,
@@ -59,6 +125,14 @@ pub struct VmSnapshot {
     pub unlocked_cgs: BTreeSet<String>,
     #[serde(default)]
     pub locale: String,
+    /// The last authored `stage` cue. Older snapshots omit it and resume
+    /// without a cue, which the presentation treats as "derive from scene".
+    /// An unset cue is omitted so cue-free saves serialize exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    /// Backdrop framing set by `camera`; reset by `background`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<crate::presentation::CameraView>,
     #[serde(default)]
     pub read_texts: BTreeSet<String>,
     #[serde(default)]
@@ -96,6 +170,10 @@ pub struct VmSnapshot {
     #[serde(default)]
     pub ui: UiRuntimeState,
     pub halted: bool,
+    /// Where this save stands in stable anchors, so it can be relocated into
+    /// a patched script. Written by `snapshot()`; absent in older saves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<crate::resume::ResumePoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -165,6 +243,10 @@ pub struct SettingsState {
     pub bgm_volume: f32,
     pub sound_effect_volume: f32,
     pub voice_volume: f32,
+    /// Omitted at its default so saves without an ambient change are
+    /// unchanged byte-for-byte.
+    #[serde(default = "full_volume", skip_serializing_if = "is_full_volume")]
+    pub ambient_volume: f32,
     pub fullscreen: bool,
     /// Text scale and contrast/motion choices belong to the same persisted
     /// user setting model as volume. The shared React presentation package
@@ -214,6 +296,7 @@ impl Default for SettingsState {
             bgm_volume: 1.0,
             sound_effect_volume: 1.0,
             voice_volume: 1.0,
+            ambient_volume: 1.0,
             fullscreen: false,
             text_scale: 1.0,
             text_opacity: 1.0,
@@ -316,12 +399,33 @@ pub struct TextState {
     pub speed_ms: u32,
     #[serde(default)]
     pub text_id: Option<String>,
+    /// Stable per-line key from the compiler. Read state uses it, so a line
+    /// stays read across playthroughs and script patches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_key: Option<String>,
+    /// Declared character id of the speaker, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
+    /// Ruby, emphasis, and in-line pauses over `full_text` (plain text).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markup: Option<crate::markup::ParsedText>,
+    /// Remaining in-line pause before the next grapheme is revealed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pause_remaining_ms: u32,
+    /// Page-local index of the last in-line pause already taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<usize>,
     /// Subtitle layout is captured when a line becomes current. This keeps a
     /// saved page and its history ID stable even if a host is resized later.
     #[serde(default = "default_subtitle_columns")]
     pub page_columns: usize,
     #[serde(default)]
     pub page_index: usize,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 const fn default_subtitle_columns() -> usize {
@@ -337,6 +441,11 @@ impl Default for TextState {
             reveal_elapsed_ms: 0,
             speed_ms: 24,
             text_id: None,
+            line_key: None,
+            speaker_id: None,
+            markup: None,
+            pause_remaining_ms: 0,
+            paused_at: None,
             page_columns: default_subtitle_columns(),
             page_index: 0,
         }
@@ -347,12 +456,23 @@ impl Default for TextState {
 pub struct ChoiceOptionState {
     pub text: String,
     pub target: u32,
+    /// The declared chapter this option enters, for catalogue presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChoiceState {
     pub options: Vec<ChoiceOptionState>,
     pub focused: usize,
+    /// Where `cancel => scene;` leads. Recorded in the trace as index
+    /// `options.len()` so history replay reproduces a back-out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<u32>,
+    /// The screen that presented this choice. Dismissing that screen must
+    /// resolve the choice, never pop the route and orphan it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -373,6 +493,10 @@ pub struct AudioTrackState {
 
 #[derive(Debug, Clone)]
 pub struct Vm {
+    // Monotonic host state: loading an initial snapshot must not reopen the
+    // registration window after execution has already begun.
+    registration_closed: bool,
+    plugins: PluginRegistry,
     program: CompiledProgram,
     logical_size: LogicalSize,
     state: VmSnapshot,
@@ -381,6 +505,10 @@ pub struct Vm {
     /// Internal replay intentionally rebuilds state from a choice trace. It
     /// must not materialize a second temporary history while doing so.
     suppress_backlog_recording: bool,
+    anchors: crate::resume::AnchorIndex,
+    program_digest: String,
+    /// Declared chapters in source order, read from the program at load.
+    catalogue: Vec<ChapterView>,
 }
 
 impl Vm {
@@ -392,12 +520,18 @@ impl Vm {
             return Err(VmError::InvalidLogicalSize);
         }
         let game_id = program.game_id.clone();
+        let anchors = crate::resume::AnchorIndex::build(&program);
+        let program_digest = crate::resume::program_digest(&program);
+        let catalogue = chapter_catalogue(&program);
         Ok(Self {
+            registration_closed: false,
+            plugins: PluginRegistry::default(),
             program,
             logical_size,
             state: VmSnapshot {
                 schema_version: VM_SNAPSHOT_SCHEMA,
                 game_id,
+                plugin_fingerprints: BTreeMap::new(),
                 pc: 0,
                 frame_number: 0,
                 logical_time_ms: 0,
@@ -422,6 +556,8 @@ impl Vm {
                 chapters: BTreeMap::new(),
                 unlocked_cgs: BTreeSet::new(),
                 locale: "ja-JP".to_owned(),
+                stage: None,
+                camera: None,
                 read_texts: BTreeSet::new(),
                 backlog: Vec::new(),
                 backlog_focused: 0,
@@ -445,21 +581,125 @@ impl Vm {
                     ..UiRuntimeState::default()
                 },
                 halted: false,
+                resume: None,
             },
             pending_audio: Vec::new(),
             pending_runtime: Vec::new(),
             suppress_backlog_recording: false,
+            anchors,
+            program_digest,
+            catalogue,
         })
+    }
+
+    /// Plugins are immutable once execution starts. Hosts register only
+    /// validated guest metadata and bytes before delivering the first input.
+    pub fn register_plugin(&mut self, plugin: PluginRegistration) -> Result<(), VmError> {
+        if self.registration_closed || self.state.frame_number != 0 || self.state.pc != 0 {
+            return Err(VmError::InvalidPlugin(
+                "plugins must be installed before the first step".into(),
+            ));
+        }
+        self.plugins
+            .register(plugin)
+            .map_err(|error| VmError::InvalidPlugin(error.to_string()))?;
+        self.state.plugin_fingerprints = self.plugins.fingerprints().clone();
+        Ok(())
+    }
+
+    pub fn with_plugins(
+        program: CompiledProgram,
+        logical_size: LogicalSize,
+        plugins: &[PluginRegistration],
+    ) -> Result<Self, VmError> {
+        let mut vm = Self::new(program, logical_size)?;
+        for plugin in plugins {
+            vm.register_plugin(plugin.clone())?;
+        }
+        Ok(vm)
+    }
+
+    fn supports_route(&self, route: &str) -> bool {
+        is_standard_route(route) || self.plugins.policy(route).is_some()
+    }
+
+    fn is_atomic_story_route(&self, route: &str) -> bool {
+        self.plugins
+            .policy(route)
+            .is_some_and(|policy| policy.atomic_text)
     }
 
     #[must_use]
     pub fn snapshot(&self) -> VmSnapshot {
-        self.state.clone()
+        let mut snapshot = self.state.clone();
+        snapshot.resume = self.resume_point();
+        snapshot
+    }
+
+    fn resume_point(&self) -> Option<crate::resume::ResumePoint> {
+        if self.state.halted {
+            return None;
+        }
+        let at = self.anchors.at_or_before(self.state.pc)?.clone();
+        let call_stack = self
+            .state
+            .call_stack
+            .iter()
+            .map(|address| self.anchors.at_or_before(*address).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::resume::ResumePoint {
+            program: self.program_digest.clone(),
+            at,
+            call_stack,
+        })
+    }
+
+    /// Moves a save written by different bytecode onto this program's
+    /// anchors. The story resumes at the start of the saved line (or choice);
+    /// state, flags, audio, and background come from the save unchanged.
+    fn relocate(&self, snapshot: &mut VmSnapshot) -> Result<(), VmError> {
+        let Some(resume) = snapshot.resume.clone() else {
+            return Ok(());
+        };
+        if resume.program == self.program_digest || snapshot.halted {
+            return Ok(());
+        }
+        let missing = |what: &crate::resume::AnchorRef| {
+            VmError::SaveRelocation(format!(
+                "scene '{}' no longer contains a resumable position for '{}'",
+                what.scene, what.name
+            ))
+        };
+        snapshot.pc = self
+            .anchors
+            .locate(&resume.at)
+            .ok_or_else(|| missing(&resume.at))?;
+        snapshot.call_stack = resume
+            .call_stack
+            .iter()
+            .map(|frame| {
+                self.anchors
+                    .locate_return(frame)
+                    .ok_or_else(|| missing(frame))
+            })
+            .collect::<Result<_, _>>()?;
+        snapshot.execution = ExecutionState::Running;
+        snapshot.choice = None;
+        snapshot.transition = None;
+        let speed_ms = snapshot.text.speed_ms;
+        snapshot.text = TextState {
+            speed_ms,
+            ..TextState::default()
+        };
+        Ok(())
     }
 
     pub fn restore(&mut self, mut snapshot: VmSnapshot) -> Result<(), VmError> {
         if snapshot.schema_version != VM_SNAPSHOT_SCHEMA {
             return Err(VmError::UnsupportedSnapshot(snapshot.schema_version));
+        }
+        if snapshot.plugin_fingerprints != *self.plugins.fingerprints() {
+            return Err(VmError::PluginMismatch);
         }
         if snapshot.game_id != self.program.game_id {
             return Err(VmError::WrongGame {
@@ -467,6 +707,8 @@ impl Vm {
                 actual: snapshot.game_id,
             });
         }
+        migrate_state_register_keys(&mut snapshot);
+        self.relocate(&mut snapshot)?;
         if usize::try_from(snapshot.pc)
             .ok()
             .is_none_or(|pc| pc >= self.program.instructions.len())
@@ -485,13 +727,13 @@ impl Vm {
                 ..UiViewport::default()
             };
         }
-        if !is_standard_route(&snapshot.ui.route) {
+        if !self.supports_route(&snapshot.ui.route) {
             snapshot.ui.route = DEFAULT_ROUTE.to_owned();
         }
         snapshot
             .ui
             .route_stack
-            .retain(|route| is_standard_route(route));
+            .retain(|route| self.supports_route(route));
         let confirmation_is_valid = snapshot
             .ui
             .confirmation
@@ -509,7 +751,7 @@ impl Vm {
                 .ui
                 .route_stack
                 .pop()
-                .filter(|route| is_standard_route(route))
+                .filter(|route| self.supports_route(route))
                 .unwrap_or_else(|| DEFAULT_ROUTE.to_owned());
         }
         if snapshot.ui.route != "confirm" {
@@ -548,6 +790,7 @@ impl Vm {
                     }),
             )
             .collect();
+        self.registration_closed = true;
         self.state = snapshot;
         self.pending_audio = restored_audio;
         self.pending_runtime.clear();
@@ -616,6 +859,7 @@ impl Vm {
     }
 
     pub fn step(&mut self, input: &InputSnapshot) -> Result<StepOutput, VmError> {
+        self.registration_closed = true;
         if let Some(previous) = self.state.last_input_sequence
             && input.sequence <= previous
         {
@@ -748,29 +992,62 @@ impl Vm {
             && (self.state.skip_mode == SkipMode::All
                 || (self.state.skip_mode == SkipMode::Read
                     && self
-                        .state
-                        .text
-                        .text_id
-                        .as_ref()
+                        .current_read_key()
                         .is_some_and(|id| self.state.read_texts.contains(id))));
         if skip_current || self.state.text.speed_ms == 0 {
             self.state.text.visible_graphemes = total;
             self.record_current_page_if_needed();
             return;
         }
-        self.state.text.reveal_elapsed_ms =
-            self.state.text.reveal_elapsed_ms.saturating_add(delta_ms);
-        let reveal = self.state.text.reveal_elapsed_ms / self.state.text.speed_ms;
-        self.state.text.reveal_elapsed_ms %= self.state.text.speed_ms;
-        self.state.text.visible_graphemes = self
-            .state
-            .text
-            .visible_graphemes
-            .saturating_add(reveal as usize)
-            .min(total);
+        let waits = self
+            .current_page_markup()
+            .map(|page| page.waits)
+            .unwrap_or_default();
+        let mut budget = self.state.text.reveal_elapsed_ms.saturating_add(delta_ms);
+        let speed = self.state.text.speed_ms;
+        while self.state.text.visible_graphemes < total {
+            let visible = self.state.text.visible_graphemes;
+            // An authored `{wait:…}` holds the reveal once before this grapheme.
+            if let Some(wait) = waits.iter().find(|wait| wait.at == visible)
+                && self.state.text.paused_at.is_none_or(|at| at < visible)
+            {
+                self.state.text.paused_at = Some(visible);
+                self.state.text.pause_remaining_ms = wait.ms;
+            }
+            if self.state.text.pause_remaining_ms > 0 {
+                let spent = self.state.text.pause_remaining_ms.min(budget);
+                self.state.text.pause_remaining_ms -= spent;
+                budget -= spent;
+                if self.state.text.pause_remaining_ms > 0 {
+                    break;
+                }
+                continue;
+            }
+            if budget < speed {
+                break;
+            }
+            budget -= speed;
+            self.state.text.visible_graphemes += 1;
+        }
+        self.state.text.reveal_elapsed_ms = if self.state.text.visible_graphemes >= total {
+            0
+        } else {
+            budget
+        };
         if self.state.text.visible_graphemes >= total {
             self.record_current_page_if_needed();
         }
+    }
+
+    fn can_release_delay_by_advance(
+        &self,
+        remaining_ms: u32,
+        release_threshold: Option<u32>,
+    ) -> bool {
+        let policy = self.plugins.policy(&self.state.ui.route);
+        policy.is_some_and(|policy| policy.advance_releases_hold)
+            || (policy.is_none_or(|policy| !policy.atomic_text)
+                && release_threshold.is_some_and(|threshold| remaining_ms <= threshold))
     }
 
     fn handle_waiting_input(&mut self, input: &InputSnapshot) -> Result<(), VmError> {
@@ -781,35 +1058,24 @@ impl Vm {
                 release_at_remaining_ms,
             } => {
                 let mut remaining = remaining_ms.saturating_sub(input.delta_ms);
-                // Auto preserves the interlude's pause but never makes a
-                // first-read 1.2s hold feel like a stalled auto route. A
-                // short revisit hold remains untouched; a longer one is
-                // capped to a quiet 320ms from the next VM update.
-                if self.state.ui.route == "interlude" && self.state.auto_mode == AutoMode::On {
-                    remaining = remaining.min(320);
+                let policy = self.plugins.policy(&self.state.ui.route);
+                if self.state.auto_mode == AutoMode::On
+                    && let Some(cap) = policy.and_then(|policy| policy.auto_hold_cap_ms)
+                {
+                    remaining = remaining.min(cap);
                 }
-                // A cinematic beat may be skipped by the player's normal
-                // skip mode as well as a physically held skip input. Its text
-                // is already complete and recorded, so this never drops
-                // unread prose on the floor. An interlude is intentionally
-                // reader-releasable; a statement is not. Its normal advance,
-                // confirm, pointer, and gamepad-A inputs are ignored until
-                // the authored duration has elapsed.
-                let soft_pause_released = release_at_remaining_ms
-                    .is_some_and(|threshold| remaining <= threshold)
-                    && self.state.ui.route != "statement"
-                    && (input.is_pressed(InputAction::Advance)
-                        || input.is_pressed(InputAction::Confirm)
-                        || input.pointer.is_some_and(|pointer| pointer.primary_pressed));
+                // Plugin policies govern ordinary advance, auto, and skip
+                // without knowing any particular game's custom route names.
+                let advance_releases_hold =
+                    self.can_release_delay_by_advance(remaining, release_at_remaining_ms);
                 if remaining == 0
                     || input.is_held(InputAction::Skip)
-                    || ((self.state.ui.route == "interlude" || self.state.ui.route == "statement")
+                    || (policy.is_some_and(|policy| policy.skip_releases_hold)
                         && self.state.skip_mode != SkipMode::Off)
-                    || (self.state.ui.route == "interlude"
+                    || (advance_releases_hold
                         && (input.is_pressed(InputAction::Advance)
                             || input.is_pressed(InputAction::Confirm)
                             || input.pointer.is_some_and(|pointer| pointer.primary_pressed)))
-                    || soft_pause_released
                 {
                     self.state.execution = ExecutionState::Running;
                 } else {
@@ -861,7 +1127,17 @@ impl Vm {
                     route_changed = true;
                 }
                 UiIntent::Dismiss => {
-                    if self.screen_dismisses_on_cancel() {
+                    let owned_choice = self.state.choice.as_ref().filter(|choice| {
+                        choice.route.as_deref() == Some(self.state.ui.route.as_str())
+                    });
+                    if let Some(choice) = owned_choice {
+                        // This screen is waiting on its own choice: back out
+                        // through `cancel`, or stay rather than orphan it.
+                        if choice.cancel.is_some() {
+                            self.select_choice(choice.options.len())?;
+                            route_changed = true;
+                        }
+                    } else if self.screen_dismisses_on_cancel() {
                         self.close_screen();
                         route_changed = true;
                     }
@@ -947,16 +1223,15 @@ impl Vm {
         if id == "dialogue.advance" {
             if let ExecutionState::WaitingForDelay {
                 remaining_ms,
-                release_at_remaining_ms: Some(threshold),
-            } = &self.state.execution
+                release_at_remaining_ms,
+            } = self.state.execution
             {
-                // The Web presentation sends a semantic button intent rather
-                // than a host pointer snapshot. Mirror the direct input path:
-                // a breath may be released only after its minimum floor, while
-                // an authored hard delay remains untouched.
-                if remaining_ms.saturating_sub(delta_ms) <= *threshold
-                    && self.state.ui.route != "statement"
-                {
+                // Buttons, terminals, keyboards and controllers share the
+                // same policy/floor decision, including hard authored holds.
+                if self.can_release_delay_by_advance(
+                    remaining_ms.saturating_sub(delta_ms),
+                    release_at_remaining_ms,
+                ) {
                     self.state.execution = ExecutionState::Running;
                 }
                 return Ok(false);
@@ -964,16 +1239,15 @@ impl Vm {
             self.advance_dialogue();
             return Ok(false);
         }
-        if id == "interlude.advance" {
-            if self.state.ui.route != "interlude" {
-                return Err(VmError::InvalidUiIntent(
-                    "interlude advance is only valid on an interlude".to_owned(),
-                ));
-            }
-            // The interlude line was revealed and logged on entry. A reader's
-            // input only releases the authored held duration.
+        if self
+            .plugins
+            .policy(&self.state.ui.route)
+            .is_some_and(|policy| policy.advance_action.as_deref() == Some(id))
+        {
             if matches!(self.state.execution, ExecutionState::WaitingForDelay { .. }) {
                 self.state.execution = ExecutionState::Running;
+            } else {
+                self.advance_dialogue();
             }
             return Ok(false);
         }
@@ -1130,7 +1404,7 @@ impl Vm {
 
     fn resolve_screen(&self, requested: &str) -> String {
         let route = normalize_screen_name(requested);
-        if is_standard_route(route) {
+        if self.supports_route(route) {
             route.to_owned()
         } else {
             DEFAULT_ROUTE.to_owned()
@@ -1147,14 +1421,14 @@ impl Vm {
         // transition, or authored delay is being prepared. Besides being a
         // visual leak, retaining its text id would make a prose backlog
         // target ambiguous during deterministic replay.
-        if is_atomic_story_route(&previous) && previous != self.state.ui.route {
+        if self.is_atomic_story_route(&previous) && previous != self.state.ui.route {
             self.clear_text();
         }
         self.state.ui.route_stack.clear();
         self.state.ui.confirmation = None;
         self.state.ui.gallery_viewer = None;
-        if self.state.ui.route != "interlude" {
-            self.state.ui.interlude_first_visit = false;
+        if previous != self.state.ui.route {
+            self.state.ui.story_first_visit = false;
         }
         let current = self.state.ui.route.clone();
         self.start_ui_transition(&previous, &current);
@@ -1189,7 +1463,7 @@ impl Vm {
             .ui
             .route_stack
             .pop()
-            .filter(|route| is_standard_route(route))
+            .filter(|route| self.supports_route(route))
             .unwrap_or_else(|| DEFAULT_ROUTE.to_owned());
         let current = self.state.ui.route.clone();
         self.start_ui_transition(&previous, &current);
@@ -1203,9 +1477,9 @@ impl Vm {
             .route_stack
             .first()
             .cloned()
-            .filter(|route| is_standard_route(route))
+            .filter(|route| self.supports_route(route))
             .unwrap_or_else(|| {
-                if is_standard_route(&previous) && !UiRoute::parse(&previous).is_overlay() {
+                if self.supports_route(&previous) && !UiRoute::parse(&previous).is_overlay() {
                     previous.clone()
                 } else {
                     DEFAULT_ROUTE.to_owned()
@@ -1325,6 +1599,8 @@ impl Vm {
         let viewport = self.state.ui.viewport;
 
         let mut replay = Vm::new(self.program.clone(), self.logical_size)?;
+        replay.plugins = self.plugins.clone();
+        replay.state.plugin_fingerprints = self.state.plugin_fingerprints.clone();
         replay.suppress_backlog_recording = true;
         replay.state.ui.viewport = viewport;
         replay.state.settings = settings.clone();
@@ -1341,7 +1617,7 @@ impl Vm {
                 && (matches!(
                     replay.state.execution,
                     ExecutionState::WaitingForAdvance { .. }
-                ) || (is_atomic_story_route(&replay.state.ui.route)
+                ) || (replay.is_atomic_story_route(&replay.state.ui.route)
                     && matches!(
                         replay.state.execution,
                         ExecutionState::WaitingForDelay { .. }
@@ -1421,21 +1697,20 @@ impl Vm {
 
     fn screen_dismisses_on_cancel(&self) -> bool {
         self.state.ui.route != DEFAULT_ROUTE
-            && UiRoute::parse(&self.state.ui.route).is_overlay()
+            && (UiRoute::parse(&self.state.ui.route).is_overlay()
+                || self
+                    .plugins
+                    .policy(&self.state.ui.route)
+                    .is_some_and(|policy| !policy.reading_surface))
             && !self.is_reading_surface()
     }
 
     fn is_reading_surface(&self) -> bool {
         self.state.ui.route == DEFAULT_ROUTE
-            // Day cards are a held part of the story, not an overlay. Treat
-            // Cancel exactly like the dialogue surface so it opens RMenu and
-            // never dismisses the chapter checkpoint by accident.
-            || self.state.ui.route == "day_card"
-            // Interludes and statements are story time, not overlays. Cancel
-            // therefore opens RMenu and save/restore retains their exact
-            // held beat.
-            || self.state.ui.route == "interlude"
-            || self.state.ui.route == "statement"
+            || self
+                .plugins
+                .policy(&self.state.ui.route)
+                .is_some_and(|policy| policy.reading_surface)
             || (self.state.ui.route == "chapter_select"
                 && self.state.choice.is_none()
                 && !self.state.text.full_text.is_empty())
@@ -1524,6 +1799,10 @@ impl Vm {
                 self.state.text.visible_graphemes = total;
                 self.record_current_page_if_needed();
             } else if self.advance_to_next_subtitle_page() {
+                if self.is_atomic_story_route(&self.state.ui.route) {
+                    self.state.text.visible_graphemes = self.current_page_grapheme_count();
+                    self.record_current_page_if_needed();
+                }
                 self.state.auto_elapsed_ms = 0;
             } else {
                 if clear_page {
@@ -1557,6 +1836,46 @@ impl Vm {
             .unwrap_or_default()
     }
 
+    /// Replaces each `{=register}` the compiler wrote for `{name}` with that
+    /// variable's current value.
+    fn fill_interpolations(&self, text: &str) -> String {
+        if !text.contains("{=") {
+            return text.to_owned();
+        }
+        let mut output = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(open) = rest.find("{=") {
+            output.push_str(&rest[..open]);
+            let after = &rest[open + 2..];
+            let Some(close) = after.find('}') else {
+                output.push_str(&rest[open..]);
+                return output;
+            };
+            let key = &after[..close];
+            if let Some(value) = self.state.string_registers.get(key) {
+                output.push_str(value);
+            } else {
+                let value = self.state.int_registers.get(key).copied().unwrap_or(0);
+                output.push_str(&value.to_string());
+            }
+            rest = &after[close + 1..];
+        }
+        output.push_str(rest);
+        output
+    }
+
+    /// Markup re-expressed against the current subtitle page.
+    fn current_page_markup(&self) -> Option<crate::markup::ParsedText> {
+        let markup = self.state.text.markup.as_ref()?;
+        let pages = self.subtitle_pages();
+        let index = self
+            .state
+            .text
+            .page_index
+            .min(pages.len().saturating_sub(1));
+        Some(crate::markup::for_page(markup, &pages, index))
+    }
+
     fn current_page_grapheme_count(&self) -> usize {
         grapheme_count(&self.current_subtitle_page())
     }
@@ -1578,6 +1897,9 @@ impl Vm {
         self.state.text.page_index = self.state.text.page_index.saturating_add(1);
         self.state.text.visible_graphemes = 0;
         self.state.text.reveal_elapsed_ms = 0;
+        // In-line pause positions are page-local.
+        self.state.text.paused_at = None;
+        self.state.text.pause_remaining_ms = 0;
         true
     }
 
@@ -1629,8 +1951,10 @@ impl Vm {
         let Some(choice) = &self.state.choice else {
             return Err(self.error_at_pc(VmErrorKind::MissingChoiceState));
         };
-        let Some(option) = choice.options.get(index) else {
-            return Err(self.error_at_pc(VmErrorKind::MissingChoiceState));
+        let target = match (choice.options.get(index), choice.cancel) {
+            (Some(option), _) => option.target,
+            (None, Some(cancel)) if index == choice.options.len() => cancel,
+            _ => return Err(self.error_at_pc(VmErrorKind::MissingChoiceState)),
         };
         self.state
             .int_registers
@@ -1641,7 +1965,7 @@ impl Vm {
         self.state.narrative_trace.push(StoryTraceEvent {
             choice_index: index,
         });
-        self.state.pc = option.target;
+        self.state.pc = target;
         self.state.choice = None;
         self.state.execution = ExecutionState::Running;
         // A model choice hands control back to narrative code. Any title,
@@ -1664,6 +1988,7 @@ impl Vm {
             "bgm_volume" => self.set_setting_volume_to(AudioBus::Bgm, value),
             "sound_effect_volume" => self.set_setting_volume_to(AudioBus::SoundEffect, value),
             "voice_volume" => self.set_setting_volume_to(AudioBus::Voice, value),
+            "ambient_volume" => self.set_setting_volume_to(AudioBus::Ambient, value),
             "text_scale" => self.state.settings.text_scale = value.clamp(0.85, 1.35),
             "text_opacity" => self.state.settings.text_opacity = value.clamp(0.72, 1.0),
             _ => {}
@@ -1716,6 +2041,9 @@ impl Vm {
             AudioBus::Voice => {
                 self.state.settings.voice_volume = volume;
             }
+            AudioBus::Ambient => {
+                self.state.settings.ambient_volume = volume;
+            }
         }
         self.pending_audio.push(AudioCommand::SetBusVolume {
             bus,
@@ -1729,8 +2057,18 @@ impl Vm {
         self.set_setting_volume(bus, value.clamp(0.0, 1.0) - current);
     }
 
+    /// Read state is keyed by line, not by display order: the compiler's
+    /// line key when present, the per-display id for older bytecode.
+    fn current_read_key(&self) -> Option<&String> {
+        self.state
+            .text
+            .line_key
+            .as_ref()
+            .or(self.state.text.text_id.as_ref())
+    }
+
     fn mark_current_text_read(&mut self) {
-        if let Some(id) = self.state.text.text_id.clone() {
+        if let Some(id) = self.current_read_key().cloned() {
             self.state.read_texts.insert(id);
         }
     }
@@ -1740,10 +2078,7 @@ impl Vm {
             SkipMode::Off => false,
             SkipMode::All => true,
             SkipMode::Read => self
-                .state
-                .text
-                .text_id
-                .as_ref()
+                .current_read_key()
                 .is_some_and(|id| self.state.read_texts.contains(id)),
         }
     }
@@ -1795,7 +2130,22 @@ impl Vm {
                     Some(Operand::None) | None => None,
                     Some(value) => Some(self.string(value)?),
                 };
-                let text = self.string(self.operand(instruction, 1)?)?;
+                let authored =
+                    self.fill_interpolations(&self.string(self.operand(instruction, 1)?)?);
+                // The compiler has validated the markup; an unparsable string
+                // from older bytecode is shown exactly as written.
+                let (text, markup) = match crate::markup::parse(&authored) {
+                    Ok(parsed) if parsed.has_markup() => (parsed.plain.clone(), Some(parsed)),
+                    _ => (authored, None),
+                };
+                let line_key = match instruction.operands.get(2) {
+                    Some(Operand::None) | None => None,
+                    Some(value) => Some(self.string(value)?),
+                };
+                let speaker_id = match instruction.operands.get(3) {
+                    Some(Operand::None) | None => None,
+                    Some(value) => Some(self.string(value)?),
+                };
                 let text_id = format!("text-{}", self.state.next_text_sequence);
                 self.state.next_text_sequence = self.state.next_text_sequence.saturating_add(1);
                 self.state.text = TextState {
@@ -1805,6 +2155,11 @@ impl Vm {
                     reveal_elapsed_ms: 0,
                     speed_ms: self.state.text.speed_ms,
                     text_id: Some(text_id),
+                    line_key,
+                    speaker_id,
+                    markup,
+                    pause_remaining_ms: 0,
+                    paused_at: None,
                     page_columns: subtitle_columns(
                         self.state.ui.viewport,
                         self.state.settings.text_scale,
@@ -1815,7 +2170,7 @@ impl Vm {
                 // short statement over a still frame. Reveal it atomically
                 // so it never starts a typewriter rAF loop, then place that
                 // exact page in the backlog before the authored hold begins.
-                if is_atomic_story_route(&self.state.ui.route) {
+                if self.is_atomic_story_route(&self.state.ui.route) {
                     self.state.text.visible_graphemes = self.current_page_grapheme_count();
                     self.record_current_page_if_needed();
                     self.mark_current_text_read();
@@ -1834,13 +2189,14 @@ impl Vm {
                     .map(|operand| self.integer(operand))
                     .transpose()?
                     .map(|value| value.max(0) as u32);
-                // UmiKaze interludes use a long first hold and a short
-                // revisit hold. Capture that distinction at the semantic
-                // delay boundary so a save keeps the visual blank/fade rhythm
-                // without the host owning a second timer.
-                if self.state.ui.route == "interlude" {
-                    self.state.ui.interlude_first_visit = duration >= 600;
-                }
+                // A plugin may distinguish long first encounters from short
+                // revisits. The threshold is authored policy, not a game name
+                // or a magic duration in the engine.
+                self.state.ui.story_first_visit = self
+                    .plugins
+                    .policy(&self.state.ui.route)
+                    .and_then(|policy| policy.first_visit_min_hold_ms)
+                    .is_some_and(|threshold| duration >= threshold);
                 if duration > 0 {
                     self.state.execution = ExecutionState::WaitingForDelay {
                         remaining_ms: duration,
@@ -1897,6 +2253,10 @@ impl Vm {
                 let asset = self.string(self.operand(instruction, 0)?)?;
                 let duration = self.integer(self.operand(instruction, 1)?)?.max(0) as u32;
                 self.state.background = Some(BackgroundState { asset });
+                // A cue annotates the backdrop it follows; a new backdrop
+                // must not inherit an earlier scene's meaning.
+                self.state.stage = None;
+                self.state.camera = None;
                 if duration > 0 {
                     self.state.transition = Some(TransitionState {
                         kind: TransitionKind::Fade,
@@ -1932,7 +2292,10 @@ impl Vm {
                     sprite.bounds.y = y;
                 }
             }
-            ByteOp::PresentChoice => self.execute_choice(instruction)?,
+            ByteOp::PresentChoice => self.execute_choice(instruction, 2)?,
+            ByteOp::PresentChoiceEx => self.execute_choice(instruction, 4)?,
+            // Chapter metadata is read from the program at load.
+            ByteOp::DeclareChapter => {}
             ByteOp::PlayAudio => self.execute_audio_play(instruction)?,
             ByteOp::StopAudio => self.execute_audio_stop(instruction)?,
             ByteOp::SetVolume => self.execute_volume(instruction)?,
@@ -1979,6 +2342,27 @@ impl Vm {
             }
             ByteOp::SetLocale => {
                 self.state.locale = self.string(self.operand(instruction, 0)?)?;
+            }
+            ByteOp::SetCamera => {
+                let zoom = self.integer(self.operand(instruction, 0)?)?.clamp(50, 400) as u32;
+                let pan_x = self.integer(self.operand(instruction, 1)?)?.clamp(-50, 50);
+                let pan_y = self.integer(self.operand(instruction, 2)?)?.clamp(-50, 50);
+                let duration_ms = self.integer(self.operand(instruction, 3)?)?.max(0) as u32;
+                let easing = self.string(self.operand(instruction, 4)?)?;
+                self.state.camera = (zoom != 100 || pan_x != 0 || pan_y != 0 || duration_ms > 0)
+                    .then_some(crate::presentation::CameraView {
+                        zoom,
+                        pan_x,
+                        pan_y,
+                        duration_ms,
+                        easing,
+                    });
+            }
+            ByteOp::SetStage => {
+                self.state.stage = match self.operand(instruction, 0)? {
+                    Operand::None => None,
+                    value => Some(self.string(value)?),
+                };
             }
             ByteOp::TweenSprite => self.execute_tween(instruction)?,
             ByteOp::ScreenEffect => self.execute_screen_effect(instruction)?,
@@ -2032,12 +2416,24 @@ impl Vm {
             ByteOp::OpenScreen => {
                 let screen = self.string(self.operand(instruction, 0)?)?;
                 let route = normalize_screen_name(&screen).to_owned();
+                if !self.supports_route(&route) {
+                    return Err(VmError::InvalidPlugin(format!(
+                        "screen '{route}' requires a registered plugin"
+                    )));
+                }
                 self.present_screen(&route);
             }
             ByteOp::GetFlag => {
                 let name = self.string(self.operand(instruction, 0)?)?;
                 let target = self.int_register_name(self.operand(instruction, 1)?)?;
-                let value = self.state.flags.get(&name).copied().unwrap_or(false);
+                // A persistent flag set in an earlier playthrough counts too.
+                let value = self
+                    .state
+                    .flags
+                    .get(&name)
+                    .or_else(|| self.state.persistent_flags.get(&name))
+                    .copied()
+                    .unwrap_or(false);
                 self.state.int_registers.insert(target, i64::from(value));
             }
         }
@@ -2191,22 +2587,47 @@ impl Vm {
         Ok(())
     }
 
-    fn execute_choice(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
-        if instruction.operands.len() < 2 || !instruction.operands.len().is_multiple_of(2) {
+    /// `stride` is 2 for (label, target) and 4 for (label, target, chapter,
+    /// condition).
+    fn execute_choice(
+        &mut self,
+        instruction: &EncodedInstruction,
+        stride: usize,
+    ) -> Result<(), VmError> {
+        if instruction.operands.len() < stride || !instruction.operands.len().is_multiple_of(stride)
+        {
             return Err(self.error_at_pc(VmErrorKind::InvalidOperands(
-                "choice requires text/address pairs".to_owned(),
+                "choice requires complete option tuples".to_owned(),
             )));
         }
         let mut options = Vec::new();
-        for pair in instruction.operands.chunks_exact(2) {
+        let mut cancel = None;
+        for option in instruction.operands.chunks_exact(stride) {
+            if matches!(option[0], Operand::None) {
+                cancel = Some(self.address(&option[1])?);
+                continue;
+            }
+            if let Some(condition) = option.get(3)
+                && !matches!(condition, Operand::None)
+                && self.integer(condition)? == 0
+            {
+                continue;
+            }
+            let chapter = match option.get(2) {
+                Some(Operand::None) | None => None,
+                Some(value) => Some(self.string(value)?),
+            };
             options.push(ChoiceOptionState {
-                text: self.string(&pair[0])?,
-                target: self.address(&pair[1])?,
+                text: self.string(&option[0])?,
+                target: self.address(&option[1])?,
+                chapter,
             });
         }
         self.state.choice = Some(ChoiceState {
             options,
             focused: 0,
+            cancel,
+            route: Some(self.state.ui.route.clone()),
         });
         self.state.execution = ExecutionState::WaitingForChoice;
         Ok(())
@@ -2566,6 +2987,11 @@ impl Vm {
         let dialogue_total = grapheme_count(&dialogue_page);
         let dialogue = (!self.state.text.full_text.is_empty()).then(|| DialogueView {
             speaker: self.state.text.speaker.clone(),
+            speaker_id: self.state.text.speaker_id.clone(),
+            markup: self
+                .current_page_markup()
+                .map(|page| page.spans)
+                .unwrap_or_default(),
             full_text: self.state.text.full_text.clone(),
             full_page_text: dialogue_page.clone(),
             page_number: u32::try_from(dialogue_page_index.saturating_add(1)).unwrap_or(u32::MAX),
@@ -2579,9 +3005,15 @@ impl Vm {
                 ExecutionState::WaitingForAdvance { .. }
             ),
         });
-        let interlude = (self.state.ui.route == "interlude").then_some(InterludeView {
-            first_visit: self.state.ui.interlude_first_visit,
-        });
+        let story_surface =
+            self.plugins
+                .policy(&self.state.ui.route)
+                .map(|policy| StorySurfaceView {
+                    first_visit: self.state.ui.story_first_visit,
+                    reading_surface: policy.reading_surface,
+                    atomic_text: policy.atomic_text,
+                    advance_action: policy.advance_action.clone(),
+                });
         let choices = self
             .state
             .choice
@@ -2595,6 +3027,7 @@ impl Vm {
                         id: format!("choice:{index}"),
                         label: option.text.clone(),
                         selected: index == choice.focused,
+                        chapter: option.chapter.clone(),
                     })
                     .collect()
             })
@@ -2621,20 +3054,43 @@ impl Vm {
         } else {
             Vec::new()
         };
-        let chapters = self
-            .state
-            .chapters
-            .values()
-            .map(|chapter| ChapterView {
-                id: chapter.id.clone(),
-                title: chapter.title.clone(),
-                description: chapter.description.clone(),
-                thumbnail: chapter.thumbnail.clone(),
-                script: chapter.script.clone(),
-                unlocked: chapter.unlocked,
-                progress: chapter.progress,
+        // Declared chapters come first, in source order, with this save's
+        // unlock state; chapters known only from `unlock` follow by id.
+        let mut chapters: Vec<ChapterView> = self
+            .catalogue
+            .iter()
+            .map(|declared| {
+                let mut view = declared.clone();
+                if let Some(state) = self.state.chapters.get(&declared.id) {
+                    view.unlocked = state.unlocked;
+                    view.progress = state.progress;
+                }
+                view
             })
             .collect();
+        chapters.extend(
+            self.state
+                .chapters
+                .values()
+                .filter(|chapter| {
+                    !self
+                        .catalogue
+                        .iter()
+                        .any(|declared| declared.id == chapter.id)
+                })
+                .map(|chapter| ChapterView {
+                    id: chapter.id.clone(),
+                    title: chapter.title.clone(),
+                    description: chapter.description.clone(),
+                    thumbnail: chapter.thumbnail.clone(),
+                    script: chapter.script.clone(),
+                    unlocked: chapter.unlocked,
+                    progress: chapter.progress,
+                    label: None,
+                    numeral: None,
+                    date: None,
+                }),
+        );
         let gallery = self
             .state
             .unlocked_cgs
@@ -2659,6 +3115,8 @@ impl Vm {
                 id: self.program.game_id.clone(),
                 locale: self.state.locale.clone(),
             },
+            stage: self.state.stage.clone(),
+            camera: self.state.camera.clone(),
             dialogue,
             timed_hold_remaining_ms,
             choices,
@@ -2670,7 +3128,7 @@ impl Vm {
             chapters,
             gallery,
             gallery_viewer: self.state.ui.gallery_viewer.clone(),
-            interlude,
+            story_surface,
             confirmation: self.state.ui.confirmation.as_ref().map(|confirmation| {
                 ConfirmationView {
                     action: confirmation.action.clone(),
@@ -2784,36 +3242,27 @@ impl Vm {
                 action("confirm.cancel", false),
                 action("dismiss", false),
             ],
-            // `day_card` is intentionally a project-specific route, rather
-            // than a layout baked into Core. It still exposes the two quiet
-            // reading affordances so keyboard, gamepad, and right-click are
-            // consistent while the chapter waits for its one semantic choice.
-            UiRoute::Custom(route) if route == "day_card" => vec![
-                action("chrome.menu", false),
-                action("chrome.backlog", false),
-            ],
-            // Interludes share the quiet controls with the reader. The
-            // semantic advance action is intentionally distinct from
-            // dialogue.advance: it releases a held silence rather than a
-            // subtitle page.
-            UiRoute::Custom(route) if route == "interlude" => vec![
-                action("chrome.menu", false),
-                action("chrome.backlog", false),
-                action("menu.auto", self.state.auto_mode == AutoMode::On),
-                action("menu.skip", self.state.skip_mode != SkipMode::Off),
-                action("interlude.advance", false),
-            ],
-            // A statement is intentionally not a button disguised as a
-            // cinematic screen. It exposes only the same escape hatches as
-            // reading (RMenu, backlog, auto/skip) and lets its authored wait
-            // determine when the next subtitle may begin.
-            UiRoute::Custom(route) if route == "statement" => vec![
-                action("chrome.menu", false),
-                action("chrome.backlog", false),
-                action("menu.auto", self.state.auto_mode == AutoMode::On),
-                action("menu.skip", self.state.skip_mode != SkipMode::Off),
-            ],
-            UiRoute::Custom(_) => vec![action("dismiss", false)],
+            UiRoute::Custom(route) => {
+                let Some(policy) = self.plugins.policy(route) else {
+                    return vec![action("dismiss", false)];
+                };
+                let mut actions = if policy.reading_surface {
+                    vec![
+                        action("chrome.menu", false),
+                        action("chrome.backlog", false),
+                    ]
+                } else {
+                    vec![action("dismiss", false)]
+                };
+                if policy.playback_controls {
+                    actions.push(action("menu.auto", self.state.auto_mode == AutoMode::On));
+                    actions.push(action("menu.skip", self.state.skip_mode != SkipMode::Off));
+                }
+                if let Some(id) = &policy.advance_action {
+                    actions.push(action(id, false));
+                }
+                actions
+            }
         }
     }
 
@@ -2969,8 +3418,6 @@ fn normalize_screen_name(value: &str) -> &str {
         "title" => "title",
         "chapter" | "chapter_select" => "chapter_select",
         "gallery" | "cg" => "gallery",
-        "interlude" => "interlude",
-        "statement" => "statement",
         _ => value,
     }
 }
@@ -3000,14 +3447,7 @@ fn is_standard_route(value: &str) -> bool {
             | "chapter_select"
             | "gallery"
             | "confirm"
-            | "day_card"
-            | "interlude"
-            | "statement"
     )
-}
-
-fn is_atomic_story_route(route: &str) -> bool {
-    matches!(route, "interlude" | "statement")
 }
 
 fn is_setting_name(value: &str) -> bool {
@@ -3018,6 +3458,7 @@ fn is_setting_name(value: &str) -> bool {
             | "bgm_volume"
             | "sound_effect_volume"
             | "voice_volume"
+            | "ambient_volume"
             | "text_scale"
             | "text_opacity"
     )
@@ -3028,8 +3469,18 @@ fn parse_audio_bus(value: &str) -> Result<AudioBus, VmError> {
         "bgm" => Ok(AudioBus::Bgm),
         "sound_effect" | "se" => Ok(AudioBus::SoundEffect),
         "voice" => Ok(AudioBus::Voice),
+        "ambient" => Ok(AudioBus::Ambient),
         other => Err(VmError::InvalidAudioBus(other.to_owned())),
     }
+}
+
+const fn full_volume() -> f32 {
+    1.0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::float_cmp)]
+fn is_full_volume(value: &f32) -> bool {
+    *value == 1.0
 }
 
 fn normalize_volume(value: f32) -> f32 {
@@ -3112,12 +3563,18 @@ pub enum VmError {
     InvalidScrollDelta,
     #[error("invalid UI intent: {0}")]
     InvalidUiIntent(String),
+    #[error("invalid plugin: {0}")]
+    InvalidPlugin(String),
+    #[error("save requires a different plugin set; install the exact plugins used to create it")]
+    PluginMismatch,
     #[error("unsupported VM snapshot schema {0}")]
     UnsupportedSnapshot(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
     WrongGame { expected: String, actual: String },
     #[error("invalid snapshot program counter {0}")]
     InvalidSnapshotPc(u32),
+    #[error("save cannot be moved into this version of the script: {0}")]
+    SaveRelocation(String),
     #[error("unknown audio bus '{0}'")]
     InvalidAudioBus(String),
     #[error("VM error at pc {pc} ({location}): {kind}")]
@@ -3150,7 +3607,7 @@ pub enum VmErrorKind {
 
 #[cfg(test)]
 mod tests {
-    use crate::compiler::{CompileInput, SourceUnit, compile};
+    use crate::compiler::{CompileInput, SourceUnit, compile_with_routes};
 
     use super::*;
 
@@ -3160,16 +3617,65 @@ mod tests {
     };
 
     fn vm(source: &str) -> Vm {
-        let compiled = compile(CompileInput {
-            game_id: "jp.example.test".to_owned(),
-            entry: "main.aria".to_owned(),
-            sources: vec![SourceUnit {
-                logical_path: "main.aria".to_owned(),
-                source: source.to_owned(),
-            }],
-        });
+        let compiled = compile_with_routes(
+            CompileInput {
+                game_id: "jp.example.test".to_owned(),
+                entry: "main.aria".to_owned(),
+                sources: vec![SourceUnit {
+                    logical_path: "main.aria".to_owned(),
+                    source: source.to_owned(),
+                }],
+            },
+            &["day_card", "interlude", "statement"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        );
         assert!(!compiled.has_errors(), "{:?}", compiled.diagnostics);
-        Vm::new(compiled.program.expect("compiled program"), SIZE).expect("valid VM")
+        let mut runtime =
+            Vm::new(compiled.program.expect("compiled program"), SIZE).expect("valid VM");
+        if ["screen day_card", "screen interlude", "screen statement"]
+            .iter()
+            .any(|route| source.contains(route))
+        {
+            runtime
+                .register_plugin(PluginRegistration {
+                    manifest: crate::PluginManifest {
+                        api_version: 1,
+                        id: "test.story".into(),
+                        version: "1".into(),
+                        routes: vec![
+                            crate::RoutePolicy::reading("day_card"),
+                            crate::RoutePolicy {
+                                atomic_text: true,
+                                playback_controls: true,
+                                advance_releases_hold: true,
+                                skip_releases_hold: true,
+                                advance_action: Some("interlude.advance".into()),
+                                auto_hold_cap_ms: Some(320),
+                                first_visit_min_hold_ms: Some(600),
+                                ..crate::RoutePolicy::reading("interlude")
+                            },
+                            crate::RoutePolicy {
+                                atomic_text: true,
+                                playback_controls: true,
+                                skip_releases_hold: true,
+                                ..crate::RoutePolicy::reading("statement")
+                            },
+                        ],
+                    },
+                    wasm_blake3: "0".repeat(64),
+                })
+                .unwrap();
+        }
+        runtime
+    }
+
+    fn fresh_vm_with_same_plugins(runtime: &Vm) -> Vm {
+        let mut fresh = Vm::new(runtime.program.clone(), SIZE).unwrap();
+        fresh.plugins = runtime.plugins.clone();
+        fresh.state.plugin_fingerprints = runtime.state.plugin_fingerprints.clone();
+        fresh
     }
 
     #[test]
@@ -3310,7 +3816,7 @@ mod tests {
         // A save made while the day is held must restore that same pause, not
         // skip straight into the chapter or fall back to dialogue.
         let snapshot = runtime.snapshot();
-        let mut restored = Vm::new(runtime.program.clone(), SIZE).unwrap();
+        let mut restored = fresh_vm_with_same_plugins(&runtime);
         restored.restore(snapshot).unwrap();
         let restored_card = restored.step(&InputSnapshot::idle(1, 16)).unwrap();
         assert_eq!(
@@ -3408,7 +3914,14 @@ mod tests {
         assert!(dialogue.complete);
         assert_eq!(dialogue.text, dialogue.full_page_text);
         assert_eq!(runtime.backlog().len(), 1);
-        assert!(runtime.snapshot().read_texts.contains("text-0"));
+        // Read state is keyed by the compiler's stable line key.
+        assert!(
+            runtime
+                .snapshot()
+                .read_texts
+                .iter()
+                .any(|key| key.starts_with("start:"))
+        );
         assert!(
             beat.view
                 .actions
@@ -3419,7 +3932,7 @@ mod tests {
         // A snapshot made inside the quiet hold restores the same semantic
         // route rather than collapsing it into an ordinary dialogue page.
         let snapshot = runtime.snapshot();
-        let mut restored = Vm::new(runtime.program.clone(), SIZE).unwrap();
+        let mut restored = fresh_vm_with_same_plugins(&runtime);
         restored.restore(snapshot).unwrap();
         let restored_beat = restored.step(&InputSnapshot::idle(2, 16)).unwrap();
         assert_eq!(
@@ -3479,7 +3992,7 @@ mod tests {
         assert_eq!(held.view.timed_hold_remaining_ms, Some(1560));
 
         let snapshot = runtime.snapshot();
-        let mut restored = Vm::new(runtime.program.clone(), SIZE).unwrap();
+        let mut restored = fresh_vm_with_same_plugins(&runtime);
         restored.restore(snapshot).unwrap();
         let restored_hold = restored.step(&InputSnapshot::idle(3, 100)).unwrap();
         assert_eq!(

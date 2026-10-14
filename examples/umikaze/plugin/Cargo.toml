@@ -1,0 +1,12 @@
+[package]
+name = "umikaze-story-plugin"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aria-plugin-sdk.workspace = true

@@ -43,6 +43,17 @@ impl CompileOutput {
 /// Compiles a complete import closure using Aria's single source language.
 #[must_use]
 pub fn compile(input: CompileInput) -> CompileOutput {
+    compile_with_routes(input, &std::collections::BTreeSet::new())
+}
+
+/// Compiles with an explicit inventory of host-validated custom routes.
+/// Standard-route compilation remains available without any plugin. A
+/// compiler never executes a guest or accepts a game-specific route by name.
+#[must_use]
+pub fn compile_with_routes(
+    input: CompileInput,
+    custom_routes: &std::collections::BTreeSet<String>,
+) -> CompileOutput {
     let mut diagnostics = Vec::new();
     let mut sources = BTreeMap::new();
     let mut portable_source_names = BTreeMap::new();
@@ -104,7 +115,13 @@ pub fn compile(input: CompileInput) -> CompileOutput {
         };
     }
 
-    crate::modern_compiler::compile_modern(input.game_id, entry, sources, diagnostics)
+    crate::modern_compiler::compile_modern(
+        input.game_id,
+        entry,
+        sources,
+        diagnostics,
+        custom_routes.clone(),
+    )
 }
 
 /// Normalizes one logical project path and rejects host-specific spellings.

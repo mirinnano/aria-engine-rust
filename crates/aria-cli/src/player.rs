@@ -98,6 +98,7 @@ pub fn run_project(path: &Path) -> Result<u8> {
     run_desktop(NativePlayerConfig {
         title,
         program: project.program,
+        plugins: project.plugins,
         logical_size: project.logical_size,
         save_root: default_save_root(),
         save_namespace: project.save_namespace,

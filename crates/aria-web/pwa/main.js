@@ -254,16 +254,12 @@ async function boot() {
   }
   if (!bytecodeResponse.ok) throw new Error(`game.ariac: HTTP ${bytecodeResponse.status}`);
   const bundle = await bundleResponse.json();
-  if (bundle.schema_version !== 5 || ![2, 4].includes(bundle.vm_abi_version)) {
+  if (![5, 6].includes(bundle.schema_version) || bundle.vm_abi_version !== 4
+    || (bundle.schema_version === 5 && bundle.plugin_assets?.length)) {
     throw new Error("unsupported Aria portable bundle");
   }
   logicalSize = { width: bundle.logical_width, height: bundle.logical_height };
   const bytecode = new Uint8Array(await bytecodeResponse.arrayBuffer());
-  const runtime = new WebRuntime(
-    bytecode,
-    bundle.logical_width,
-    bundle.logical_height,
-  );
   const packs = bundle.pak_packs?.length
     ? bundle.pak_packs
     : [{
@@ -318,6 +314,23 @@ async function boot() {
     }
     throw lastError || new Error(`missing asset '${logicalPath}'`);
   };
+  const pluginPaths = bundle.plugin_assets ?? [];
+  if (pluginPaths.length > 16 || new Set(pluginPaths).size !== pluginPaths.length
+    || pluginPaths.some((path) => !path.endsWith(".wasm") || !packs.some((pack) => pack.assets?.includes(path)))) {
+    throw new Error("invalid bundled plugin inventory");
+  }
+  const pluginBytes = pluginPaths.map(readAsset);
+  const createRuntime = () => {
+    const instance = new WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
+    try {
+      for (const bytes of pluginBytes) instance.register_plugin(bytes);
+      return instance;
+    } catch (error) {
+      instance.free?.();
+      throw error;
+    }
+  };
+  const runtime = createRuntime();
   globalThis.ariaAssetBytes = readAsset;
   const fontFamilies = await loadBundledFonts(bundle.font_assets, readAsset);
   const renderer = await createWebRenderer(canvas, readAsset, {
@@ -371,12 +384,9 @@ async function boot() {
             // valid restore follows Native's order: stop old device sources,
             // restore VM state, then consume the restored VM audio commands
             // on the following frame.
-            const probe = new WebRuntime(
-              bytecode,
-              bundle.logical_width,
-              bundle.logical_height,
-            );
-            probe.restore_envelope_json(generation.payload);
+            const probe = createRuntime();
+            try { probe.restore_envelope_json(generation.payload); }
+            finally { probe.free?.(); }
             audio.stopAll();
             runtime.restore_envelope_json(generation.payload);
             break;

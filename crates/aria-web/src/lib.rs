@@ -141,6 +141,12 @@ mod wasm_api {
             Ok(Self { inner })
         }
 
+        pub fn register_plugin(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+            self.inner
+                .register_plugin(bytes)
+                .map_err(|error| JsValue::from_str(&error))
+        }
+
         pub fn step(&mut self, input_json: &str) -> Result<String, JsValue> {
             let input: InputSnapshot = serde_json::from_str(input_json)
                 .map_err(|error| JsValue::from_str(&error.to_string()))?;

@@ -147,11 +147,11 @@ pub struct UiRuntimeState {
     /// reopen to the same image without serializing any presentation state.
     #[serde(default)]
     pub gallery_viewer: Option<String>,
-    /// Whether the current interlude is taking its first, longer hold. This
-    /// is presentation semantics rather than DOM animation state, so a save
-    /// made during the blank-to-text beat can reopen with the same rhythm.
+    /// Whether the active plugin policy classifies its authored hold as a
+    /// first encounter. This is story timing, not DOM animation state; a save
+    /// reopens with the same plugin-defined rhythm.
     #[serde(default)]
-    pub interlude_first_visit: bool,
+    pub story_first_visit: bool,
     /// Replayed but never serialized: a fresh host owns its viewport after a
     /// load and submits the current value with the next input snapshot.
     #[serde(skip)]
@@ -166,7 +166,7 @@ impl Default for UiRuntimeState {
             scroll_offsets: BTreeMap::new(),
             confirmation: None,
             gallery_viewer: None,
-            interlude_first_visit: false,
+            story_first_visit: false,
             viewport: UiViewport::default(),
         }
     }

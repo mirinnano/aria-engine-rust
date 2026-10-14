@@ -7,6 +7,10 @@ members = [
     "crates/aria-native",
     "crates/aria-web",
     "crates/aria-cli",
+    "crates/aria-plugin-sdk",
+    "crates/aria-plugin-host",
+    "examples/umikaze/plugin",
+    "examples/plugins/lecture",
 ]
 
 [workspace.package]
@@ -22,6 +26,9 @@ aria-protection = { path = "crates/aria-protection", version = "1.0.0" }
 aria-render = { path = "crates/aria-render", version = "1.0.0" }
 aria-native = { path = "crates/aria-native", version = "1.0.0" }
 aria-web = { path = "crates/aria-web", version = "1.0.0" }
+aria-plugin-sdk = { path = "crates/aria-plugin-sdk", version = "1.0.0" }
+aria-plugin-host = { path = "crates/aria-plugin-host", version = "1.0.0" }
+wasmi = { version = "=0.46.0", default-features = false, features = ["std", "prefer-btree-collections"] }
 
 aes = "=0.8.4"
 chacha20poly1305 = "=0.10.1"
@@ -68,6 +75,14 @@ winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", 
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# The browser runtime is downloaded before the first frame, so it is built
+# for size: about 15% smaller than `release` after wasm-bindgen. Native
+# players keep the speed-oriented `release` profile.
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
 
 # The currently published wayland-scanner release still pins quick-xml 0.39,
 # which has a build-time XML parser advisory. Keep the small proc-macro crate

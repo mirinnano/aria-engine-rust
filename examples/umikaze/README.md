@@ -30,6 +30,20 @@ Both fonts are distributed under the SIL Open Font License; see
 [`licenses/NotoSansCJKJP-OFL.txt`](licenses/NotoSansCJKJP-OFL.txt) and
 [`licenses/MPLUS1Code-OFL.txt`](licenses/MPLUS1Code-OFL.txt).
 
+The project registers `assets/plugins/umikaze-story.wasm` before the first VM
+step. Its Rust source at [`plugin`](plugin/src/lib.rs) owns the `day_card`,
+`interlude`, and `statement` policies; Core no longer treats those names as
+standard routes. The prebuilt guest is included for ordinary checkout builds.
+See [plugin API and rebuild instructions](../../docs/spec/plugins.md).
+Snapshot schema 10 binds the exact guest and policy fingerprint; older saves
+are rejected explicitly, not silently replayed under different semantics.
+This change does not add a save-namespace purge.
+
+The title retains all 45 sourced quotations and 360 generated fragments.
+Operational commands now have at least 44px hit areas; chapter dates and other
+reading metadata have a 14px floor. The photograph, quotation terrain, and
+fixed subtitle grid remain game-owned.
+
 The new-install reading default is 48ms per grapheme. A save or an explicit
 setting can choose another speed; the chapter sources never overwrite that
 preference after startup.
@@ -37,12 +51,17 @@ preference after startup.
 ## 日本語シナリオ
 
 日本語版は [`scripts/scenario/ja-JP/index.aria`](scripts/scenario/ja-JP/index.aria)
-を入口として、章ごとの `chapter-00.aria` から `chapter-10.aria` を実行する。各ファイルは
+を入口として、章ごとの `chapter-00.aria` から `chapter-11.aria` を実行する。各ファイルは
 正典Markdownの対応する一章だけを埋め込んだ自己完結した生成物であり、ランタイムや
 配布pakが `Desktop/Novel` を読むことはない。本文の可視順序・話者・文字列はそのまま移され、
 演出は原稿に書かれた非言語の指示だけから生成する。Day 0の視点区切り1箇所、Day 5の既存
 演出指示、`pause ash <ms>`、およびDay 0〜4で明示したペーシング指示だけを画面転換へ翻訳
 している。
+
+各章ファイルの先頭には `chapter` 宣言を置き、章の題名・日付・紹介文・一覧の写真をそこに
+一度だけ書く。章選択と日付カードは章IDでこれを参照する。物語の本文は `prose` ブロックで
+出力され、一行が一つの文字列になる。`prose` はパーサーで従来の文の並びへ展開されるため、
+生成されるバイトコードは以前の書き方と同じである。
 
 演出規則は意図的に小さい。各日の開始はプレイヤーが進める日付カード、原稿内の太字
 日時は短い断章になる。通常の段落空きは、直前の文章をプレイヤーが送った**後**に字幕を
@@ -56,13 +75,14 @@ preference after startup.
 Day 0〜4は先頭に `pacing explicit` を置く。この章ではMarkdownの空行を時間へ変換しない。
 代わりに、作者が必要な箇所だけ `pause breath <ms>`／`pause drift <ms>`（字幕を消して自動で
 待つ）、`backdrop <ward|platform|hotel|shore|rail|rain|city>`（静かな背景遷移）、
-`statement <ash|sea>` を記す。`statement` は直後の無話者の一行を、プレイヤーが送れない
+`backdrop ash`（灰色の無景色を場所として保つ）、`backdrop ferry`（朝の船）、
+`pause black <ms>`（`pause ash` の黒い版）、`statement <ash|sea|black>` を記す。`statement` は直後の無話者の一行を、プレイヤーが送れない
 中央の単色フィールドへ一度だけ出す。本文はタイプライタにせず、フェードイン・保持・
 フェードアウトまで自動で終える。Day 5では原稿の暗転・待機・フェードインを暗い保持と
-病室色への遷移として保ち、Day 10末尾だけは暗い色をゆっくり残す。新しい地の文・台詞・
+病室色への遷移として保ち、Day 10が単独の「……」で終わる場合だけ暗い色をゆっくり残す。新しい地の文・台詞・
 事実は生成していない。
 
-原文の更新を反映するときは、必ず本文レビュー後にDay 0〜10を明示指定する。まず
+原文の更新を反映するときは、必ず本文レビュー後にDay 0〜11を明示指定する。まず
 `--verify` で既存Ariaを**書き換えずに**検証する。この検証はMarkdownとAria ASTの
 本文テキスト・話者・順序・件数を章ごとに比較し、日付カード、見出し断章、段落の息継ぎ、
 沈黙、灰色の `pause ash`、明示ペーシング、中央の自動 `statement`、Day 0／5／10の
@@ -72,23 +92,32 @@ Day 0〜4は先頭に `pacing explicit` を置く。この章ではMarkdownの�
 cargo run -p aria-cli -- import-novel /path/to/Novel/src \
   --out examples/umikaze/scripts/scenario/ja-JP \
   --chapter-select chapter_select_ja --locale ja-JP \
-  --include 00_init.md,01_start.md,02_day2.md,03_day3.md,04_day4.md,05_day5.md,06_day6.md,07_day7.md,08_day8.md,09_day9.md,10_day10.md \
+  --include 00_init.md,01_start.md,02_day2.md,03_day3.md,04_day4.md,05_day5.md,06_day6.md,07_day7.md,08_day8.md,09_day9.md,10_day10.md,11_day11.md \
   --presentation umikaze --layout chapters --verify
 ```
 
 検証が通ったあとに原文更新を反映するときだけ、同じコマンドから `--verify` を外して
 再生成する。日付カードの短い紹介文はナビゲーション用メタデータであり、本文比較の対象外。
 地の文・台詞・見出しは比較対象に含まれる。原稿の章境界とAriaファイル境界を一致させるため、
-Day 11以降の草稿をこのコマンドの `--include` に加えてはいけない。
+章の題名・日付・紹介文と写真は `import-novel` の章表（`UMIKAZE_CHAPTER_STYLES`）に持たせ、
+新しい章を加えるときはこの表とコマンドの `--include` を同時に増やす。
 
-DAY 11–13は[`docs/story-map.md`](docs/story-map.md)で設計中であり、旧DAY 14と
+DAY 11は公開経路に含める。DAY 12–13は[`docs/story-map.md`](docs/story-map.md)で設計中であり、旧DAY 14と
 後日談は公開経路から外した草稿として[`docs/drafts/`](docs/drafts)に保管する。
 本文レビューの判断は[`docs/manuscript-review.md`](docs/manuscript-review.md)に残す。
 公開時のコンテンツ注意はゲーム内には表示せず、ストアページで成人向け心理劇・
 病気・家族関係・逃走を扱う旨を明示する。
 
-この改稿版は保存名を`umikaze-v4`へ更新する。初回起動時には同作の
-`umikaze-v3`だけを消去するため、旧版の進行・設定・自動保存は引き継がれない。
+Day 0–11の取り込み直しに合わせて、保存名を`umikaze-v5`（体験版は`umikaze-demo-v2`）へ
+更新した。それ以前の保存は位置の目印を持たず、再生成したスクリプトでは別の位置から再開
+しかねないためである。完成版の初回起動時には同作の`umikaze-v3`と`umikaze-v4`だけを消去し、
+旧版の進行・設定・自動保存は引き継がない。体験版は完成版の保存を消さないよう消去一覧を
+持たないので、`umikaze-demo-v1`の保存は読み込まれないまま残る。
+
+以後の改稿では保存名を変えなくてよい。保存は行の位置の目印を持ち、改稿後のスクリプトでは
+同じ行（見つからなければ同じ場面の同じ番目の行、次に場面の先頭）から再開する。
+場面ごと消した場合だけ、その保存の読み込みを拒否する。詳しくは
+[Aria 言語仕様の「改稿と保存」](../../docs/spec/aria.md#改稿と保存)を参照。
 ほかのゲームや保存名前空間には影響しない。
 
 ## 体験版
@@ -103,7 +132,7 @@ DAY 11–13は[`docs/story-map.md`](docs/story-map.md)で設計中であり、�
 必須の`runtime.fonts`だけをPAKへ収録する。公開検証はその一覧をDAY 0–4のallowlistと
 照合するため、後半用BGMや背景の混入もリリースエラーになる。
 
-保存は完成版の`umikaze-v4`と分離した`umikaze-demo-v1`を使う。体験版の初回起動は
+保存は完成版の`umikaze-v5`と分離した`umikaze-demo-v2`を使う。体験版の初回起動は
 完成版の保存を削除も移行もしない。Tauri版もアプリIDを`jp.example.umikaze.demo`として
 分け、Linuxの実行ファイル名も`umikaze-demo`として、インストール済みの完成版を
 上書きしない。

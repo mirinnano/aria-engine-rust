@@ -75,6 +75,7 @@ pub enum ModernTokenKind {
     Equals,
     Plus,
     PlusEquals,
+    MinusEquals,
     Minus,
     FatArrow,
     EqualEqual,
@@ -109,6 +110,8 @@ pub struct ModernModule {
     pub entry: Option<EntryDecl>,
     pub states: Vec<StateDecl>,
     pub scenes: Vec<SceneDecl>,
+    pub characters: Vec<CharacterDecl>,
+    pub chapters: Vec<ChapterDecl>,
     /// Retired visual declarations retained only long enough to produce a
     /// source-located retirement diagnostic. They are never lowered into a
     /// program, a render protocol, or a VM layout tree.
@@ -187,6 +190,30 @@ pub struct SceneDecl {
     pub body: Vec<Statement>,
 }
 
+/// `character mio { name "ミオ"; }` — a speaker referenced by identifier, so
+/// the shown name is declared once and the presentation can style by id.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CharacterDecl {
+    pub span: SourceSpan,
+    pub id: String,
+    pub name: String,
+}
+
+/// A chapter's catalogue metadata, declared once instead of being packed
+/// into choice labels. `start` is the scene a `chapter id;` option enters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChapterDecl {
+    pub span: SourceSpan,
+    pub id: String,
+    pub label: Option<String>,
+    pub numeral: Option<String>,
+    pub title: String,
+    pub date: Option<String>,
+    pub synopsis: Option<String>,
+    pub image: Option<AssetRef>,
+    pub start: Option<String>,
+}
+
 /// A statement and its source location.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Statement {
@@ -251,6 +278,12 @@ pub enum StatementKind {
     AddAssign {
         name: String,
         value: i64,
+    },
+    /// `x = <expression>` when the right side is more than a literal or name
+    /// (`x = y + 1`, `x -= n`).
+    AssignExpr {
+        name: String,
+        expression: Expression,
     },
     If {
         condition: Expression,
@@ -319,6 +352,21 @@ pub enum StatementKind {
     },
     SetTheme {
         theme: String,
+    },
+    /// A semantic cue such as `ward` or `rain-city` for the current backdrop.
+    /// The next `background` clears it; `stage none;` clears it explicitly.
+    /// The name carries no colour or layout; the presentation package maps it.
+    SetStage {
+        stage: Option<String>,
+    },
+    /// Moves the view over the current backdrop: zoom and pan are integer
+    /// percentages of the frame (100 = unchanged, pan (0, 0) = centred).
+    Camera {
+        zoom: u32,
+        pan_x: i64,
+        pan_y: i64,
+        duration_ms: u32,
+        easing: String,
     },
     SetTextBox {
         bounds: RectSpec,
@@ -442,11 +490,19 @@ pub enum TransitionKind {
 }
 
 /// A selection option and its target scene.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChoiceOption {
     pub span: SourceSpan,
     pub text: String,
     pub scene: String,
+    /// `cancel => scene;` is not shown. It is where the screen that presents
+    /// this choice goes when the reader backs out of it.
+    pub cancel: bool,
+    /// `chapter id;` takes its label and (unless `=> scene`) its target from
+    /// the chapter declaration. `scene` is empty until the compiler fills it.
+    pub chapter: Option<String>,
+    /// `"…" if <expr> => scene;` is offered only while the condition holds.
+    pub condition: Option<Expression>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +510,7 @@ pub enum AudioBus {
     Bgm,
     Se,
     Voice,
+    Ambient,
 }
 
 /// A declaration/assignment right-hand side in the initial subset.
@@ -521,6 +578,8 @@ pub enum ExpressionKind {
         op: BinaryOperator,
         right: Box<Expression>,
     },
+    /// `flag("name")`: a session or persistent flag as a Bool.
+    Flag(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -539,6 +598,8 @@ pub enum BinaryOperator {
     LessEqual,
     Greater,
     GreaterEqual,
+    Add,
+    Subtract,
 }
 
 /// Parses a modern Aria source file without touching the filesystem.
@@ -695,6 +756,7 @@ impl<'a> Lexer<'a> {
     ) -> ModernTokenKind {
         let pairs = [
             ("+=", ModernTokenKind::PlusEquals),
+            ("-=", ModernTokenKind::MinusEquals),
             ("=>", ModernTokenKind::FatArrow),
             ("==", ModernTokenKind::EqualEqual),
             ("!=", ModernTokenKind::BangEqual),
@@ -885,6 +947,8 @@ impl Parser {
             entry: None,
             states: Vec::new(),
             scenes: Vec::new(),
+            characters: Vec::new(),
+            chapters: Vec::new(),
             retired_ui_syntax: Vec::new(),
         };
 
@@ -959,6 +1023,16 @@ impl Parser {
                     module.scenes.push(declaration);
                 }
                 Some(end)
+            } else if self.consume_keyword("character") {
+                if let Some(declaration) = self.parse_character() {
+                    module.characters.push(declaration);
+                }
+                Some(self.previous_or(&header_start).clone())
+            } else if self.consume_keyword("chapter") {
+                if let Some(declaration) = self.parse_chapter_decl() {
+                    module.chapters.push(declaration);
+                }
+                Some(self.previous_or(&header_start).clone())
             } else if self.consume_keyword("ui_theme") {
                 if let Some(declaration) = self.parse_retired_ui_declaration(RetiredUiKind::Theme) {
                     module.retired_ui_syntax.push(declaration);
@@ -982,7 +1056,7 @@ impl Parser {
                 Some(end)
             } else {
                 self.error_here(
-                    "expected module, use, entry, state, scene, ui_theme, ui_screen, or ui_transition declaration",
+                    "expected module, use, entry, state, scene, character, chapter, ui_theme, ui_screen, or ui_transition declaration",
                 );
                 self.recover_top_level();
                 None
@@ -1075,6 +1149,88 @@ impl Parser {
         })
     }
 
+    fn parse_character(&mut self) -> Option<CharacterDecl> {
+        let start = self.peek().clone();
+        let (id, _) = self.parse_identifier("expected character id after 'character'")?;
+        self.expect_kind(
+            ModernTokenKind::LeftBrace,
+            "expected '{' after character id",
+        )?;
+        let mut name = None;
+        while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
+            let before = self.index;
+            if self.consume_keyword("name") {
+                name = Some(self.parse_string("expected character name string")?);
+            } else {
+                self.error_here("expected 'name' in character declaration");
+            }
+            self.expect_statement_end("expected ';' after character field")?;
+            if self.index == before {
+                self.advance();
+            }
+        }
+        let end = self.expect_kind(
+            ModernTokenKind::RightBrace,
+            "expected '}' to close character",
+        )?;
+        let Some(name) = name else {
+            self.error_at(&end, "character requires a 'name'");
+            return None;
+        };
+        Some(CharacterDecl {
+            span: span_between(&start, &end),
+            id,
+            name,
+        })
+    }
+
+    fn parse_chapter_decl(&mut self) -> Option<ChapterDecl> {
+        let start = self.peek().clone();
+        let (id, _) = self.parse_identifier("expected chapter id after 'chapter'")?;
+        self.expect_kind(ModernTokenKind::LeftBrace, "expected '{' after chapter id")?;
+        let mut chapter = ChapterDecl {
+            span: start.span.clone(),
+            id,
+            label: None,
+            numeral: None,
+            title: String::new(),
+            date: None,
+            synopsis: None,
+            image: None,
+            start: None,
+        };
+        let mut has_title = false;
+        while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
+            let before = self.index;
+            let field = self.parse_word("expected chapter field")?;
+            match field.as_str() {
+                "label" => chapter.label = Some(self.parse_string("expected label string")?),
+                "numeral" => chapter.numeral = Some(self.parse_string("expected numeral string")?),
+                "title" => {
+                    chapter.title = self.parse_string("expected title string")?;
+                    has_title = true;
+                }
+                "date" => chapter.date = Some(self.parse_string("expected date string")?),
+                "synopsis" => chapter.synopsis = Some(self.parse_string("expected synopsis string")?),
+                "image" => chapter.image = Some(self.parse_asset_ref()?),
+                "start" => chapter.start = Some(self.parse_identifier("expected start scene")?.0),
+                other => self.error_here(format!(
+                    "unknown chapter field '{other}'; expected label, numeral, title, date, synopsis, image, or start"
+                )),
+            }
+            self.expect_statement_end("expected ';' after chapter field")?;
+            if self.index == before {
+                self.advance();
+            }
+        }
+        let end = self.expect_kind(ModernTokenKind::RightBrace, "expected '}' to close chapter")?;
+        if !has_title {
+            self.error_at(&end, "chapter requires a 'title'");
+        }
+        chapter.span = span_between(&start, &end);
+        Some(chapter)
+    }
+
     fn parse_scene(&mut self) -> Option<SceneDecl> {
         let start = self.peek().clone();
         let (name, _) = self.parse_identifier("expected scene name after 'scene'")?;
@@ -1142,7 +1298,13 @@ impl Parser {
         let mut statements = Vec::new();
         while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
             let before = self.index;
-            if let Some(statement) = self.parse_statement() {
+            if self.consume_keyword("prose") {
+                if let Some(expanded) = self.parse_prose() {
+                    statements.extend(expanded);
+                } else {
+                    self.recover_statement();
+                }
+            } else if let Some(statement) = self.parse_statement() {
                 statements.push(statement);
             } else {
                 self.recover_statement();
@@ -1153,6 +1315,146 @@ impl Parser {
         }
         self.expect_kind(ModernTokenKind::RightBrace, "expected '}' to close block")?;
         Some(statements)
+    }
+
+    /// `prose [breath <n>ms] { … }` expands, in the parser, into the ordinary
+    /// statements a reading line needs. Each line is shown and awaited; then
+    /// the subtitle clears and the default breath (or a following `pause`)
+    /// is held. A trailing `+` keeps the next line on without clearing.
+    /// Any other statement may appear between lines and is kept as written.
+    fn parse_prose(&mut self) -> Option<Vec<Statement>> {
+        let breath = if self.consume_keyword("breath") {
+            Some(self.parse_duration_ms()?)
+        } else {
+            None
+        };
+        self.expect_kind(ModernTokenKind::LeftBrace, "expected '{' to open prose")?;
+
+        enum Item {
+            Line {
+                kind: StatementKind,
+                joined: bool,
+                span: SourceSpan,
+            },
+            Pause {
+                duration_ms: u32,
+                span: SourceSpan,
+            },
+            Other(Statement),
+        }
+        // Keywords that may themselves be followed by a string, so they are
+        // statements rather than a speaker name.
+        const STRING_STATEMENTS: [&str; 8] = [
+            "narrate",
+            "say",
+            "locale",
+            "theme",
+            "stage",
+            "flag",
+            "chapter",
+            "chapter_progress",
+        ];
+        let mut items = Vec::new();
+        while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
+            let before = self.index;
+            let item_start = self.peek().clone();
+            let speaker = if self.at_kind(ModernTokenKind::String) {
+                Some(None)
+            } else if self.peek().kind == ModernTokenKind::Identifier
+                && self.peek_next().is_some_and(|next| {
+                    next.kind == ModernTokenKind::String || next.kind == ModernTokenKind::Colon
+                })
+                && !STRING_STATEMENTS.contains(&self.peek().text.as_str())
+            {
+                let (name, _) = self.parse_identifier("expected speaker")?;
+                self.consume_kind(ModernTokenKind::Colon);
+                Some(Some(name))
+            } else {
+                None
+            };
+            if let Some(speaker) = speaker {
+                let text = self.parse_string("expected prose line string")?;
+                let joined = self.consume_kind(ModernTokenKind::Plus).is_some();
+                let end =
+                    self.expect_kind(ModernTokenKind::Semicolon, "expected ';' after prose line")?;
+                let kind = match speaker {
+                    Some(speaker) => StatementKind::Say {
+                        speaker: Some(speaker),
+                        text,
+                    },
+                    None => StatementKind::Narrate { text },
+                };
+                items.push(Item::Line {
+                    kind,
+                    joined,
+                    span: span_between(&item_start, &end),
+                });
+            } else if self.consume_keyword("pause") {
+                let duration_ms = self.parse_duration_ms()?;
+                let end =
+                    self.expect_kind(ModernTokenKind::Semicolon, "expected ';' after pause")?;
+                items.push(Item::Pause {
+                    duration_ms,
+                    span: span_between(&item_start, &end),
+                });
+            } else if let Some(statement) = self.parse_statement() {
+                items.push(Item::Other(statement));
+            } else {
+                self.recover_statement();
+            }
+            if self.index == before {
+                self.advance();
+            }
+        }
+        self.expect_kind(ModernTokenKind::RightBrace, "expected '}' to close prose")?;
+
+        let statement = |kind: StatementKind, span: &SourceSpan| Statement {
+            span: span.clone(),
+            kind,
+        };
+        let breath_of = |duration_ms: u32| StatementKind::Wait {
+            duration_ms,
+            release_after_ms: Some(160),
+        };
+        let mut output = Vec::new();
+        let mut items = items.into_iter().peekable();
+        let mut after_line = false;
+        while let Some(item) = items.next() {
+            match item {
+                Item::Line { kind, joined, span } => {
+                    output.push(statement(kind, &span));
+                    output.push(statement(StatementKind::AwaitAdvance, &span));
+                    after_line = false;
+                    if joined {
+                        continue;
+                    }
+                    output.push(statement(StatementKind::ClearDialogue, &span));
+                    match items.peek() {
+                        Some(Item::Pause { .. }) => after_line = true,
+                        _ => {
+                            if let Some(duration) = breath.filter(|duration| *duration > 0) {
+                                output.push(statement(breath_of(duration), &span));
+                            }
+                        }
+                    }
+                }
+                Item::Pause { duration_ms, span } => {
+                    if !after_line {
+                        output.push(statement(StatementKind::ClearDialogue, &span));
+                    }
+                    // `pause 0ms;` after a line means "clear, but no breath".
+                    if duration_ms > 0 {
+                        output.push(statement(breath_of(duration_ms), &span));
+                    }
+                    after_line = false;
+                }
+                Item::Other(other) => {
+                    output.push(other);
+                    after_line = false;
+                }
+            }
+        }
+        Some(output)
     }
 
     fn parse_statement(&mut self) -> Option<Statement> {
@@ -1266,6 +1568,18 @@ impl Parser {
             };
             self.expect_statement_end("expected ';' after theme statement")?;
             StatementKind::SetTheme { theme }
+        } else if self.consume_keyword("camera") {
+            self.parse_camera()?
+        } else if self.consume_keyword("stage") {
+            let stage = if self.at_kind(ModernTokenKind::String) {
+                self.parse_string("expected stage cue name")?
+            } else {
+                self.parse_word("expected stage cue name or 'none'")?
+            };
+            self.expect_statement_end("expected ';' after stage statement")?;
+            StatementKind::SetStage {
+                stage: (stage != "none").then_some(stage),
+            }
         } else if self.consume_keyword("textbox") {
             self.parse_textbox()?
         } else if self.consume_keyword("tween") {
@@ -1325,7 +1639,8 @@ impl Parser {
             None
         } else {
             let (name, _) = self.parse_identifier("expected speaker name or dialogue string")?;
-            self.expect_kind(ModernTokenKind::Colon, "expected ':' after speaker name")?;
+            // `say mio "…"` names a declared character; the colon form stays.
+            self.consume_kind(ModernTokenKind::Colon);
             Some(name)
         };
         let text = self.parse_string("expected dialogue string")?;
@@ -1536,15 +1851,57 @@ impl Parser {
     fn parse_assignment(&mut self) -> Option<StatementKind> {
         let (name, _) = self.parse_identifier("expected assignment target")?;
         if self.consume_kind(ModernTokenKind::Equals).is_some() {
-            let value = self.parse_value("expected a literal or identifier after '='")?;
+            let expression = self.parse_expression(0)?;
             self.expect_statement_end("expected ';' after assignment")?;
-            Some(StatementKind::Assign { name, value })
-        } else if self.consume_kind(ModernTokenKind::PlusEquals).is_some() {
-            let value = self.parse_i64("expected integer after '+='")?;
-            self.expect_statement_end("expected ';' after '+=' assignment")?;
-            Some(StatementKind::AddAssign { name, value })
+            // A bare literal or name keeps the original assignment form.
+            let value = match &expression.kind {
+                ExpressionKind::Literal(literal) => Some(Value::Literal(literal.clone())),
+                ExpressionKind::Identifier(identifier) => Some(Value::Identifier {
+                    span: expression.span.clone(),
+                    name: identifier.clone(),
+                }),
+                _ => None,
+            };
+            Some(match value {
+                Some(value) => StatementKind::Assign { name, value },
+                None => StatementKind::AssignExpr { name, expression },
+            })
+        } else if let Some(operator) = self
+            .consume_kind(ModernTokenKind::PlusEquals)
+            .or_else(|| self.consume_kind(ModernTokenKind::MinusEquals))
+        {
+            let subtract = operator.kind == ModernTokenKind::MinusEquals;
+            let expression = self.parse_expression(0)?;
+            self.expect_statement_end("expected ';' after compound assignment")?;
+            if let ExpressionKind::Literal(Literal::Integer { value, .. }) = &expression.kind {
+                let value = if subtract {
+                    value.saturating_neg()
+                } else {
+                    *value
+                };
+                return Some(StatementKind::AddAssign { name, value });
+            }
+            let span = expression.span.clone();
+            Some(StatementKind::AssignExpr {
+                name: name.clone(),
+                expression: Expression {
+                    span: span.clone(),
+                    kind: ExpressionKind::Binary {
+                        left: Box::new(Expression {
+                            span,
+                            kind: ExpressionKind::Identifier(name),
+                        }),
+                        op: if subtract {
+                            BinaryOperator::Subtract
+                        } else {
+                            BinaryOperator::Add
+                        },
+                        right: Box::new(expression),
+                    },
+                },
+            })
         } else {
-            self.error_here("expected '=' or '+=' after assignment target");
+            self.error_here("expected '=', '+=', or '-=' after assignment target");
             None
         }
     }
@@ -1581,7 +1938,46 @@ impl Parser {
         let mut options = Vec::new();
         while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
             let start = self.peek().clone();
-            let text = self.parse_string("expected choice option string")?;
+            if self.consume_keyword("chapter") {
+                let (chapter, _) = self.parse_identifier("expected chapter id")?;
+                let condition = if self.consume_keyword("if") {
+                    Some(self.parse_expression(0)?)
+                } else {
+                    None
+                };
+                let scene = if self.consume_kind(ModernTokenKind::FatArrow).is_some() {
+                    self.parse_identifier("expected choice target scene")?.0
+                } else {
+                    String::new()
+                };
+                let end = self.expect_kind(
+                    ModernTokenKind::Semicolon,
+                    "expected ';' after chapter option",
+                )?;
+                options.push(ChoiceOption {
+                    span: span_between(&start, &end),
+                    text: String::new(),
+                    scene,
+                    cancel: false,
+                    chapter: Some(chapter),
+                    condition,
+                });
+                continue;
+            }
+            let cancel = self.consume_keyword("cancel");
+            let text = if cancel {
+                if options.iter().any(|option: &ChoiceOption| option.cancel) {
+                    self.error_here("choice may declare 'cancel' only once");
+                }
+                String::new()
+            } else {
+                self.parse_string("expected choice option string or 'cancel'")?
+            };
+            let condition = if !cancel && self.consume_keyword("if") {
+                Some(self.parse_expression(0)?)
+            } else {
+                None
+            };
             self.expect_kind(ModernTokenKind::FatArrow, "expected '=>' after choice text")?;
             let (scene, scene_token) = self.parse_identifier("expected choice target scene")?;
             let end = self.expect_kind(
@@ -1592,6 +1988,9 @@ impl Parser {
                 span: span_between(&start, &end),
                 text,
                 scene,
+                cancel,
+                chapter: None,
+                condition,
             });
             let _ = scene_token;
         }
@@ -1599,7 +1998,7 @@ impl Parser {
             ModernTokenKind::RightBrace,
             "expected '}' after choice options",
         )?;
-        if options.is_empty() {
+        if !options.iter().any(|option| !option.cancel) {
             self.error_here("choice requires at least one option");
         }
         // A trailing semicolon is harmless and makes formatting of nested
@@ -1705,6 +2104,52 @@ impl Parser {
             color,
             opacity,
             mode,
+        })
+    }
+
+    /// `camera zoom 108 pan (0, -3) over 9000ms ease ease_out;`
+    /// `camera reset over 1200ms;`
+    fn parse_camera(&mut self) -> Option<StatementKind> {
+        let (mut zoom, mut pan_x, mut pan_y) = (100, 0, 0);
+        if !self.consume_keyword("reset") {
+            let mut any = false;
+            if self.consume_keyword("zoom") {
+                zoom = self.parse_u32("expected zoom percentage (100 = unchanged)")?;
+                any = true;
+            }
+            if self.consume_keyword("pan") {
+                self.expect_kind(ModernTokenKind::LeftParen, "expected '(' after pan")?;
+                pan_x = self.parse_i64("expected horizontal pan percentage")?;
+                self.expect_kind(ModernTokenKind::Comma, "expected ',' in pan")?;
+                pan_y = self.parse_i64("expected vertical pan percentage")?;
+                self.expect_kind(ModernTokenKind::RightParen, "expected ')' after pan")?;
+                any = true;
+            }
+            if !any {
+                self.error_here("expected 'zoom', 'pan', or 'reset' after camera");
+                return None;
+            }
+            if !(50..=400).contains(&zoom) || pan_x.abs() > 50 || pan_y.abs() > 50 {
+                self.error_here("camera zoom must be 50-400 and pan within ±50 percent");
+            }
+        }
+        let duration_ms = if self.consume_keyword("over") {
+            self.parse_duration_ms()?
+        } else {
+            0
+        };
+        let easing = if self.consume_keyword("ease") {
+            self.parse_word("expected easing name")?
+        } else {
+            "ease_in_out".to_owned()
+        };
+        self.expect_statement_end("expected ';' after camera statement")?;
+        Some(StatementKind::Camera {
+            zoom,
+            pan_x,
+            pan_y,
+            duration_ms,
+            easing,
         })
     }
 
@@ -1959,6 +2404,21 @@ impl Parser {
                 kind: ExpressionKind::Literal(literal),
             });
         }
+        if self.peek().text == "flag"
+            && self
+                .peek_next()
+                .is_some_and(|next| next.kind == ModernTokenKind::LeftParen)
+        {
+            let start = self.next()?;
+            self.expect_kind(ModernTokenKind::LeftParen, "expected '(' after flag")?;
+            let name = self.parse_string("expected flag name string")?;
+            let end =
+                self.expect_kind(ModernTokenKind::RightParen, "expected ')' after flag name")?;
+            return Some(Expression {
+                span: span_between(&start, &end),
+                kind: ExpressionKind::Flag(name),
+            });
+        }
         let (name, token) = self.parse_identifier("expected expression")?;
         Some(Expression {
             span: token.span,
@@ -1972,8 +2432,9 @@ impl Parser {
             "bgm" => Some(AudioBus::Bgm),
             "se" => Some(AudioBus::Se),
             "voice" => Some(AudioBus::Voice),
+            "ambient" => Some(AudioBus::Ambient),
             _ => {
-                self.error_at(&token, "expected audio bus bgm, se, or voice");
+                self.error_at(&token, "expected audio bus bgm, se, voice, or ambient");
                 None
             }
         }
@@ -2253,6 +2714,8 @@ fn binary_operator(kind: ModernTokenKind) -> Option<(BinaryOperator, u8)> {
         ModernTokenKind::LessEqual => Some((BinaryOperator::LessEqual, 4)),
         ModernTokenKind::Greater => Some((BinaryOperator::Greater, 4)),
         ModernTokenKind::GreaterEqual => Some((BinaryOperator::GreaterEqual, 4)),
+        ModernTokenKind::Plus => Some((BinaryOperator::Add, 5)),
+        ModernTokenKind::Minus => Some((BinaryOperator::Subtract, 5)),
         _ => None,
     }
 }

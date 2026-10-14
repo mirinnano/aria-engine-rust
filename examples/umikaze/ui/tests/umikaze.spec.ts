@@ -5,7 +5,7 @@ async function beginJapaneseRecord(page: import("@playwright/test").Page) {
   // root host. Vite emits relative assets, so the test must not throw away a
   // configured base path by navigating to the origin root.
   await page.goto("./");
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HesPhoros" })).toBeVisible();
   await expect(page.getByRole("button", { name: "日本語" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "English" })).toHaveCount(0);
 }
@@ -61,18 +61,18 @@ test("title load opens a record table and explains an empty slot", async ({ page
   await page.getByRole("button", { name: "LOAD" }).click();
   const load = page.getByRole("dialog", { name: "LOAD" });
   await expect(load).toBeVisible();
-  const first = load.getByRole("button", { name: "記録 1 を開く" });
+  const first = load.getByRole("button", { name: "スロット 1 から読む" });
   await expect(first).toBeDisabled();
-  await expect(load.getByText("この記録には保存されていません。", { exact: true })).toHaveCount(10);
+  await expect(load.getByText("空き", { exact: true })).toHaveCount(10);
 });
 
 test("the public release enters the Japanese title without language setup", async ({ page }) => {
   await page.goto("./");
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HesPhoros" })).toBeVisible();
   await expect(page.getByRole("button", { name: "日本語" })).toHaveCount(0);
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HesPhoros" })).toBeVisible();
   await expect(page.getByRole("button", { name: "日本語" })).toHaveCount(0);
 });
 
@@ -108,24 +108,24 @@ test("a warmed offline PWA reopens the reader from its static-host subpath", asy
   const catalogue = page.getByRole("dialog", { name: "CHAPTERS" });
   await catalogue.getByRole("button", { name: /PROLOGUE/ }).click();
   await page.locator(".day-card").getByRole("button", { name: "次へ" }).click();
-  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "本文" })).toBeVisible();
 
   // The first navigation installs the worker; a reload gives it control of
   // the document before network access is withdrawn.
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
   await page.reload({ waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "HesPhoros" })).toBeVisible();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
 
   await context.setOffline(true);
   try {
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "海風" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "HesPhoros" })).toBeVisible();
     await page.getByRole("button", { name: "START" }).click();
     await page.getByRole("dialog", { name: "CHAPTERS" })
       .getByRole("button", { name: /PROLOGUE/ }).click();
     await page.locator(".day-card").getByRole("button", { name: "次へ" }).click();
-    await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "本文" })).toBeVisible();
   } finally {
     await context.setOffline(false);
   }
@@ -138,7 +138,7 @@ test("automatic checkpoint stays invisible while LOAD exposes only manual record
   await expect(load.getByText("AUTO SAVE", { exact: true })).toHaveCount(0);
   await expect(load.locator("[data-aria-action='load.slot.0']")).toHaveCount(0);
   await expect(load.locator(".record-slot")).toHaveCount(10);
-  await expect(load.getByRole("button", { name: "記録 1 を開く" })).toBeDisabled();
+  await expect(load.getByRole("button", { name: "スロット 1 から読む" })).toBeDisabled();
 });
 
 test("title and transparent RMenu use English commands with a stable localized description", async ({ page }) => {
@@ -156,8 +156,8 @@ test("title and transparent RMenu use English commands with a stable localized d
     isDemo ? /station-night-pass-v1-/ : /night-window-motion-v1-/,
   );
   await expect(titleStage.locator(".title-record-card, .record-stage-slip, .title-opening")).toHaveCount(0);
-  const titleTypeface = await titleStage.getByRole("heading", { name: "海風" }).evaluate((element) => getComputedStyle(element).fontFamily);
-  expect(titleTypeface).toContain("UmikazeTitle");
+  // The title is the HesPhoros wordmark, not typeset text.
+  await expect(titleStage.getByRole("heading", { name: "HesPhoros" }).locator("img.title-logo")).toHaveAttribute("src", /hesphoros-logo-white|^data:image\/svg\+xml/);
   await expect(titleStage.locator(".record-stage-quotation--tractatus-silence"))
     .toContainText("語ることのできないものについては、沈黙しなければならない。");
   await expect(titleStage.locator(".record-stage-quotation--yodaka-plain"))
@@ -166,7 +166,7 @@ test("title and transparent RMenu use English commands with a stable localized d
   await expect(titleStage.locator(".title-subtitle")).toHaveCount(0);
   await expect(titleStage.getByText("AUTUMN RECORD / 03", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "LOAD" }).focus();
-  const loadNote = page.getByText("保存した記録を開く", { exact: true });
+  const loadNote = page.getByText("保存した位置から読む", { exact: true });
   await expect(loadNote).toBeVisible();
   const titleLayout = await loadNote.evaluate((note) => {
     const command = note.closest<HTMLElement>("[data-stage-menu-item]");
@@ -188,10 +188,10 @@ test("title and transparent RMenu use English commands with a stable localized d
   expect(titleLayout.quotationCount).toBe(360);
 
   await page.getByRole("button", { name: "LOAD" }).click();
-  await expect(page.getByRole("dialog", { name: "LOAD" }).locator(".record-stage-photograph--understructure")).toHaveAttribute(
-    "src",
-    isDemo ? /hospital-corridor-overcast-v1-/ : /understructure-evening-v1-/,
-  );
+  // A sheet opened from the title stays in the title's night photograph
+  // instead of cutting to an unrelated daytime location.
+  const titleSheet = page.getByRole("dialog", { name: "LOAD" }).locator(".record-stage-backdrop--from-title .record-stage-photograph--night-motion");
+  await expect(titleSheet).toHaveAttribute("src", isDemo ? /station-night-pass-v1-/ : /night-window-motion-v1-/);
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "START" }).click();
@@ -204,7 +204,7 @@ test("title and transparent RMenu use English commands with a stable localized d
   await expect(menu.getByRole("button", { name: "RESUME" })).toBeVisible();
   await expect(menu.getByRole("button", { name: "SAVE" })).toBeVisible();
   await menu.getByRole("button", { name: "SAVE" }).focus();
-  const saveNote = menu.getByText("現在位置を記録する", { exact: true });
+  const saveNote = menu.getByText("いまの位置を保存する", { exact: true });
   await expect(saveNote).toBeVisible();
   const rmenuLayout = await saveNote.evaluate((note) => {
     const command = note.closest<HTMLElement>("[data-stage-menu-item]");
@@ -213,17 +213,23 @@ test("title and transparent RMenu use English commands with a stable localized d
     const noteBox = note.getBoundingClientRect();
     const commandLabelBox = commandLabel?.getBoundingClientRect();
     return {
-      noteBelowCommand: Boolean(commandLabelBox && noteBox.top >= commandLabelBox.bottom),
+      // The note sits beside its command so focus never shifts the column.
+      noteBesideCommand: Boolean(commandLabelBox
+        && noteBox.left >= commandLabelBox.right
+        && noteBox.top < commandLabelBox.bottom
+        && noteBox.bottom > commandLabelBox.top),
       dividerWidth: command ? getComputedStyle(command).borderBottomWidth : "missing",
       rowGap: list ? getComputedStyle(list).rowGap : "missing",
     };
   });
-  expect(rmenuLayout.noteBelowCommand).toBe(true);
+  expect(rmenuLayout.noteBesideCommand).toBe(true);
   expect(rmenuLayout.dividerWidth).toBe("0px");
   expect(rmenuLayout.rowGap).not.toBe("0px");
   const surface = await menu.evaluate((element) => {
     const overlay = element.closest(".rmenu-overlay");
-    const box = element.getBoundingClientRect();
+    // The dialog spans the full height; its command column must stay clear
+    // of the screen edges.
+    const box = (element.querySelector(".rmenu-command-list") ?? element).getBoundingClientRect();
     return {
       overlayBackground: overlay ? getComputedStyle(overlay).backgroundColor : "missing",
       menuBackground: getComputedStyle(element).backgroundColor,
@@ -234,7 +240,7 @@ test("title and transparent RMenu use English commands with a stable localized d
   expect(surface.overlayBackground).toBe("rgba(0, 0, 0, 0)");
   expect(surface.menuBackground).toBe("rgba(0, 0, 0, 0)");
   expect(surface.left).toBeGreaterThanOrEqual(68);
-  expect(surface.top).toBeGreaterThanOrEqual(68);
+  expect(surface.top).toBeGreaterThanOrEqual(32);
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
 });
@@ -242,9 +248,9 @@ test("title and transparent RMenu use English commands with a stable localized d
 test("title EXIT confirms safely, and RMenu arrows move the focused command", async ({ page }) => {
   await beginJapaneseRecord(page);
   await page.getByRole("button", { name: "EXIT" }).click();
-  const confirm = page.getByRole("dialog", { name: "CONFIRM" });
+  const confirm = page.getByRole("dialog", { name: "確認" });
   await expect(confirm).toBeVisible();
-  await expect(confirm.getByText("アプリケーションを終了しますか？", { exact: true })).toBeVisible();
+  await expect(confirm.getByText("HesPhoros を終了しますか？", { exact: true })).toBeVisible();
   await confirm.locator('[data-aria-action="confirm.cancel"]').click();
   await expect(page.getByRole("button", { name: "START" })).toBeVisible();
 
@@ -344,7 +350,7 @@ test("chapter focus changes only the preview until a command is confirmed", asyn
   const card = page.locator(".day-card");
   await expect(card).toBeVisible();
   await expect(card.locator(".day-card-key")).toHaveText("DAY 1");
-  await expect(card.getByRole("heading", { name: "幸福は、理由ではなく現在に示される。" })).toBeVisible();
+  await expect(card.getByRole("heading", { name: "西へ" })).toBeVisible();
   await expect(catalogue.getByText(/^CHAPTER \d+$/)).toHaveCount(0);
 });
 
@@ -365,7 +371,7 @@ test("a chapter day card holds the place, weather, and spoiler-free invitation b
 
   await page.keyboard.press("Enter");
   await expect(card).toBeHidden();
-  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "本文" })).toBeVisible();
 });
 
 test("a chapter day card advances from its open surface as well as BEGIN", async ({ page }) => {
@@ -377,7 +383,7 @@ test("a chapter day card advances from its open surface as well as BEGIN", async
   // Deliberately click the prose region, not the explicit button.
   await page.mouse.click(box.x + box.width * 0.24, box.y + box.height * 0.36);
   await expect(card).toBeHidden();
-  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "本文" })).toBeVisible();
 });
 
 test("the demo contains only the opening arc and reaches its quiet end after DAY 4", async ({ page }) => {
@@ -432,7 +438,7 @@ test("an interlude is a dark logged story beat and every reading input releases 
 
   await page.keyboard.press("Enter");
   await expect(interlude).toBeHidden();
-  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "本文" })).toBeVisible();
 });
 
 test("an automatic statement owns its duration while preserving log and menu escape hatches", async ({ page }) => {
@@ -451,7 +457,7 @@ test("an automatic statement owns its duration while preserving log and menu esc
     await page.waitForTimeout(8);
   }
   await expect(statement).toBeVisible();
-  const statementText = "「だって、人が死ぬとこなんて...わざわざ見る人なんていないもんね」";
+  const statementText = "「だって、人が死ぬところなんて……わざわざ見たい人なんて、いないもんね」";
   await expect(statement.getByText(statementText, { exact: true })).toBeVisible();
   await expect(statement.locator("button")).toHaveCount(0);
   await expect(page.locator(".scene-photograph")).toHaveCount(0);
@@ -468,7 +474,7 @@ test("an automatic statement owns its duration while preserving log and menu esc
   await page.keyboard.press("Escape");
   await expect(statement).toBeVisible();
 
-  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible({ timeout: 3_500 });
+  await expect(page.getByRole("region", { name: "本文" })).toBeVisible({ timeout: 3_500 });
   await waitForCompletedPage(page);
   await expect(page.locator(".dialogue-text")).toHaveText("私はいつものように、窓のむこうを見る。");
 });
@@ -479,7 +485,7 @@ test("a story scene selects its deterministic photograph after the chapter inter
 
   await expect(page.locator(".interlude-screen")).toBeVisible();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("region", { name: "読書中" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "本文" })).toBeVisible();
   await expect(page.locator(".scene-photograph--platform-sea-dawn img"))
     .toHaveAttribute("src", /platform-sea-dawn-v1-/);
 });
@@ -487,7 +493,7 @@ test("a story scene selects its deterministic photograph after the chapter inter
 test("subtitle content and Next are separate, fixed-grid controls", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await beginFirstChapter(page);
-  const band = page.getByRole("region", { name: "読書中" });
+  const band = page.getByRole("region", { name: "本文" });
   const metrics = await band.evaluate((element) => {
     const text = element.querySelector<HTMLElement>(".dialogue-text");
     const content = element.querySelector<HTMLElement>(".subtitle-content");
@@ -555,7 +561,7 @@ test("the title supplies its own icon instead of causing a browser fallback requ
   expect(iconResponse.headers()["content-type"]).toContain("image/svg+xml");
 });
 
-test("H opens history and a history page resumes through an OK / NG confirmation", async ({ page }) => {
+test("H opens history and a history page resumes through a labelled confirmation", async ({ page }) => {
   const advance = await beginFirstChapter(page);
   const band = page.locator(".reading-band");
   const firstPage = await band.getAttribute("data-page-id");
@@ -586,15 +592,15 @@ test("H opens history and a history page resumes through an OK / NG confirmation
   await expect(firstEntry).toBeVisible();
   await firstEntry.click();
 
-  const confirm = page.getByRole("dialog", { name: "CONFIRM" });
+  const confirm = page.getByRole("dialog", { name: "確認" });
   await expect(confirm).toBeVisible();
-  await expect(confirm.getByText("このページから読み直しますか？ 先の本文と選択の記録は新しい分岐になります。"))
+  await expect(confirm.getByText("この文から読み直しますか？ ここより先の進行と選択は、やり直しになります。"))
     .toBeVisible();
-  await confirm.getByRole("button", { name: "NG" }).click();
+  await confirm.getByRole("button", { name: "やめる" }).click();
   await expect(backlog).toBeVisible();
 
   await firstEntry.click();
-  await confirm.getByRole("button", { name: "OK" }).click();
+  await confirm.getByRole("button", { name: "ここから読む" }).click();
   await expect(backlog).toBeHidden();
   await expect(band).toHaveAttribute("data-page-id", firstPage || "");
   await expect(page.locator(".continue-mark")).toBeVisible();
@@ -638,7 +644,7 @@ test("gallery does not invent a memory before the scenario releases a CG", async
 
   const gallery = page.getByRole("dialog", { name: "EXTRA" });
   await expect(gallery).toBeVisible();
-  await expect(gallery.getByText("まだ読み返せる記録はありません。", { exact: true })).toBeVisible();
+  await expect(gallery.getByText("まだ見られる場面はありません。", { exact: true })).toBeVisible();
   await expect(gallery.locator(".gallery-card")).toHaveCount(0);
 });
 
@@ -685,4 +691,18 @@ test("settled title creates neither a hidden GPU context nor a continuous animat
   const after = await page.evaluate(() => (window as Window & { frames?: number }).frames || 0);
   expect(before.contexts).toBe(0);
   expect(after).toBe(before.frames);
+});
+
+test("backing out of the chapter catalogue returns to the title, not an orphaned choice list", async ({ page }) => {
+  for (const back of ["escape", "close"] as const) {
+    await beginJapaneseRecord(page);
+    await page.getByRole("button", { name: "START" }).click();
+    const catalogue = page.getByRole("dialog", { name: "CHAPTERS" });
+    await expect(catalogue).toBeVisible();
+    if (back === "escape") await page.keyboard.press("Escape");
+    else await catalogue.getByRole("button", { name: "閉じる" }).click();
+    await expect(page.getByRole("heading", { name: "HesPhoros" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "START" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^PROLOGUE/ })).toHaveCount(0);
+  }
 });

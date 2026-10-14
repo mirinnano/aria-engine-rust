@@ -104,6 +104,8 @@ run("npm", tauriArgs, { env });
 // Keep a portable integrity record adjacent to every native installer. This
 // makes a locally built candidate as inspectable as the CI artifact and keeps
 // the publishing workflow from relying on a separate, easy-to-forget step.
-const cargoTarget = resolve(env.CARGO_TARGET_DIR || resolve(repository, "target"));
+// src-tauri is its own Cargo workspace, so its default target directory is
+// src-tauri/target rather than the repository's.
+const cargoTarget = resolve(env.CARGO_TARGET_DIR || resolve(uiRoot, "src-tauri", "target"));
 const bundleDirectory = resolve(cargoTarget, "release", "bundle");
 run("node", [resolve(repository, "scripts/write-sha256-manifest.mjs"), bundleDirectory], { env });

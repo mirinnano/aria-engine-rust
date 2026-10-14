@@ -110,6 +110,16 @@ export const sceneAssetByLogicalPath: Record<string, SceneAsset> = {
   "assets/bg/scenes/hotel-corridor-blue-v1.webp": { source: hotelCorridorBlue, name: "hotel-blue" },
   "assets/bg/scenes/rail-window-sunset-v1.webp": { source: railWindowSunset, name: "rail-sunset" },
   "assets/bg/scenes/neon-alley-v1.webp": { source: neonAlley, name: "neon" },
+  // Chapter catalogue images declared by `chapter … { image … }`.
+  "assets/bg/scenes/station-night-pass-v1.webp": { source: stationNightPass, name: "station" },
+  "assets/bg/scenes/rain-window-dusk-v1.webp": { source: rainWindow, name: "rain" },
+  "assets/bg/scenes/rail-platform-dawn-v1.webp": { source: railPlatformDawn, name: "platform" },
+  "assets/bg/scenes/mist-window-rail-v1.webp": { source: mistWindowRail, name: "mist-rail" },
+  "assets/bg/scenes/understructure-evening-v1.webp": { source: understructureEvening, name: "understructure" },
+  "assets/bg/scenes/night-window-motion-v1.webp": { source: nightWindowMotion, name: "night-motion" },
+  "assets/bg/scenes/blue-twilight-v1.webp": { source: blueTwilight, name: "blue-twilight" },
+  // `backdrop ferry` in the manuscript.
+  "assets/bg/scenes/ferry-fog-morning-v1.webp": { source: ferryFogMorning, name: "ferry-fog" },
 };
 
 export const stagePhotoByKind: Record<string, StagePhoto> = {
