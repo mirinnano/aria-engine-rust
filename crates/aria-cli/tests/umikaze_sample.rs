@@ -21,10 +21,10 @@ fn umikaze_sample_compiles_as_declarative_v32_without_host_opcodes() {
     assert!(entry.contains("use \"scenario/ja-JP/index.aria\";"));
     assert!(!entry.contains("screen setup;"));
     assert!(!entry.contains("scenario/en-US.aria"));
-    assert_eq!(project.manifest.runtime.save_namespace, "umikaze-v4");
+    assert_eq!(project.manifest.runtime.save_namespace, "umikaze-v5");
     assert_eq!(
         project.manifest.runtime.legacy_save_namespaces,
-        vec!["umikaze-v3"],
+        vec!["umikaze-v3", "umikaze-v4"],
     );
     assert!(
         program
@@ -196,9 +196,9 @@ fn demo_variant_compiles_only_the_opening_arc_and_closes_after_day_four() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/umikaze");
     let project = LoadedProject::load(&root)
         .unwrap()
-        .with_runtime_overrides(Some("scripts/main-demo.aria"), Some("umikaze-demo-v1"))
+        .with_runtime_overrides(Some("scripts/main-demo.aria"), Some("umikaze-demo-v2"))
         .unwrap();
-    assert_eq!(project.manifest.runtime.save_namespace, "umikaze-demo-v1");
+    assert_eq!(project.manifest.runtime.save_namespace, "umikaze-demo-v2");
     assert!(project.manifest.runtime.legacy_save_namespaces.is_empty());
 
     let program = project.compile().unwrap().program.unwrap();

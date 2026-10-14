@@ -158,8 +158,11 @@ function assertDemoPresentationBoundary() {
     "DAY 8",
     "DAY 9",
     "DAY 10",
-    "強い雨が、進む理由を足止めする。",
-    "終点を知らない列車",
+    "DAY 11",
+    // Later chapter metadata, as declared in the chapter files.
+    "朝から降る雨が、昼になっても弱まらない。",
+    "9月30日・駅の待合室",
+    "小さな駅",
   ];
   // Treat the demo as an allowlisted product. A blacklist eventually misses
   // a newly added late-game photograph; this list makes a new visual an
@@ -177,11 +180,17 @@ function assertDemoPresentationBoundary() {
     "hotel-corridor-blue-v1-",
     "sannomiya-rain-platform-v1-",
     "okayama-rail-window-v1-",
+    // `backdrop city` / `backdrop rain` in the revised DAY 1–4; already in
+    // the release verifier's PAK allowlist.
+    "neon-alley-v1-",
+    "rain-street-evening-v1-",
   ];
   for (const text of forbiddenText) {
     if (contains(text)) throw new Error(`demo presentation leaks later chapter text: ${text}`);
   }
-  if (!contains("9月24日・松江")) {
+  // Chapter metadata now comes from the demo bytecode's `chapter`
+  // declarations; the presentation must still carry DAY 4's preview image.
+  if (!contains("shore-storm-sunset-v1-")) {
     throw new Error("demo presentation omitted the final playable chapter preview");
   }
   const assetNames = existsSync(assets) ? readdirSync(assets) : [];
@@ -241,7 +250,7 @@ if (edition === "demo") {
   // Keep the full scenario modules out of the compiled import closure and
   // save independently from the commercial edition. The manifest on disk is
   // never modified by a build invocation.
-  buildArgs.push("--entry", "scripts/main-demo.aria", "--save-namespace", "umikaze-demo-v1");
+  buildArgs.push("--entry", "scripts/main-demo.aria", "--save-namespace", "umikaze-demo-v2");
 }
 if (release) buildArgs.push("--release");
 run(cargo, buildArgs, {

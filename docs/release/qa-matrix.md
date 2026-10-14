@@ -33,7 +33,7 @@ Playwrightには対象版の公開済みbundleを配信するローカルHTTPサ
 | Input | クリック、Enter、Space、下スクロール、H、Escape、右クリック、ゲームパッドA/B/Y/D-pad、接続解除/再接続 |
 | Reading | 120字超の日本語・英語・中国語、句読点境界、二行帯外なし、ページ完了後にだけ次入力で送る |
 | Save | 手動1–10、自動保存、破損世代からの復旧、履歴OK/NG、既読/章/CG/設定の保持 |
-| Editions | 完成版`umikaze-v4`と体験版`umikaze-demo-v1`を同一端末に共存させ、互いの保存を見ないこと |
+| Editions | 完成版`umikaze-v5`と体験版`umikaze-demo-v2`を同一端末に共存させ、互いの保存を見ないこと |
 | Performance | 低電力端末で静止タイトル/メニューがアイドル、文字送りP95、画像切替時の入力欠落なし |
 
 ## 画面キャプチャの基準点

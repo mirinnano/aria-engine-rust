@@ -101,7 +101,7 @@ const copy: Record<Locale, Copy> = {
     opening: "波が静まるまで、ここに記しておく。",
     openingRecord: "読み込んでいます",
     demoComplete: "体験版はここまでです。",
-    demoLead: "DAY 5 以降は、この体験版に含まれていません。",
+    demoLead: "この先は、体験版には含まれていません。",
     demoReplay: "体験版の章を読み返す",
     demoReturn: "タイトル画面へ戻る",
     begin: "記録をはじめる",
