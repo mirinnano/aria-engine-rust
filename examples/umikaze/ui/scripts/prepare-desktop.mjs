@@ -55,7 +55,7 @@ function rustTool(name, configured = undefined) {
 }
 
 const cargo = rustTool("cargo", process.env.CARGO);
-const wasmBindgen = rustTool("wasm-bindgen");
+const wasmBindgen = rustTool("wasm-bindgen", process.env.WASM_BINDGEN);
 // Tauri may set CARGO_TARGET_DIR to keep full and demo desktop bundles apart.
 // The preparatory Aria/Web compiler has deliberate, repository-relative cache
 // paths below `target/`; do not let the desktop shell's final-binary directory
@@ -201,6 +201,8 @@ const runtimeFingerprint = fingerprint("umikaze-web-runtime", [
   [repository, "Cargo.lock"],
   [repository, "rust-toolchain.toml"],
   [repository, "crates/aria-core/src"],
+  [repository, "crates/aria-plugin-sdk/src"],
+  [repository, "crates/aria-plugin-host/src"],
   [repository, "crates/aria-protection/src"],
   [repository, "crates/aria-render/src"],
   [repository, "crates/aria-web/src"],

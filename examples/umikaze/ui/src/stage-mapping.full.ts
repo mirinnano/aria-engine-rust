@@ -1,5 +1,7 @@
 // Full-release stage vocabulary. The demo owns a separate, intentionally
 // smaller module so Vite can exclude later chapter labels and mappings.
+// Fallback for snapshots taken before scripts carried `stage` cues. New
+// solid backgrounds are named by the cue, never by their RGB value.
 export const sceneToneByColor: Record<string, string> = {
   "16,43,56": "tide",
   "40,75,89": "school",

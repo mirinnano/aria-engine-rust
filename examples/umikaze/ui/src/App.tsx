@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import {
   Button,
   Dialog,
@@ -11,6 +11,7 @@ import {
   routeName,
   type ActionView,
   type AriaStepOutput,
+  type ChapterView,
   type ChoiceView,
   type UiIntent,
   type UiViewModel,
@@ -18,7 +19,6 @@ import {
 
 import { languageNames, localeFor, strings } from "./copy";
 import { bootPresentation, type PresentationRuntime, type SaveSlotSummary } from "./runtime";
-import { chapterPreviewByLabel } from "#chapter-preview";
 import {
   dayCardThemeByHeading,
   dayCardToneByHeading,
@@ -32,7 +32,10 @@ import {
   sceneSources,
   stagePhotoByKind,
 } from "#scene-assets";
-import type { ChapterPreviewRecord } from "./chapter-preview.types";
+import type { SceneAsset } from "./scene-assets.types";
+import { BrandSplash, shouldShowBrandSplash } from "./BrandSplash";
+import { MarkedText, graphemes } from "./MarkedText";
+import gameLogo from "./assets/brand/hesphoros-logo-white.svg";
 import "./app.css";
 import "./stage.css";
 
@@ -103,13 +106,38 @@ function chapterIdentity(label: string, fallbackDescription = ""): ChapterIdenti
   };
 }
 
+/** A chapter declared in Aria (`chapter id { … }`), as the catalogue shows it. */
+function declaredIdentity(chapter: ChapterView): ChapterIdentity {
+  const key = chapter.label || chapter.id;
+  return {
+    key,
+    numeral: chapter.numeral || fallbackChapterNumeral(key),
+    proposition: chapter.title,
+    date: chapter.date || "",
+    synopsis: chapter.description,
+  };
+}
+
+/** Identity for a choice: its declared chapter, else the legacy packed label. */
+function choiceIdentity(choice: ChoiceView, view: UiViewModel): { identity: ChapterIdentity; chapter?: ChapterView } {
+  const chapter = choice.chapter ? view.chapters.find((entry) => entry.id === choice.chapter) : undefined;
+  return chapter ? { identity: declaredIdentity(chapter), chapter } : { identity: chapterIdentity(choice.label) };
+}
+
+function chapterImage(chapter: ChapterView | undefined): string | undefined {
+  return chapter?.thumbnail ? sceneAssetByLogicalPath[chapter.thumbnail]?.source : undefined;
+}
+
 function dayCardHeading(view: UiViewModel | null | undefined): string | null {
   if (!view || routeName(view.route) !== "day_card") return null;
-  const label = view.choices[0]?.label;
-  return label ? chapterIdentity(label).key || null : null;
+  const choice = view.choices[0];
+  return choice ? choiceIdentity(choice, view).identity.key || null : null;
 }
 
 function dayCardThemeFor(view: UiViewModel | null | undefined): string {
+  // `stage <cue>;` before `screen day_card;` names the card's weather. The
+  // heading table only covers saves written before scripts carried cues.
+  if (view?.stage && routeName(view.route) === "day_card") return view.stage;
   const heading = dayCardHeading(view);
   return heading ? dayCardThemeByHeading[heading] || "record" : "record";
 }
@@ -136,6 +164,8 @@ function toneForScene(output: AriaStepOutput | null): string {
   if (background?.kind === "sprite" && typeof background.asset === "string") {
     return sceneAssetByLogicalPath[background.asset]?.name || "night";
   }
+  // A solid field has no photograph to name it, so the script's cue does.
+  if (output.view.stage) return output.view.stage;
   if (background?.kind === "rectangle" && background.color) {
     const color = background.color;
     const key = [color.red, color.green, color.blue].map(Number).join(",");
@@ -149,9 +179,7 @@ function toneForScene(output: AriaStepOutput | null): string {
  * project art; this component only decides which one belongs to the current
  * story state, without inventing another graphic language over it.
  */
-function ScenePhotograph({ output, transform }: { output: AriaStepOutput | null; transform?: string }) {
-  const route = output ? routeName(output.view.route) : "loading";
-  const tone = toneForScene(output);
+function sceneAssetFor(output: AriaStepOutput | null, tone = toneForScene(output)): SceneAsset {
   const scene = output?.scene as unknown as { commands?: unknown[] } | undefined;
   const background = scene?.commands?.find((command) => (
     Boolean(command)
@@ -161,7 +189,37 @@ function ScenePhotograph({ output, transform }: { output: AriaStepOutput | null;
   const logicalAsset = background?.kind === "sprite" && typeof background.asset === "string"
     ? sceneAssetByLogicalPath[background.asset]
     : undefined;
-  const asset = logicalAsset || sceneAssetByTone[tone] || sceneAssetByTone.coast;
+  return logicalAsset || sceneAssetByTone[tone] || sceneAssetByTone.coast;
+}
+
+const cameraEasing: Record<string, string> = {
+  linear: "linear",
+  ease_in: "cubic-bezier(0.4, 0, 1, 1)",
+  ease_out: "cubic-bezier(0.22, 1, 0.36, 1)",
+  ease_in_out: "cubic-bezier(0.65, 0, 0.35, 1)",
+};
+
+/**
+ * `camera zoom … pan (…)` framing. The VM keeps only the target; the photo
+ * eases toward it with a CSS transition, so a still frame has no animation
+ * clock of its own. Reduced motion jumps straight to the framing.
+ */
+function cameraStyle(view: UiViewModel | undefined): React.CSSProperties | undefined {
+  const camera = view?.camera;
+  if (!camera) return { transform: "none" };
+  const scale = camera.zoom / 100;
+  const duration = view.settings.reduced_motion ? 0 : camera.duration_ms;
+  return {
+    transform: `scale(${scale}) translate(${-camera.pan_x}%, ${-camera.pan_y}%)`,
+    transition: `transform ${duration}ms ${cameraEasing[camera.easing] ?? cameraEasing.ease_in_out}`,
+    transformOrigin: "50% 50%",
+  };
+}
+
+function ScenePhotograph({ output, transform }: { output: AriaStepOutput | null; transform?: string }) {
+  const route = output ? routeName(output.view.route) : "loading";
+  const tone = toneForScene(output);
+  const asset = sceneAssetFor(output, tone);
   if (!asset.source) {
     return (
       <div
@@ -179,7 +237,7 @@ function ScenePhotograph({ output, transform }: { output: AriaStepOutput | null;
       style={transform ? { transform } : undefined}
       aria-hidden="true"
     >
-      <img src={asset.source} alt="" decoding="async" />
+      <img src={asset.source} alt="" decoding="async" style={cameraStyle(output?.view)} />
     </div>
   );
 }
@@ -707,12 +765,25 @@ function quotationTerrain(index: number, anchor: boolean): React.CSSProperties {
  * supplies the aged signal and margin light that make a system screen feel
  * like part of the same record rather than a web overlay.
  */
+/**
+ * A system sheet continues the screen it was opened from rather than cutting
+ * to an unrelated location: the night title before reading, and the current
+ * scene (darkened and softened) during it.
+ */
+type BackdropOrigin = { fromTitle: boolean; scene: SceneAsset | null };
+const BackdropOriginContext = createContext<BackdropOrigin>({ fromTitle: true, scene: null });
+
 function StageBackdrop({ kind = "record" }: { kind?: string }) {
+  const origin = useContext(BackdropOriginContext);
   const isTitle = kind === "title";
-  const photo = stagePhotoByKind[kind] || stagePhotoByKind.record;
+  const ownsPhoto = isTitle || kind === "setup";
+  const useTitle = !ownsPhoto && (origin.fromTitle || kind === "chapter" || !origin.scene?.source);
+  const sceneSource = !ownsPhoto && !useTitle ? origin.scene?.source : undefined;
+  const photo = useTitle ? stagePhotoByKind.title : stagePhotoByKind[kind] || stagePhotoByKind.record;
+  const originClass = ownsPhoto ? "" : useTitle ? " record-stage-backdrop--from-title" : " record-stage-backdrop--from-scene";
   return (
-    <div className={`record-stage-backdrop record-stage-backdrop--${kind}`} aria-hidden="true">
-      <img className={`record-stage-photograph record-stage-photograph--${photo.name}`} src={photo.source} alt="" decoding="async" />
+    <div className={`record-stage-backdrop record-stage-backdrop--${kind}${originClass}`} aria-hidden="true">
+      <img className={`record-stage-photograph record-stage-photograph--${sceneSource ? "scene" : photo.name}`} src={sceneSource || photo.source} alt="" decoding="async" />
       {isTitle && (
         <div className="record-stage-quotations" lang="ja">
           {titleQuotationFragments.map((quotation, index) => (
@@ -813,6 +884,7 @@ function FocusMenu({
       ? (direction > 0 ? 0 : controls.length - 1)
       : (activeIndex + direction + controls.length) % controls.length;
     controls[next]?.focus({ preventScroll: true });
+    controls[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
   return (
@@ -852,7 +924,7 @@ function FocusMenu({
               onPress={() => onAction(item.id)}
             >
               <span className="focus-menu-command">{item.label}</span>
-              {item.active && <span className="focus-menu-state" aria-label="ON">ON</span>}
+              {item.active && <span className="focus-menu-state">ON</span>}
               {noteFollowsItem && <span className="focus-menu-inline-description">{item.description}</span>}
             </Button>
           );
@@ -997,7 +1069,7 @@ function SettingsSheet({ view, copy, dispatch }: {
     { id: "text", label: "TEXT", description: copy.readingControls },
     { id: "sound", label: "SOUND", description: copy.sound },
     { id: "display", label: "DISPLAY", description: copy.display },
-    { id: "system", label: "SYSTEM", description: copy.records },
+    { id: "system", label: "SYSTEM", description: copy.systemSection },
   ];
   const selectedSection = sections.find((item) => item.id === section) ?? sections[0];
   return (
@@ -1035,6 +1107,8 @@ function SettingsSheet({ view, copy, dispatch }: {
                 valueLabel={copy.valuePercent(view.settings.sound_effect_volume)} onChange={(value) => set("sound_effect_volume", value)} />
               <SettingRail label={copy.voice} value={view.settings.voice_volume} min={0} max={1} step={0.05}
                 valueLabel={copy.valuePercent(view.settings.voice_volume)} onChange={(value) => set("voice_volume", value)} />
+              <SettingRail label={copy.ambient} value={view.settings.ambient_volume ?? 1} min={0} max={1} step={0.05}
+                valueLabel={copy.valuePercent(view.settings.ambient_volume ?? 1)} onChange={(value) => set("ambient_volume", value)} />
             </div>
           )}
           {section === "display" && (
@@ -1112,8 +1186,16 @@ function ConfirmationSheet({ view, copy, onAction }: {
         : copy.confirmReset;
   const acceptId = scripted ? scriptedChoices[0].id : "confirm.accept";
   const cancelId = scripted ? scriptedChoices[1].id : "confirm.cancel";
-  const acceptLabel = scripted ? scriptedChoices[0].label : copy.ok;
-  const cancelLabel = scripted ? scriptedChoices[1].label : copy.ng;
+  // Each button names its own outcome; "OK" would make the reader reread the
+  // question to learn which button leaves the game.
+  const acceptLabel = scripted
+    ? scriptedChoices[0].label
+    : action === "quit"
+      ? copy.acceptQuit
+      : action === "resume_backlog"
+        ? copy.acceptResume
+        : copy.acceptReset;
+  const cancelLabel = scripted ? scriptedChoices[1].label : copy.decline;
   const resumeTarget = action === "resume_backlog"
     ? view.backlog.find((entry) => entry.id === view.confirmation?.resume_id)
     : null;
@@ -1131,7 +1213,7 @@ function ConfirmationSheet({ view, copy, onAction }: {
       <Modal className="confirmation-modal">
         <Dialog
           className="confirmation-dialog"
-          aria-label="CONFIRM"
+          aria-label={copy.confirm}
           data-scripted-confirmation={scripted ? "true" : "false"}
         >
           <StageBackdrop kind="confirm" />
@@ -1208,14 +1290,14 @@ function SaveLoadSheet({ kind, view, copy, onAction, dispatch, saveSlots }: {
           const id = `${kind}.slot.${slot}`;
           const slotLabel = kind === "save" ? copy.saveSlot(slot) : copy.loadSlot(slot);
           const record = records.get(slot);
-          const description = recordDescription(record) || (kind === "load" ? copy.emptyRecord : slotLabel);
+          const description = recordDescription(record) || copy.emptyRecord;
           const descriptionId = `record-slot-${kind}-${slot}`;
           return (
             <Button key={id} data-aria-focusable data-aria-action={id} className="record-slot"
               aria-label={slotLabel} aria-describedby={descriptionId}
               isDisabled={!actionEnabled(view, id) || (kind === "load" && !record)} onPress={() => onAction(id)}>
               <span className="record-slot-index">{copy.recordIndex(slot)}</span>
-              <span className="record-slot-action">{record?.speaker || (kind === "save" ? copy.writeRecord : copy.openRecord)}</span>
+              <span className="record-slot-action">{record?.speaker || (kind === "save" ? copy.writeRecord : record ? copy.openRecord : "")}</span>
               <span id={descriptionId} className="record-slot-label">{description}</span>
             </Button>
           );
@@ -1322,28 +1404,27 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
   type ChapterCard = {
     id: string;
     identity: ChapterIdentity;
-    preview?: ChapterPreviewRecord;
+    image?: string;
     unlocked: boolean;
     selected: boolean;
   };
   const cards: ChapterCard[] = view.choices.length ? view.choices.map((choice) => {
-    const identity = chapterIdentity(choice.label);
-    const preview = chapterPreviewByLabel[identity.key];
+    const { identity, chapter } = choiceIdentity(choice, view);
     return {
       id: choice.id,
       identity,
-      preview,
+      image: chapterImage(chapter),
       unlocked: true,
       selected: choice.selected,
     };
   }) : view.chapters.map((chapter) => {
-    const label = chapter.title || chapter.id;
-    const identity = chapterIdentity(label, chapter.description);
-    const preview = chapterPreviewByLabel[identity.key];
+    const identity = chapter.label
+      ? declaredIdentity(chapter)
+      : chapterIdentity(chapter.title || chapter.id, chapter.description);
     return {
       id: `chapter:${chapter.id}`,
       identity,
-      preview,
+      image: chapterImage(chapter),
       unlocked: chapter.unlocked,
       selected: false,
     };
@@ -1358,7 +1439,7 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
   }, [cards, initialPreviewId, previewChapterId]);
   const featured = cards.find((card) => card.id === previewChapterId) ?? cards.find((card) => card.id === initialPreviewId);
   const featuredIndex = Math.max(0, cards.findIndex((card) => card.id === featured?.id));
-  const previewSource = (featured?.preview && sceneSources[featured.preview.scene])
+  const previewSource = featured?.image
     ?? chapterFallbackSources[featuredIndex % chapterFallbackSources.length];
   const moveIndexFocus = (container: HTMLElement, direction: -1 | 1) => {
     const controls = [...container.querySelectorAll<HTMLButtonElement>("[data-chapter-index-item]")]
@@ -1369,6 +1450,7 @@ function ChapterSheet({ view, copy, onAction, dispatch }: {
       ? (direction > 0 ? 0 : controls.length - 1)
       : (activeIndex + direction + controls.length) % controls.length;
     controls[next]?.focus({ preventScroll: true });
+    controls[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
   return (
     <OverlaySheet title="CHAPTERS" kicker={copy.chapters} dismissLabel={copy.close} variant="chapter" onDismiss={() => dispatch({ kind: "dismiss" })}>
@@ -1472,16 +1554,16 @@ function GallerySheet({ view, copy, onAction, dispatch }: {
   return (
     <OverlaySheet title="EXTRA" kicker={copy.gallery} dismissLabel={copy.close} variant="archive" surface="gallery" onDismiss={() => dispatch({ kind: "dismiss" })}>
       <div className="gallery-grid">
-        {view.gallery.length === 0 && <p className="empty-state">{copy.noEntries}</p>}
+        {view.gallery.length === 0 && <p className="empty-state">{copy.noGallery}</p>}
         {view.gallery.map((item, index) => (
           <Button key={item.id} data-aria-focusable data-aria-action={`gallery:${item.id}`}
             className={`gallery-card gallery-card--${index % 3}${item.unlocked ? "" : " is-locked"}${item.selected ? " is-selected" : ""}`}
-            aria-label={item.unlocked ? copy.memory(index + 1) : copy.locked}
+            aria-label={item.unlocked ? copy.memory(index + 1) : copy.lockedMemory}
             isDisabled={!item.unlocked || !actionEnabled(view, `gallery:${item.id}`)}
             onPress={() => onAction(`gallery:${item.id}`)}>
             <span className="gallery-image" aria-hidden="true" style={{ backgroundImage: `linear-gradient(180deg, rgb(5 16 22 / 8%), rgb(5 16 22 / 64%)), url(${gallerySources[index % gallerySources.length]})` }} />
             <span className="gallery-index">{String(index + 1).padStart(2, "0")}</span>
-            <span className="gallery-label">{item.unlocked ? copy.memory(index + 1) : copy.locked}</span>
+            <span className="gallery-label">{item.unlocked ? copy.memory(index + 1) : copy.lockedMemory}</span>
           </Button>
         ))}
       </div>
@@ -1522,8 +1604,16 @@ function Dialogue({ view, copy, onAction, chromeVisible, onRevealChrome }: {
         data-page-count={dialogue?.page_count ?? 0}
         style={{ "--subtitle-columns": dialogue?.columns ?? 80 } as React.CSSProperties}>
         <div className="subtitle-content">
-          {dialogue?.speaker && <span className="subtitle-speaker">{dialogue.speaker}</span>}
-          <span className="dialogue-text" aria-live="off">{dialogue?.text || ""}</span>
+          {dialogue?.speaker && (
+            <span className="subtitle-speaker" data-speaker={dialogue.speaker_id}>{dialogue.speaker}</span>
+          )}
+          <span className="dialogue-text" aria-live="off" data-speaker={dialogue?.speaker_id}>
+            <MarkedText
+              text={dialogue?.full_page_text || ""}
+              markup={dialogue?.markup}
+              visible={graphemes(dialogue?.text || "").length}
+            />
+          </span>
           <span className="sr-only" aria-live="polite" aria-atomic="true">{completedAnnouncement}</span>
         </div>
         <Button className="reading-advance" data-aria-focusable data-aria-action="dialogue.advance" aria-label={copy.next} onPress={() => onAction("dialogue.advance")}>
@@ -1544,7 +1634,7 @@ type DayCardContent = {
 function dayCardFor(view: UiViewModel): DayCardContent | null {
   const choice = view.choices[0];
   if (!choice) return null;
-  const identity = chapterIdentity(choice.label);
+  const { identity } = choiceIdentity(choice, view);
   if (!identity.key || !identity.proposition || !identity.date || !identity.synopsis) return null;
   return { choice, identity };
 }
@@ -1605,7 +1695,7 @@ function Interlude({ view, copy, onAction }: {
   onAction: (id: string) => void;
 }) {
   const text = view.dialogue?.full_page_text || "";
-  const firstVisit = view.interlude?.first_visit ?? false;
+  const firstVisit = view.story_surface?.first_visit ?? false;
   const remaining = view.timed_hold_remaining_ms ?? INTERLUDE_HOLD_MS;
   const elapsed = Math.min(INTERLUDE_HOLD_MS, Math.max(0, INTERLUDE_HOLD_MS - remaining));
   return (
@@ -1628,7 +1718,7 @@ function Interlude({ view, copy, onAction }: {
           aria-atomic="true"
           style={{ animationDelay: `-${elapsed}ms` }}
         >
-          {text}
+          <MarkedText text={text} markup={view.dialogue?.markup} />
         </p>
         <span className="sr-only">{copy.next}</span>
       </Button>
@@ -1658,7 +1748,7 @@ function Statement({ view, copy }: {
         aria-atomic="true"
         style={{ animationDelay: `-${elapsed}ms` }}
       >
-        {text}
+        <MarkedText text={text} markup={view.dialogue?.markup} />
       </p>
     </section>
   );
@@ -1721,7 +1811,7 @@ function Title({ view, copy, onAction }: {
       <StageBackdrop kind="title" />
       <header className="title-identity">
         <div className="title-masthead">
-          <h1>{copy.title}</h1>
+          <h1><img className="title-logo" src={gameLogo} alt={copy.title} draggable={false} /></h1>
           {isDemoEdition && <p className="title-edition">DEMO</p>}
         </div>
       </header>
@@ -1808,8 +1898,7 @@ function Setup({ view, copy, onAction }: {
       <StageBackdrop kind="setup" />
       <header className="title-identity">
         <div className="title-masthead">
-          <h1>{copy.title}</h1>
-          <p className="title-subtitle">{copy.subtitle}</p>
+          <h1><img className="title-logo" src={gameLogo} alt={copy.title} draggable={false} /></h1>
         </div>
       </header>
       <div className="title-selection title-selection--setup">
@@ -1874,6 +1963,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [chromeVisible, setChromeVisible] = useState(false);
   const [saveSlots, setSaveSlots] = useState<SaveSlotSummary[]>([]);
+  const [splashing, setSplashing] = useState(shouldShowBrandSplash);
 
   useEffect(() => {
     const target = canvas.current;
@@ -1920,6 +2010,10 @@ export default function App() {
   // Interludes fade their black field away to the already selected scene
   // photograph. Statements remain truly image-less, as authored.
   const isTextOnlyRoute = route === "statement";
+  const backdropOrigin: BackdropOrigin = {
+    fromTitle: !view || [view.route, ...view.route_stack].some((entry) => ["title", "setup"].includes(routeName(entry))),
+    scene: view ? sceneAssetFor(output) : null,
+  };
   const tone = toneForScene(output);
   const dayCardTheme = dayCardThemeFor(view);
   const isReadingStage = route === "dialogue"
@@ -2141,11 +2235,19 @@ export default function App() {
         <SceneTransitionVeil output={output} />
       </>}
       <div className="presentation-layer">
-        {view && <Screen view={view} dispatch={dispatch} chromeVisible={chromeVisible} onRevealChrome={revealChrome} saveSlots={saveSlots} />}
+        <BackdropOriginContext.Provider value={backdropOrigin}>
+          {view && <Screen view={view} dispatch={dispatch} chromeVisible={chromeVisible} onRevealChrome={revealChrome} saveSlots={saveSlots} />}
+        </BackdropOriginContext.Provider>
         {!view && !error && bootSlow && <OpeningRecord copy={fallbackCopy} />}
         {error && <RuntimeProblem copy={fallbackCopy} detail={error} />}
       </div>
       {!error && view && status && <p className="runtime-status" role="status" aria-live="polite">{status}</p>}
+      {splashing && !error && (
+        <BrandSplash
+          reducedMotion={window.matchMedia("(prefers-reduced-motion: reduce)").matches}
+          onDone={() => setSplashing(false)}
+        />
+      )}
     </main>
   );
 }

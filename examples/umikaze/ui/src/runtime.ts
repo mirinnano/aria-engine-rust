@@ -8,6 +8,8 @@ import {
 
 type WasmRuntime = {
   step(input: string): string;
+  register_plugin(bytes: Uint8Array): void;
+  free?(): void;
   save_envelope_json(timestamp: bigint): string;
   restore_envelope_json(envelope: string): void;
 };
@@ -189,6 +191,7 @@ type Bundle = {
   save_namespace: string;
   legacy_save_namespaces?: string[];
   font_assets: string[];
+  plugin_assets?: string[];
   pak_blake3: string;
   pak_size: number;
   pack_id: string;
@@ -285,7 +288,7 @@ function viewFingerprint(view: UiViewModel): string {
     view.auto_mode,
     view.skip_mode,
     view.gallery_viewer ?? "",
-    view.interlude?.first_visit ? "interlude:first" : view.interlude ? "interlude:return" : "",
+    view.story_surface?.first_visit ? "interlude:first" : view.story_surface ? "interlude:return" : "",
     view.confirmation?.action ?? "",
     view.confirmation?.resume_id ?? "",
     view.backlog_total,
@@ -331,7 +334,7 @@ function autosaveFingerprint(view: UiViewModel): string {
     chapters: view.chapters.map((chapter) => [chapter.id, chapter.unlocked, chapter.progress]),
     gallery: view.gallery.map((item) => [item.id, item.unlocked, item.selected]),
     galleryViewer: view.gallery_viewer,
-    interludeFirstVisit: view.interlude?.first_visit ?? null,
+    interludeFirstVisit: view.story_surface?.first_visit ?? null,
     confirmation: view.confirmation
       ? [view.confirmation.action, view.confirmation.resume_id]
       : null,
@@ -427,6 +430,7 @@ function focusRelative(direction: -1 | 1) {
     ? (direction > 0 ? 0 : candidates.length - 1)
     : (current + direction + candidates.length) % candidates.length;
   candidates[next]?.focus({ preventScroll: true });
+  candidates[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function isPressed(button: GamepadButton | undefined): boolean {
@@ -468,7 +472,8 @@ export async function bootPresentation(
     throw new Error("The game bundle is incomplete; build the presentation through aria build.");
   }
   const bundle = await bundleResponse.json() as Bundle;
-  if (bundle.schema_version !== 5 || bundle.vm_abi_version !== 4) {
+  if (![5, 6].includes(bundle.schema_version) || bundle.vm_abi_version !== 4
+    || (bundle.schema_version === 5 && Boolean(bundle.plugin_assets?.length))) {
     throw new Error("This presentation does not support the bundled Aria runtime.");
   }
   const bytecode = new Uint8Array(await bytecodeResponse.arrayBuffer());
@@ -645,7 +650,26 @@ export async function bootPresentation(
     console.warn("Unable to enumerate save records", cause);
   });
 
-  let runtime = new wasm.WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
+  const pluginPaths = bundle.plugin_assets ?? [];
+  if (pluginPaths.length > 16 || new Set(pluginPaths).size !== pluginPaths.length) {
+    throw new Error("Invalid bundled plugin inventory.");
+  }
+  for (const path of pluginPaths) {
+    if (!path.endsWith(".wasm") || !assetPack.has(path)) throw new Error(`Missing plugin asset: ${path}`);
+  }
+  await Promise.all(pluginPaths.map((path) => ensurePackForAsset(path)));
+  const pluginBytes = pluginPaths.map((path) => readAsset(path));
+  const createRuntime = () => {
+    const instance = new wasm.WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
+    try {
+      for (const bytes of pluginBytes) instance.register_plugin(bytes);
+      return instance;
+    } catch (error) {
+      instance.free?.();
+      throw error;
+    }
+  };
+  let runtime = createRuntime();
   let disposed = false;
   let frameRequest = 0;
   let timerRequest: number | null = null;
@@ -864,12 +888,8 @@ export async function bootPresentation(
     if (event.defaultPrevented || event.isComposing || isEditableTarget(event.target)) return;
     const view = activeOutput?.view;
     const activeRoute = view ? routeName(view.route) : "";
-    const dayCardRoute = activeRoute === "day_card";
-    const interludeRoute = activeRoute === "interlude";
-    const statementRoute = activeRoute === "statement";
-    const readingRoute = dayCardRoute
-      || interludeRoute
-      || statementRoute
+    const surface = view?.story_surface;
+    const readingRoute = Boolean(surface?.reading_surface)
       || activeRoute === "dialogue"
       || (activeRoute === "chapter_select" && Boolean(view?.dialogue) && view?.choices.length === 0);
     const galleryViewer = activeRoute === "gallery" && Boolean(view?.gallery_viewer);
@@ -902,16 +922,12 @@ export async function bootPresentation(
       // that the story finishes delivering itself; keyboard input remains
       // available for H/Escape below, but Enter and Space must not shorten
       // its authored hold.
-      if (statementRoute) return;
+      if (surface?.atomic_text && !surface.advance_action) return;
       if (!event.repeat) {
         // A day card is deliberately a choice-shaped pause, not a dialogue
         // page. Its sole action enters the chapter; sending dialogue.advance
         // would leave keyboard users on a silent card.
-        const advanceId = dayCardRoute
-          ? view?.choices[0]?.id
-          : interludeRoute
-            ? "interlude.advance"
-            : "dialogue.advance";
+        const advanceId = view?.choices[0]?.id ?? surface?.advance_action ?? "dialogue.advance";
         if (advanceId) {
           queued.push({ kind: "activate", id: advanceId });
           wake();
@@ -966,8 +982,10 @@ export async function bootPresentation(
       const view = activeOutput?.view;
       if (!view) return null;
       const route = routeName(view.route);
-      if (route === "day_card") return view.choices[0]?.id ?? null;
-      if (route === "interlude") return "interlude.advance";
+      if (view.story_surface?.reading_surface) {
+        return view.choices[0]?.id ?? view.story_surface.advance_action
+          ?? (view.story_surface.atomic_text ? null : "dialogue.advance");
+      }
       if (route === "dialogue" || (route === "chapter_select" && Boolean(view.dialogue) && view.choices.length === 0)) {
         return "dialogue.advance";
       }
@@ -976,9 +994,7 @@ export async function bootPresentation(
     const isReadingRoute = () => {
       const view = activeOutput?.view;
       if (!view) return false;
-      const route = routeName(view.route);
-      return route === "statement"
-        || readingAdvanceAction() !== null;
+      return Boolean(view.story_surface?.reading_surface) || readingAdvanceAction() !== null;
     };
     const galleryViewerActive = () => {
       const view = activeOutput?.view;
@@ -1078,8 +1094,9 @@ export async function bootPresentation(
         const generations = await saves.generations(bundle.save_namespace, command.slot);
         for (const generation of generations) {
           try {
-            const probe = new wasm.WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
-            probe.restore_envelope_json(generation.payload);
+            const probe = createRuntime();
+            try { probe.restore_envelope_json(generation.payload); }
+            finally { probe.free?.(); }
             audio.stopAll();
             runtime.restore_envelope_json(generation.payload);
             restored = true;

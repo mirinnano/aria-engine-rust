@@ -1,6 +1,8 @@
 // A closed, opening-arc-only stage vocabulary. This is intentionally separate
 // from the full map so a public demo bundle cannot retain later chapter names
 // merely because the shared presentation knows how to render them.
+// Fallback for snapshots taken before scripts carried `stage` cues. New
+// solid backgrounds are named by the cue, never by their RGB value.
 export const sceneToneByColor: Record<string, string> = {
   "16,43,56": "tide",
   "40,75,89": "school",

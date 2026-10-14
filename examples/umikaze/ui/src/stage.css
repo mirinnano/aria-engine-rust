@@ -15,6 +15,14 @@
   --stage-signal: #a7dcda;
   --stage-oxide: #671c38;
   --stage-white: #f3f2e9;
+  /* Operational type and hit areas, separate from the decorative quotations. */
+  --stage-hit: 44px;
+  --stage-ui-sm: 0.875rem;
+  --stage-ui-md: 1rem;
+  --stage-ui-lg: 1.25rem;
+  --stage-meta: rgb(202 231 225 / 82%);
+  --stage-gap-tight: 8px;
+  --stage-gap: 16px;
 }
 
 .record-stage-backdrop {
@@ -1649,15 +1657,18 @@
   gap: 0.25rem;
 }
 
+/* A proposition is the chapter's one line of thought; an ellipsis would cut
+   it mid-clause ("…うちにあ…"), so it wraps instead of truncating. Phrase
+   breaking keeps the second line from becoming a stray "ある。". */
 .chapter-index-proposition {
-  overflow: hidden;
   color: inherit;
   font-family: var(--font-title);
   font-size: clamp(0.78rem, 0.35vw + 0.7rem, 0.96rem);
   letter-spacing: 0.035em;
   line-height: 1.5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-break: strict;
+  word-break: auto-phrase;
+  text-wrap: balance;
 }
 
 .chapter-index-date {
@@ -2135,4 +2146,281 @@
   .rmenu-command-list .focus-menu-description { margin-top: 0.45rem; }
   .record-stage-quotations { bottom: auto; height: 34vh; }
   .record-stage-quotation:nth-child(n + 25) { display: none; }
+}
+
+/* Reading controls stay unframed. Legibility and touch geometry must not be
+   inferred from the tiny type of the quotation terrain behind them. These
+   rules deliberately do not select any record-stage-quotation. */
+.title-command-list .focus-menu-item,
+.rmenu-command-list .focus-menu-item,
+.demo-end-command-list .focus-menu-item {
+  min-width: var(--stage-hit);
+  min-height: var(--stage-hit);
+  max-width: 100%;
+  padding: 4px 0;
+  row-gap: 8px;
+  font-size: var(--stage-ui-lg);
+  touch-action: manipulation;
+}
+
+.title-command-list .focus-menu-list,
+.rmenu-command-list .focus-menu-list { gap: var(--stage-gap-tight); }
+
+.title-command-list .focus-menu-inline-description,
+.rmenu-command-list .focus-menu-inline-description,
+.demo-end-command-list .focus-menu-inline-description,
+.stage-close,
+.stage-sheet .sheet-kicker,
+.chapter-preview-key,
+.chapter-preview-numeral,
+.chapter-preview-date,
+.chapter-preview-description,
+.chapter-index-numeral,
+.chapter-index-date,
+.record-slot-index,
+.record-slot-date,
+.settings-index-item,
+.setting-rail-label,
+.setting-rail-value,
+.binary-setting-button,
+.day-card-coordinate,
+.day-card-synopsis {
+  font-size: var(--stage-ui-sm);
+}
+
+.chapter-index-date,
+.chapter-index-numeral,
+.chapter-preview-date { color: var(--stage-meta); }
+.chapter-index-proposition { font-size: var(--stage-ui-md); }
+.chapter-index-row { min-height: 72px; }
+
+/* A thicker signal and underline distinguish actual keyboard focus from a
+   pointer's preview. Keep the open composition, not a boxed app button. */
+.title-command-list .focus-menu-item:focus-visible::before,
+.rmenu-command-list .focus-menu-item:focus-visible::before,
+.demo-end-command-list .focus-menu-item:focus-visible::before {
+  width: 2px;
+  height: 1.2em;
+  opacity: 1;
+}
+.focus-menu-item:focus-visible .focus-menu-command {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.3em;
+}
+
+.title-selection {
+  min-height: 0;
+  max-height: calc(100dvh - 96px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-left: var(--stage-gap);
+  scroll-padding-block: 8px;
+  overscroll-behavior: contain;
+}
+.pause-ledger.stage-rmenu {
+  max-height: calc(100dvh - 144px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 8px 8px 16px;
+  scroll-padding-block: 8px;
+  overscroll-behavior: contain;
+}
+
+:where(.high-contrast, html.umikaze-high-contrast) :is(
+  .chapter-index-date, .chapter-index-numeral, .chapter-preview-date,
+  .chapter-preview-description, .focus-menu-inline-description, .sheet-kicker
+) { color: var(--stage-white); }
+
+@media (max-width: 760px) {
+  .title-command-list .focus-menu-item,
+  .rmenu-command-list .focus-menu-item { font-size: var(--stage-ui-md); }
+  .chapter-index-proposition,
+  .chapter-index-date {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+  .chapter-index-row { padding-block: 12px; }
+}
+
+@media (forced-colors: active) {
+  .focus-menu-item:focus-visible { outline: 2px solid Highlight; outline-offset: -2px; }
+}
+
+/* Propositions are set in display sizes, where a one-word final line reads as
+   a separate utterance. Break Japanese at phrase boundaries and balance. */
+.chapter-preview-heading :is(h1, h2, h3, p),
+#day-card-title {
+  word-break: auto-phrase;
+  text-wrap: balance;
+}
+
+/* ---------------------------------------------------------------------------
+   RMenu: a full-height column in the left third, spaced like the title rather
+   than a compact box in the corner. Commands are grouped by consequence
+   (resume / reading / records / extras / leaving), and the focused note sits
+   beside its command so moving focus never shifts the rest of the column.
+   ------------------------------------------------------------------------ */
+.rmenu-modal {
+  top: 0;
+  bottom: 0;
+  left: clamp(3rem, 9vw, 9rem);
+  display: flex;
+  align-items: center;
+  width: min(34rem, calc(100vw - 6rem));
+  height: 100%;
+}
+
+.pause-ledger.stage-rmenu { max-height: none; justify-content: center; }
+.rmenu-command-list { width: auto; height: auto; overflow: visible; }
+
+.rmenu-command-list .focus-menu-list {
+  gap: clamp(0.45rem, 1.7vh, 1.2rem);
+}
+
+.rmenu-command-list .focus-menu-item {
+  position: relative;
+  grid-template-areas: "command state";
+  align-content: center;
+  justify-self: start;
+  min-height: 44px;
+  font-size: clamp(0.98rem, 0.72vw + 0.72rem, 1.28rem);
+  letter-spacing: 0.24em;
+}
+
+.rmenu-command-list :is(
+  [data-aria-action="menu.auto"],
+  [data-aria-action="menu.save"],
+  [data-aria-action="menu.gallery"],
+  [data-aria-action="menu.reset"]
+) {
+  margin-top: clamp(0.7rem, 2.6vh, 1.9rem);
+}
+
+.rmenu-command-list .focus-menu-inline-description {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 1.6rem);
+  width: max-content;
+  max-width: 18rem;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+/* The room the column leaves on the right is the stopped scene itself; a
+   faint left-weighted shade only keeps commands legible over bright frames. */
+.rmenu-overlay::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(90deg, rgb(4 7 12 / 62%) 0%, rgb(4 7 12 / 38%) 34%, transparent 62%);
+}
+
+@media (max-height: 640px) and (min-width: 761px) {
+  .rmenu-command-list .focus-menu-list { gap: 0.15rem; }
+  .rmenu-command-list .focus-menu-item { min-height: 44px; }
+  .rmenu-command-list :is(
+    [data-aria-action="menu.auto"],
+    [data-aria-action="menu.save"],
+    [data-aria-action="menu.gallery"],
+    [data-aria-action="menu.reset"]
+  ) { margin-top: 0.5rem; }
+}
+
+@media (max-width: 760px) {
+  .rmenu-modal { left: max(28px, calc(env(safe-area-inset-left) + 20px)); width: calc(100vw - 3.5rem); }
+  .rmenu-command-list .focus-menu-list { gap: 0.4rem; }
+  .rmenu-command-list .focus-menu-item { min-height: 44px; }
+  .rmenu-command-list .focus-menu-item { grid-template-areas: "command state" "note note"; }
+  .rmenu-command-list .focus-menu-inline-description {
+    position: static;
+    transform: none;
+    white-space: normal;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   System sheets continue their origin. Before reading they sit in the title's
+   night (wine-to-indigo grade); during reading they sit in the current scene,
+   darkened and softened so it reads as "behind" the sheet, not as a new place.
+   ------------------------------------------------------------------------ */
+.record-stage-backdrop--from-title { background: #060911; }
+.record-stage-backdrop--from-title .record-stage-photograph {
+  filter: blur(1.2px) saturate(0.7) contrast(1.06) brightness(0.5);
+  transform: scale(1.02);
+}
+.record-stage-backdrop--from-title::before {
+  background:
+    linear-gradient(100deg, rgb(14 6 18 / 94%) 0%, rgb(16 9 27 / 84%) 40%, rgb(4 12 22 / 70%) 100%),
+    radial-gradient(ellipse 60% 70% at 4% 92%, rgb(128 20 53 / 20%), transparent 70%);
+}
+
+.record-stage-backdrop--from-scene .record-stage-photograph {
+  filter: blur(18px) saturate(0.62) brightness(0.42);
+  transform: scale(1.08);
+}
+.record-stage-backdrop--from-scene::before {
+  background: linear-gradient(100deg, rgb(4 7 11 / 90%) 0%, rgb(6 11 16 / 74%) 44%, rgb(5 12 16 / 58%) 100%);
+}
+
+:where(.high-contrast, html.umikaze-high-contrast) :is(.record-stage-backdrop--from-title, .record-stage-backdrop--from-scene)::before {
+  background: rgb(0 0 0 / 88%);
+}
+
+/* Launch cards: maker mark, then title mark, alone on near-black. */
+.brand-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: #05070b;
+  cursor: default;
+}
+
+.brand-splash-logo {
+  display: block;
+  height: auto;
+  opacity: 0;
+  transition-property: opacity;
+  transition-timing-function: cubic-bezier(0.33, 0, 0.2, 1);
+  user-select: none;
+}
+
+.brand-splash-logo.is-visible { opacity: 1; }
+.brand-splash-logo--maker { width: min(46vw, 25rem); opacity: 0; }
+.brand-splash-logo--maker.is-visible { opacity: 0.9; }
+.brand-splash-logo--game { width: min(52vw, 30rem); filter: drop-shadow(0 0 1.4rem rgb(167 220 218 / 14%)); }
+
+/* The title heading is the HesPhoros wordmark. Its hairline strokes need a
+   soft shadow rather than the old Mincho glyph's chromatic edge. */
+.title-masthead h1 { line-height: 0; }
+.title-logo {
+  display: block;
+  width: clamp(15rem, 34vw, 31rem);
+  height: auto;
+  filter:
+    drop-shadow(0 2px 3px rgb(0 0 0 / 80%))
+    drop-shadow(0 0 1.6rem rgb(98 178 183 / 18%));
+  user-select: none;
+}
+.record-setup-screen .title-logo { width: clamp(13rem, 28vw, 25rem); }
+@media (max-width: 760px) {
+  .title-logo { width: min(72vw, 20rem); }
+}
+
+/* Ruby and 傍点 authored as |漢字《かんじ》 and 《《ここ》》. */
+:is(.dialogue-text, .interlude-line, .statement-line) ruby { ruby-position: over; }
+:is(.dialogue-text, .interlude-line, .statement-line) rt {
+  font-size: 0.5em;
+  letter-spacing: 0.04em;
+  opacity: 0.86;
+}
+.text-emphasis {
+  font-style: normal;
+  text-emphasis: filled sesame;
+  -webkit-text-emphasis: filled sesame;
+  text-emphasis-position: over right;
 }

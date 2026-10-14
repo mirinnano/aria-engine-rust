@@ -10,6 +10,8 @@ import platformSeaDawn from "../../assets/bg/scenes/platform-sea-dawn-v1.webp";
 import hotelCorridorBlue from "../../assets/bg/scenes/hotel-corridor-blue-v1.webp";
 import sannomiyaRainPlatform from "../../assets/bg/scenes/sannomiya-rain-platform-v1.webp";
 import okayamaRailWindow from "../../assets/bg/scenes/okayama-rail-window-v1.webp";
+import neonAlley from "../../assets/bg/scenes/neon-alley-v1.webp";
+import rainStreetEvening from "../../assets/bg/scenes/rain-street-evening-v1.webp";
 import type { SceneAsset, StagePhoto } from "./scene-assets.types";
 
 // The browser demo is deliberately a closed opening arc. It reuses its
@@ -75,6 +77,12 @@ export const sceneAssetByLogicalPath: Record<string, SceneAsset> = {
   "assets/bg/scenes/coast-road-dawn-v1.webp": { source: coastRoad, name: "coast-road" },
   "assets/bg/scenes/sannomiya-rain-platform-v1.webp": { source: sannomiyaRainPlatform, name: "sannomiya-rain-platform" },
   "assets/bg/scenes/okayama-rail-window-v1.webp": { source: okayamaRailWindow, name: "okayama-rail-window" },
+  // Chapter catalogue images declared by `chapter … { image … }`.
+  "assets/bg/scenes/station-night-pass-v1.webp": { source: stationNightPass, name: "station" },
+  "assets/bg/scenes/rain-window-dusk-v1.webp": { source: rainWindow, name: "rain" },
+  // `backdrop city` and `backdrop rain` in the opening arc.
+  "assets/bg/scenes/neon-alley-v1.webp": { source: neonAlley, name: "neon" },
+  "assets/bg/scenes/rain-street-evening-v1.webp": { source: rainStreetEvening, name: "rain-street" },
 };
 
 export const stagePhotoByKind: Record<string, StagePhoto> = {
