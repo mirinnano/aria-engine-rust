@@ -102,6 +102,10 @@ pub struct BundleManifest {
     /// Ordered logical paths to the only fonts a Player may use. The order is
     /// part of the portable bundle root because it defines fallback order.
     pub font_assets: Vec<String>,
+    /// Ordered Wasm guest assets; inventory and guest bytes are part of the
+    /// bundle identity, and plugins are mounted before the first story step.
+    #[serde(default)]
+    pub plugin_assets: Vec<String>,
     pub ariac_blake3: String,
     pub ariac_size: u64,
     pub pak_blake3: String,
@@ -296,6 +300,7 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
     save_namespace: Option<&str>,
 ) -> Result<PathBuf> {
     let project = LoadedProject::load(path)?.with_runtime_overrides(entry, save_namespace)?;
+    project.plugins()?;
     let compiled = project.compile()?;
     for diagnostic in &compiled.diagnostics {
         eprintln!("{diagnostic}");
@@ -377,7 +382,7 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
     let pak_blake3 = primary.blake3.clone();
     let pak_content_root = primary.content_root_blake3.clone();
     let mut bundle = BundleManifest {
-        schema_version: 5,
+        schema_version: 6,
         engine_version: aria_core::ENGINE_VERSION.to_owned(),
         language_major: program.language_version.major,
         language_minor: program.language_version.minor,
@@ -390,6 +395,7 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
         save_namespace: project.manifest.runtime.save_namespace.clone(),
         legacy_save_namespaces: project.manifest.runtime.legacy_save_namespaces.clone(),
         font_assets: project.manifest.runtime.fonts.clone(),
+        plugin_assets: project.manifest.runtime.plugins.clone(),
         ariac_blake3,
         ariac_size: u64::try_from(ariac.len()).context("compiled program is too large")?,
         pak_blake3,
@@ -555,6 +561,17 @@ pub fn bundle_content_root(bundle: &BundleManifest) -> String {
         );
         hasher.update(font.as_bytes());
     }
+    // Preserve schema-5 roots when reading old plugin-free bundles. New
+    // bundles bind the plugin selection/order as well as the PAK payloads.
+    if bundle.schema_version >= 6 {
+        hasher.update(b"Aria plugin inventory v1");
+        hasher.update(&bundle.schema_version.to_le_bytes());
+        hasher.update(&(bundle.plugin_assets.len() as u32).to_le_bytes());
+        for plugin in &bundle.plugin_assets {
+            hasher.update(&(plugin.len() as u32).to_le_bytes());
+            hasher.update(plugin.as_bytes());
+        }
+    }
     hasher.update(
         &u32::try_from(bundle.pak_packs.len())
             .expect("pack count fits u32")
@@ -693,6 +710,7 @@ fn collect_assets_by_role(
     let included_paths = reachable_program.map(|program| {
         let mut paths = referenced_asset_paths(program);
         paths.extend(project.manifest.runtime.fonts.iter().cloned());
+        paths.extend(project.manifest.runtime.plugins.iter().cloned());
         paths
     });
     for (logical_path, disk_path) in inventory.iter() {
@@ -1189,26 +1207,25 @@ fn is_web_runtime_fresh(runtime_path: &Path) -> Result<bool> {
         return Ok(false);
     };
 
-    // Get mtime of the most recent aria-web source file.
+    // The exported API depends on Core and plugin contracts too. Watching
+    // aria-web alone could silently reuse a runtime with an obsolete schema.
     let mut source_mtime: Option<std::time::SystemTime> = None;
     let engine_root = find_engine_root()?;
-    let web_src = engine_root.join("crates/aria-web/src");
-    if web_src.is_dir() {
-        for entry in walkdir::WalkDir::new(&web_src)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file()
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "rs")
-            {
-                let mt = entry
-                    .metadata()
-                    .with_context(|| format!("cannot read metadata of {}", entry.path().display()))?
-                    .modified()
-                    .with_context(|| format!("cannot get mtime of {}", entry.path().display()))?;
+    for relative in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "crates/aria-web",
+        "crates/aria-core",
+        "crates/aria-plugin-sdk",
+        "crates/aria-plugin-host",
+        "crates/aria-protection",
+        "crates/aria-render",
+    ] {
+        for entry in walkdir::WalkDir::new(engine_root.join(relative)).into_iter() {
+            let entry = entry?;
+            if entry.file_type().is_file() {
+                let mt = entry.metadata()?.modified()?;
                 source_mtime = Some(source_mtime.map_or(mt, |m: std::time::SystemTime| m.max(mt)));
             }
         }
@@ -1420,7 +1437,7 @@ await writeFile(`${output}/service-worker.js`, "const CACHE = '__ARIA_WEB_CACHE_
         assert!(out.join("index.html").is_file());
         let bundle: BundleManifest =
             serde_json::from_slice(&fs::read(out.join("bundle.aria.json")).unwrap()).unwrap();
-        assert_eq!(bundle.schema_version, 5);
+        assert_eq!(bundle.schema_version, 6);
         assert_eq!(bundle.content_root_blake3, bundle_content_root(&bundle));
         let service_worker = fs::read_to_string(out.join("service-worker.js")).unwrap();
         assert!(!service_worker.contains("__ARIA_WEB_SHELL__"));

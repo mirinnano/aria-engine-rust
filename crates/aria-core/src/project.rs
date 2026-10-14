@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// Schema 4 makes a game-owned presentation package explicit. Aria no longer
 /// embeds visual UI declarations in story source or ARIAC.
-pub const PROJECT_SCHEMA: u32 = 4;
+pub const PROJECT_SCHEMA: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +44,10 @@ pub struct RuntimeManifest {
     /// Windows/Linux/browser system font as part of the game contract.
     #[serde(default)]
     pub fonts: Vec<String>,
+    /// Import-free Wasm plugins mounted as ordinary integrity-checked assets.
+    /// The ordered inventory is fixed before the first VM step.
+    #[serde(default)]
+    pub plugins: Vec<String>,
     /// Optional scheduling roles for shipped assets. Unlisted assets remain
     /// in the boot pack for backwards-compatible startup behavior.
     #[serde(default)]
@@ -63,6 +67,10 @@ pub struct RuntimeManifest {
 #[serde(deny_unknown_fields)]
 pub struct PresentationManifest {
     pub frontend: String,
+    /// The `stage` cue names this frontend renders. When present, `aria
+    /// check` rejects any other name instead of letting it fall through.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -89,7 +97,7 @@ impl ProjectManifest {
 
     pub fn validate(&self) -> Result<(), ProjectValidationError> {
         let mut problems = Vec::new();
-        if self.schema != PROJECT_SCHEMA {
+        if self.schema != 4 && self.schema != PROJECT_SCHEMA {
             problems.push(format!(
                 "schema must be {PROJECT_SCHEMA}, got {}",
                 self.schema
@@ -189,6 +197,35 @@ impl ProjectManifest {
             {
                 problems.push(format!(
                     "runtime.fonts '{existing}' and '{font}' collide on a case-insensitive filesystem"
+                ));
+            }
+        }
+        if self.schema == 4 && !self.runtime.plugins.is_empty() {
+            problems.push("runtime.plugins requires project schema 5".to_owned());
+        }
+        if self.runtime.plugins.len() > aria_plugin_sdk::MAX_PLUGINS {
+            problems.push("runtime.plugins may contain at most 16 plugins".to_owned());
+        }
+        let mut plugins = BTreeMap::new();
+        for plugin in &self.runtime.plugins {
+            validate_canonical_logical_path("runtime.plugins", plugin, &mut problems);
+            if !plugin.ends_with(".wasm")
+                || !self
+                    .runtime
+                    .asset_roots
+                    .iter()
+                    .any(|root| is_under_asset_root(plugin, root))
+                || self.runtime.asset_excludes.contains(plugin)
+            {
+                problems.push(format!(
+                    "runtime.plugins '{plugin}' must be a non-excluded .wasm below an asset root"
+                ));
+            }
+            if let Ok(key) = crate::compiler::portable_path_key(plugin)
+                && plugins.insert(key, plugin).is_some()
+            {
+                problems.push(format!(
+                    "runtime.plugins contains duplicate or colliding path '{plugin}'"
                 ));
             }
         }
@@ -335,12 +372,14 @@ mod tests {
                 asset_roots: vec!["assets".to_owned()],
                 asset_excludes: Vec::new(),
                 fonts: Vec::new(),
+                plugins: Vec::new(),
                 asset_pack_roles: BTreeMap::new(),
                 save_namespace: "umikaze-v3".to_owned(),
                 legacy_save_namespaces: Vec::new(),
             },
             presentation: PresentationManifest {
                 frontend: "ui".to_owned(),
+                stages: Vec::new(),
             },
         }
     }

@@ -1,0 +1,16 @@
+[package]
+name = "aria-plugin-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aria-plugin-sdk.workspace = true
+blake3.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+wasmi.workspace = true
+
+[dev-dependencies]
+wat = "=1.245.1"

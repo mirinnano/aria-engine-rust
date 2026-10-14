@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aria-core.workspace = true
+aria-plugin-host.workspace = true
 aria-protection.workspace = true
 aria-render.workspace = true
 hex.workspace = true

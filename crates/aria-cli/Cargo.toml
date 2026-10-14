@@ -19,6 +19,7 @@ desktop-player = ["aria-native/desktop"]
 aes.workspace = true
 anyhow.workspace = true
 aria-core.workspace = true
+aria-plugin-host.workspace = true
 aria-protection.workspace = true
 aria-native.workspace = true
 aria-web.workspace = true

@@ -13,12 +13,10 @@ use crate::vm::{AutoMode, SettingsState, SkipMode};
 
 /// Version of the JSON view contract consumed by game presentation packages.
 ///
-/// Schema 7 pages subtitles in Core, exposes replayable backlog page IDs,
-/// persists semantic gallery/confirmation/interlude state, and gives a host
-/// the exact remaining duration of an authored timed hold. That last value
-/// lets a static WebView use one timer rather than keep an animation clock
-/// alive while dialogue is deliberately absent.
-pub const UI_VIEW_MODEL_SCHEMA: u16 = 7;
+/// Schema 8 replaces game-specific interlude metadata with a validated
+/// plugin story-surface policy. Subtitle paging, replay IDs, gallery and
+/// confirmation state, and remaining authored hold time remain layout-free.
+pub const UI_VIEW_MODEL_SCHEMA: u16 = 9;
 
 /// Standard surfaces understood by the engine. A frontend may render a
 /// project-specific surface for [`Self::Custom`] without changing the VM
@@ -112,6 +110,15 @@ pub enum UiIntent {
     Scroll { region: String, delta_y: f32 },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CameraView {
+    pub zoom: u32,
+    pub pan_x: i64,
+    pub pan_y: i64,
+    pub duration_ms: u32,
+    pub easing: String,
+}
+
 /// Stable game identity and locale consumed by the presentation package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameView {
@@ -122,6 +129,12 @@ pub struct GameView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DialogueView {
     pub speaker: Option<String>,
+    /// Declared character id (`character mio { … }`), for per-speaker styling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
+    /// Ruby and emphasis over `full_page_text`, as page-relative grapheme ranges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markup: Vec<crate::markup::MarkupSpan>,
     /// The complete authored line. It remains available for transcript tools,
     /// while the reading surface should use `full_page_text` and `text`.
     pub full_text: String,
@@ -145,6 +158,9 @@ pub struct ChoiceView {
     pub id: String,
     pub label: String,
     pub selected: bool,
+    /// A `chapter id;` option names its chapter; its metadata is in `chapters`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chapter: Option<String>,
 }
 
 /// An action supplied by the engine. Its display label belongs to the game
@@ -178,6 +194,13 @@ pub struct ChapterView {
     pub script: Option<String>,
     pub unlocked: bool,
     pub progress: u8,
+    /// Declared catalogue fields (`label "DAY 1"`, `numeral "I"`, `date`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numeral: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,12 +210,15 @@ pub struct GalleryItemView {
     pub selected: bool,
 }
 
-/// Timing identity for a story-owned interlude. The host still owns the fade
-/// curve; Core only tells it whether this is the first held encounter so a
-/// restored save keeps the same authored silence.
+/// Validated plugin policy for the active custom surface. Hosts can route
+/// input without knowing a particular game's screen names. Visual curves and
+/// components remain presentation-owned.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InterludeView {
+pub struct StorySurfaceView {
     pub first_visit: bool,
+    pub reading_surface: bool,
+    pub atomic_text: bool,
+    pub advance_action: Option<String>,
 }
 
 /// A destructive presentation action that must be explicitly acknowledged.
@@ -211,6 +237,14 @@ pub struct UiViewModel {
     pub route: UiRoute,
     pub route_stack: Vec<UiRoute>,
     pub game: GameView,
+    /// The semantic cue authored for the current backdrop (`stage ward;`).
+    /// It resets on every `background`; the presentation owns its look.
+    #[serde(default)]
+    pub stage: Option<String>,
+    /// Target framing of the backdrop; the presentation eases toward it over
+    /// `duration_ms`. Absent means the unmoved full frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<CameraView>,
     pub dialogue: Option<DialogueView>,
     /// A story-authored timer currently owns the VM. `None` means the host
     /// may sleep until input, resize, or a distinct active visual transition.
@@ -228,7 +262,7 @@ pub struct UiViewModel {
     pub chapters: Vec<ChapterView>,
     pub gallery: Vec<GalleryItemView>,
     pub gallery_viewer: Option<String>,
-    pub interlude: Option<InterludeView>,
+    pub story_surface: Option<StorySurfaceView>,
     pub confirmation: Option<ConfirmationView>,
     pub scroll_offsets: BTreeMap<String, f32>,
     pub auto_mode: AutoMode,

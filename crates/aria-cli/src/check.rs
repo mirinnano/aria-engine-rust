@@ -8,6 +8,7 @@ use crate::project::LoadedProject;
 pub fn command(path: &Path, json: bool, release: bool) -> Result<u8> {
     let project = LoadedProject::load(path)?;
     let output = project.compile()?;
+    project.plugins()?;
     if release {
         let assets = project.asset_inventory()?;
         project.validate_bundled_fonts(&assets, true)?;

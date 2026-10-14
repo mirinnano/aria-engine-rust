@@ -9,6 +9,8 @@ on:
       - rust-toolchain.toml
       - crates/aria-cli/**
       - crates/aria-core/**
+      - crates/aria-plugin-sdk/**
+      - crates/aria-plugin-host/**
       - crates/aria-protection/**
       - crates/aria-render/**
       - crates/aria-web/**

@@ -40,6 +40,7 @@ impl Default for AudioSemanticState {
                 (AudioBus::Bgm, 1.0),
                 (AudioBus::SoundEffect, 1.0),
                 (AudioBus::Voice, 1.0),
+                (AudioBus::Ambient, 1.0),
             ]),
         }
     }

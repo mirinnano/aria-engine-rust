@@ -9,6 +9,7 @@ mod package;
 mod package_runtime;
 #[cfg(all(feature = "desktop-player", not(target_arch = "wasm32")))]
 pub mod player;
+pub mod plugin;
 pub mod project;
 pub mod release;
 pub mod run;
@@ -31,6 +32,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect and validate a Rust-authored Wasm extension.
+    Plugin {
+        #[command(subcommand)]
+        command: plugin::PluginCommand,
+    },
     /// Parse, analyze, and compile an Aria project without producing artifacts.
     Check {
         project: PathBuf,
@@ -138,6 +144,7 @@ where
 {
     let cli = Cli::parse_from(arguments);
     match cli.command {
+        Command::Plugin { command } => plugin::command(command),
         Command::Check {
             project,
             json,

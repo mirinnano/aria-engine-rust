@@ -12,24 +12,31 @@ pub mod bytecode;
 pub mod compiler;
 pub mod diagnostic;
 pub mod input;
+pub mod markup;
 pub mod modern;
 mod modern_compiler;
 pub mod pak;
+pub mod plugins;
 pub mod presentation;
 mod presentation_state;
 pub mod project;
 pub mod protocol;
+pub mod resume;
 pub mod save;
 pub mod text;
 pub mod vm;
 
 pub use bytecode::{AriacError, CompiledProgram, LanguageVersion};
-pub use compiler::{CompileInput, CompileOutput, SourceUnit, compile};
+pub use compiler::{CompileInput, CompileOutput, SourceUnit, compile, compile_with_routes};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 pub use input::{InputAction, InputSnapshot, PointerSnapshot};
+pub use plugins::{
+    PluginManifest, PluginRegistration, PluginRegistry, PluginRegistryError, RoutePolicy,
+};
 pub use presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,
-    GalleryItemView, GameView, InterludeView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute, UiViewModel,
+    GalleryItemView, GameView, StorySurfaceView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
+    UiViewModel,
 };
 pub use presentation_state::{PendingConfirmation, UiInsets, UiRuntimeState, UiViewport};
 pub use project::{PresentationManifest, ProjectManifest, ProjectValidationError};

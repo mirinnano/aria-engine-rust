@@ -6,7 +6,7 @@
  * consume the deterministic WASM VM without recreating a renderer DSL.
  */
 
-export const UI_VIEW_MODEL_SCHEMA = 7 as const;
+export const UI_VIEW_MODEL_SCHEMA = 9 as const;
 
 export type StandardRoute =
   | "setup"
@@ -40,6 +40,8 @@ export interface SettingsView {
   bgm_volume: number;
   sound_effect_volume: number;
   voice_volume: number;
+  /** Omitted by the runtime at its default (1). */
+  ambient_volume?: number;
   fullscreen: boolean;
   text_scale: number;
   text_opacity: number;
@@ -49,8 +51,17 @@ export interface SettingsView {
   skip_unread: boolean;
 }
 
+/** Ruby or emphasis over `full_page_text`, as a grapheme range `[start, end)`. */
+export type MarkupSpan =
+  | { start: number; end: number; kind: "ruby"; text: string }
+  | { start: number; end: number; kind: "emphasis" };
+
 export interface DialogueView {
   speaker: string | null;
+  /** Declared character id (`character mio { … }`). */
+  speaker_id?: string;
+  /** Present only when the line has ruby or emphasis. */
+  markup?: MarkupSpan[];
   full_text: string;
   full_page_text: string;
   page_number: number;
@@ -66,6 +77,8 @@ export interface ChoiceView {
   id: string;
   label: string;
   selected: boolean;
+  /** A `chapter id;` option; its metadata is in `UiViewModel.chapters`. */
+  chapter?: string;
 }
 
 export interface ActionView {
@@ -92,6 +105,21 @@ export interface ChapterView {
   script: string | null;
   unlocked: boolean;
   progress: number;
+  /** Declared catalogue fields (`label "DAY 1"`, `numeral "I"`, `date`). */
+  label?: string;
+  numeral?: string;
+  date?: string;
+}
+
+/** Target framing of the backdrop; ease toward it over `duration_ms`. */
+export interface CameraView {
+  /** Percent; 100 is the unmoved frame. */
+  zoom: number;
+  /** Percent of the frame; (0, 0) is centred. */
+  pan_x: number;
+  pan_y: number;
+  duration_ms: number;
+  easing: string;
 }
 
 export interface GalleryItemView {
@@ -100,8 +128,11 @@ export interface GalleryItemView {
   selected: boolean;
 }
 
-export interface InterludeView {
+export interface StorySurfaceView {
   first_visit: boolean;
+  reading_surface: boolean;
+  atomic_text: boolean;
+  advance_action: string | null;
 }
 
 export interface ConfirmationView {
@@ -114,6 +145,9 @@ export interface UiViewModel {
   route: UiRoute;
   route_stack: UiRoute[];
   game: { id: string; locale: string };
+  /** Semantic stage cue authored with `stage <name>;`, or null when unset. */
+  stage: string | null;
+  camera?: CameraView;
   dialogue: DialogueView | null;
   /** Remaining VM-owned story hold, or null when the surface may sleep. */
   timed_hold_remaining_ms: number | null;
@@ -126,7 +160,7 @@ export interface UiViewModel {
   chapters: ChapterView[];
   gallery: GalleryItemView[];
   gallery_viewer: string | null;
-  interlude: InterludeView | null;
+  story_surface: StorySurfaceView | null;
   confirmation: ConfirmationView | null;
   scroll_offsets: Record<string, number>;
   auto_mode: "off" | "on";
@@ -182,7 +216,7 @@ export function assertViewModel(value: unknown): asserts value is UiViewModel {
     || !model.game
     || !model.settings
     || !Array.isArray(model.actions)
-    || !("interlude" in model)
+    || !("story_surface" in model)
   ) {
     throw new Error("Aria presentation runtime returned an incomplete UI view model");
   }

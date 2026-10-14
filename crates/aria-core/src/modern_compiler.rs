@@ -11,9 +11,9 @@ use crate::bytecode::{
 use crate::compiler::{CompileOutput, normalize_logical_path, resolve_logical_path};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 use crate::modern::{
-    AssetRef, AudioBus, BinaryOperator, Expression, ExpressionKind, Literal, ModernModule,
-    ModernType, NodeAccess, ShowContent, Statement, StatementKind, TransitionKind, UnaryOperator,
-    Value, parse,
+    AssetRef, AudioBus, BinaryOperator, ChapterDecl, CharacterDecl, Expression, ExpressionKind,
+    Literal, ModernModule, ModernType, NodeAccess, ShowContent, Statement, StatementKind,
+    TransitionKind, UnaryOperator, Value, parse,
 };
 
 pub(crate) fn compile_modern(
@@ -21,8 +21,10 @@ pub(crate) fn compile_modern(
     entry: String,
     sources: BTreeMap<String, String>,
     diagnostics: Vec<Diagnostic>,
+    custom_routes: BTreeSet<String>,
 ) -> CompileOutput {
     let mut compiler = ModernCompiler {
+        custom_routes,
         game_id,
         entry: entry.clone(),
         sources,
@@ -44,6 +46,11 @@ pub(crate) fn compile_modern(
         generated_label: 0,
         generated_storage: 0,
         generated_resource: 0,
+        anchor_counts: BTreeMap::new(),
+        characters: BTreeMap::new(),
+        chapters: Vec::new(),
+        flags_written: BTreeSet::new(),
+        flags_read: Vec::new(),
     };
     compiler.collect_module(&entry, true);
     compiler.lower()
@@ -126,6 +133,7 @@ struct TransferSite {
 }
 
 struct ModernCompiler {
+    custom_routes: BTreeSet<String>,
     game_id: String,
     entry: String,
     sources: BTreeMap<String, String>,
@@ -147,6 +155,14 @@ struct ModernCompiler {
     generated_label: u64,
     generated_storage: u64,
     generated_resource: u64,
+    /// Per-scene counters for resume anchors and identical-line occurrences.
+    anchor_counts: BTreeMap<String, u32>,
+    characters: BTreeMap<String, CharacterDecl>,
+    chapters: Vec<ChapterDecl>,
+    /// Flags written anywhere, and every `flag("…")` read with its span, so
+    /// a read of a name that is never set (a typo) can be reported.
+    flags_written: BTreeSet<String>,
+    flags_read: Vec<(String, SourceSpan)>,
 }
 
 impl ModernCompiler {
@@ -235,6 +251,7 @@ impl ModernCompiler {
         self.reject_visual_ui_declarations();
         self.lower_states();
 
+        self.emit_chapter_declarations();
         let entry_scene = self.entry_scene.clone();
         if let Some((scene, span)) = entry_scene {
             self.emit_label_reference(ByteOp::Jump, Vec::new(), &scene_label(&scene), &span);
@@ -243,6 +260,10 @@ impl ModernCompiler {
         let scenes = self.scenes.clone();
         for scene in scenes {
             self.define_label(&scene_label(&scene.name), &scene.span);
+            self.emit_anchor(
+                &format!("{}{}", crate::bytecode::SCENE_ANCHOR_PREFIX, scene.name),
+                &scene.span,
+            );
             let mut scopes = vec![self.state_bindings.clone(), BTreeMap::new()];
             self.lower_block(&scene.source, &scene.body, &mut scopes, &scene.name);
         }
@@ -292,6 +313,35 @@ impl ModernCompiler {
                     });
                 }
             }
+            for character in module.characters {
+                if self.characters.contains_key(&character.id) {
+                    self.error(
+                        DiagnosticCode::DuplicateLabel,
+                        format!(
+                            "duplicate character '{}'; character ids are global",
+                            character.id
+                        ),
+                        Some(character.span.clone()),
+                    );
+                } else {
+                    self.characters.insert(character.id.clone(), character);
+                }
+            }
+            for chapter in module.chapters {
+                if self
+                    .chapters
+                    .iter()
+                    .any(|existing| existing.id == chapter.id)
+                {
+                    self.error(
+                        DiagnosticCode::DuplicateLabel,
+                        format!("duplicate chapter '{}'; chapter ids are global", chapter.id),
+                        Some(chapter.span.clone()),
+                    );
+                } else {
+                    self.chapters.push(chapter);
+                }
+            }
             for scene in module.scenes {
                 if !self.scene_names.insert(scene.name.clone()) {
                     self.error(
@@ -320,6 +370,7 @@ impl ModernCompiler {
             );
         }
 
+        self.resolve_chapter_references();
         self.validate_scene_control_flow();
     }
 
@@ -505,6 +556,104 @@ impl ModernCompiler {
         }
     }
 
+    /// Fills `chapter id;` options from their declarations and checks that
+    /// every chapter's `start` and image refer to something real.
+    fn resolve_chapter_references(&mut self) {
+        let chapters = self.chapters.clone();
+        for chapter in &chapters {
+            if let Some(start) = &chapter.start
+                && !self.scene_names.contains(start)
+            {
+                self.error(
+                    DiagnosticCode::UnknownLabel,
+                    format!(
+                        "chapter '{}' starts at undeclared scene '{start}'",
+                        chapter.id
+                    ),
+                    Some(chapter.span.clone()),
+                );
+            }
+        }
+        let mut scenes = std::mem::take(&mut self.scenes);
+        for scene in &mut scenes {
+            self.resolve_chapter_options(&mut scene.body, &chapters);
+        }
+        self.scenes = scenes;
+    }
+
+    fn resolve_chapter_options(&mut self, body: &mut [Statement], chapters: &[ChapterDecl]) {
+        for statement in body {
+            match &mut statement.kind {
+                StatementKind::Choice { options } => {
+                    for option in options.iter_mut() {
+                        let Some(id) = option.chapter.clone() else {
+                            continue;
+                        };
+                        let Some(chapter) = chapters.iter().find(|chapter| chapter.id == id) else {
+                            self.error(
+                                DiagnosticCode::UnknownLabel,
+                                format!("choice refers to undeclared chapter '{id}'"),
+                                Some(option.span.clone()),
+                            );
+                            continue;
+                        };
+                        option.text = chapter.title.clone();
+                        if option.scene.is_empty() {
+                            match &chapter.start {
+                                Some(start) => option.scene = start.clone(),
+                                None => self.error(
+                                    DiagnosticCode::UnknownLabel,
+                                    format!(
+                                        "chapter '{id}' has no 'start'; write 'chapter {id} => scene;'"
+                                    ),
+                                    Some(option.span.clone()),
+                                ),
+                            }
+                        }
+                    }
+                }
+                StatementKind::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    self.resolve_chapter_options(then_branch, chapters);
+                    self.resolve_chapter_options(else_branch, chapters);
+                }
+                StatementKind::While { body, .. } | StatementKind::Borrow { body, .. } => {
+                    self.resolve_chapter_options(body, chapters);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Chapter metadata is program data, read by the VM at load rather than
+    /// executed, so a patched title also reaches existing saves.
+    fn emit_chapter_declarations(&mut self) {
+        for chapter in self.chapters.clone() {
+            let optional = |compiler: &mut Self, value: &Option<String>| match value {
+                Some(value) => Operand::Constant(compiler.intern_string(value)),
+                None => Operand::None,
+            };
+            let image = chapter
+                .image
+                .as_ref()
+                .and_then(|asset| self.asset_operand(asset))
+                .unwrap_or(Operand::None);
+            let operands = vec![
+                Operand::Constant(self.intern_string(&chapter.id)),
+                optional(self, &chapter.label),
+                optional(self, &chapter.numeral),
+                Operand::Constant(self.intern_string(&chapter.title)),
+                optional(self, &chapter.date),
+                optional(self, &chapter.synopsis),
+                image,
+            ];
+            self.emit(ByteOp::DeclareChapter, operands, &chapter.span);
+        }
+    }
+
     fn lower_states(&mut self) {
         let states = self.state_declarations.clone();
         for state in states {
@@ -555,16 +704,48 @@ impl ModernCompiler {
     ) {
         match &statement.kind {
             StatementKind::Say { speaker, text } => {
-                let speaker = speaker
-                    .as_ref()
-                    .map(|speaker| Operand::Constant(self.intern_string(speaker)))
+                let key = self.line_key(scene, speaker.as_deref().unwrap_or(""), text);
+                let text = &self.interpolate(text, scopes, &statement.span);
+                // A declared character shows its declared name and carries its
+                // id; any other identifier is shown as written.
+                let (shown, id) = match speaker {
+                    Some(id) => match self.characters.get(id) {
+                        Some(character) => (Some(character.name.clone()), Some(id.clone())),
+                        None => {
+                            if !self.characters.is_empty() {
+                                self.diagnostics.push(Diagnostic::warning(
+                                    DiagnosticCode::UnknownLabel,
+                                    format!("speaker '{id}' is not a declared character"),
+                                    Some(statement.span.clone()),
+                                ));
+                            }
+                            (Some(id.clone()), None)
+                        }
+                    },
+                    None => (None, None),
+                };
+                let speaker = shown
+                    .map(|name| Operand::Constant(self.intern_string(&name)))
+                    .unwrap_or(Operand::None);
+                let speaker_id = id
+                    .map(|id| Operand::Constant(self.intern_string(&id)))
                     .unwrap_or(Operand::None);
                 let text = Operand::Constant(self.intern_string(text));
-                self.emit(ByteOp::Text, vec![speaker, text], &statement.span);
+                self.emit(
+                    ByteOp::Text,
+                    vec![speaker, text, key, speaker_id],
+                    &statement.span,
+                );
             }
             StatementKind::Narrate { text } => {
+                let key = self.line_key(scene, "", text);
+                let text = &self.interpolate(text, scopes, &statement.span);
                 let text = Operand::Constant(self.intern_string(text));
-                self.emit(ByteOp::Text, vec![Operand::None, text], &statement.span);
+                self.emit(
+                    ByteOp::Text,
+                    vec![Operand::None, text, key],
+                    &statement.span,
+                );
             }
             StatementKind::ClearDialogue => {
                 self.emit(ByteOp::TextClear, Vec::new(), &statement.span)
@@ -748,6 +929,41 @@ impl ModernCompiler {
                     &statement.span,
                 );
             }
+            StatementKind::AssignExpr { name, expression } => {
+                let Some(binding) = resolve_binding(scopes, name) else {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        format!("unknown variable '{name}'"),
+                        Some(statement.span.clone()),
+                    );
+                    return;
+                };
+                if !binding.mutable || binding.resource.is_some() {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        format!("'{name}' is not a mutable value variable"),
+                        Some(statement.span.clone()),
+                    );
+                    return;
+                }
+                let Some((operand, value_ty)) = self.expression_value(expression, scopes) else {
+                    return;
+                };
+                if value_ty != binding.ty {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        format!(
+                            "cannot assign {} to '{}' declared as {}",
+                            type_name(value_ty),
+                            name,
+                            type_name(binding.ty)
+                        ),
+                        Some(expression.span.clone()),
+                    );
+                    return;
+                }
+                self.emit_assignment(&binding.operand, binding.ty, operand, &statement.span);
+            }
             StatementKind::If {
                 condition,
                 then_branch,
@@ -846,9 +1062,30 @@ impl ModernCompiler {
                     );
                     return;
                 }
-                let mut operands = Vec::with_capacity(options.len() * 2);
-                for option in options {
-                    operands.push(Operand::Constant(self.intern_string(&option.text)));
+                // Emitted before the operands record their instruction index.
+                let anchor = self.next_anchor(scene, "choice");
+                self.emit_anchor(&anchor, &statement.span);
+                // Each option is (label, target, chapter, condition). The
+                // cancel option (no label) is always last. Conditions are
+                // evaluated first, so the operands below can record the
+                // index of the choice instruction itself.
+                let (cancel, shown): (Vec<_>, Vec<_>) =
+                    options.iter().partition(|option| option.cancel);
+                let ordered: Vec<_> = shown.into_iter().chain(cancel).collect();
+                let conditions: Vec<Operand> = ordered
+                    .iter()
+                    .map(|option| match &option.condition {
+                        Some(condition) => self.condition_flag(condition, scopes),
+                        None => Operand::None,
+                    })
+                    .collect();
+                let mut operands = Vec::with_capacity(ordered.len() * 4);
+                for (option, condition) in ordered.into_iter().zip(conditions) {
+                    operands.push(if option.cancel {
+                        Operand::None
+                    } else {
+                        Operand::Constant(self.intern_string(&option.text))
+                    });
                     let operand_index = operands.len();
                     operands.push(Operand::Address(0));
                     self.references.push(LabelReference {
@@ -857,9 +1094,14 @@ impl ModernCompiler {
                         label: scene_label(&option.scene),
                         span: option.span.clone(),
                     });
+                    operands.push(match &option.chapter {
+                        Some(chapter) => Operand::Constant(self.intern_string(chapter)),
+                        None => Operand::None,
+                    });
+                    operands.push(condition);
                 }
                 self.cleanup_all_scopes(scopes, &statement.span);
-                self.emit(ByteOp::PresentChoice, operands, &statement.span);
+                self.emit(ByteOp::PresentChoiceEx, operands, &statement.span);
             }
             StatementKind::Jump { scene } => {
                 self.cleanup_all_scopes(scopes, &statement.span);
@@ -870,13 +1112,17 @@ impl ModernCompiler {
                     &statement.span,
                 );
             }
-            StatementKind::Call { scene } => {
+            StatementKind::Call { scene: target } => {
                 self.emit_label_reference(
                     ByteOp::Call,
                     Vec::new(),
-                    &scene_label(scene),
+                    &scene_label(target),
                     &statement.span,
                 );
+                // The return address is this anchor, so a saved call stack
+                // can be relocated into a rebuilt program.
+                let anchor = self.next_anchor(scene, "return");
+                self.emit_anchor(&anchor, &statement.span);
             }
             StatementKind::Return => {
                 self.cleanup_all_scopes(scopes, &statement.span);
@@ -894,7 +1140,7 @@ impl ModernCompiler {
                 let bus_name = audio_bus_name(*bus);
                 let id = match bus {
                     AudioBus::Bgm => bus_name.to_owned(),
-                    AudioBus::Se | AudioBus::Voice => {
+                    AudioBus::Se | AudioBus::Voice | AudioBus::Ambient => {
                         asset_path_for_id(asset.clone(), &self.constants)
                     }
                 };
@@ -961,6 +1207,7 @@ impl ModernCompiler {
                 } else {
                     ByteOp::SetFlag
                 };
+                self.flags_written.insert(name.clone());
                 let name = Operand::Constant(self.intern_string(name));
                 self.emit(op, vec![name, Operand::Boolean(*value)], &statement.span);
             }
@@ -988,6 +1235,45 @@ impl ModernCompiler {
                     DiagnosticCode::DeprecatedUiSyntax,
                     "'theme' is retired; define visual tokens in the project's React presentation package",
                     Some(statement.span.clone()),
+                );
+            }
+            StatementKind::SetStage { stage } => {
+                let operand = match stage {
+                    Some(stage) if is_stage_cue_name(stage) => {
+                        Operand::Constant(self.intern_string(stage))
+                    }
+                    Some(stage) => {
+                        self.error(
+                            DiagnosticCode::InvalidUiBinding,
+                            format!(
+                                "stage cue '{stage}' must be 1-48 lowercase ASCII letters, digits, '-' or '_'; colours and layout belong to the presentation package"
+                            ),
+                            Some(statement.span.clone()),
+                        );
+                        return;
+                    }
+                    None => Operand::None,
+                };
+                self.emit(ByteOp::SetStage, vec![operand], &statement.span);
+            }
+            StatementKind::Camera {
+                zoom,
+                pan_x,
+                pan_y,
+                duration_ms,
+                easing,
+            } => {
+                let easing = Operand::Constant(self.intern_string(easing));
+                self.emit(
+                    ByteOp::SetCamera,
+                    vec![
+                        Operand::Integer(i64::from(*zoom)),
+                        Operand::Integer(*pan_x),
+                        Operand::Integer(*pan_y),
+                        Operand::Integer(i64::from(*duration_ms)),
+                        easing,
+                    ],
+                    &statement.span,
                 );
             }
             StatementKind::SetTextBox {
@@ -1092,10 +1378,10 @@ impl ModernCompiler {
                 );
             }
             StatementKind::OpenScreen { screen } => {
-                if !is_presentation_route(screen) {
+                if !is_presentation_route(screen) && !self.custom_routes.contains(screen) {
                     self.error(
                         DiagnosticCode::InvalidUiBinding,
-                        format!("screen '{screen}' is not a standard presentation route"),
+                        format!("screen '{screen}' is not a standard presentation route or a registered plugin route"),
                         Some(statement.span.clone()),
                     );
                     return;
@@ -1737,6 +2023,12 @@ impl ModernCompiler {
             ExpressionKind::Literal(Literal::Boolean { value, .. }) => {
                 (Operand::Boolean(*value), "==", Operand::Boolean(true))
             }
+            ExpressionKind::Flag(_) => {
+                let Some((operand, _)) = self.expression_value(expression, scopes) else {
+                    return;
+                };
+                (operand, "==", Operand::Integer(1))
+            }
             ExpressionKind::Identifier(name) => {
                 let Some(binding) = resolve_binding(scopes, name) else {
                     self.error(
@@ -1865,10 +2157,51 @@ impl ModernCompiler {
                     None
                 }
             },
+            ExpressionKind::Flag(name) => {
+                self.flags_read
+                    .push((name.clone(), expression.span.clone()));
+                let target = self.fresh_storage("expr", "flag", ModernType::Bool);
+                let name = Operand::Constant(self.intern_string(name));
+                self.emit(
+                    ByteOp::GetFlag,
+                    vec![name, target.clone()],
+                    &expression.span,
+                );
+                Some((target, ModernType::Bool))
+            }
+            ExpressionKind::Binary {
+                left,
+                op: op @ (BinaryOperator::Add | BinaryOperator::Subtract),
+                right,
+            } => {
+                let (left, left_ty) = self.expression_value(left, scopes)?;
+                let (right, right_ty) = self.expression_value(right, scopes)?;
+                if left_ty != ModernType::Int || right_ty != ModernType::Int {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        "'+' and '-' require Int operands",
+                        Some(expression.span.clone()),
+                    );
+                    return None;
+                }
+                let target = self.fresh_storage("expr", "sum", ModernType::Int);
+                self.emit(ByteOp::SetInt, vec![target.clone(), left], &expression.span);
+                let sign = if *op == BinaryOperator::Subtract {
+                    -1
+                } else {
+                    1
+                };
+                self.emit(
+                    ByteOp::AddInt,
+                    vec![target.clone(), right, Operand::Integer(sign)],
+                    &expression.span,
+                );
+                Some((target, ModernType::Int))
+            }
             _ => {
                 self.error(
                     DiagnosticCode::InvalidOperand,
-                    "comparison operands must be a literal or variable",
+                    "this expression cannot be used as a value",
                     Some(expression.span.clone()),
                 );
                 None
@@ -1983,9 +2316,16 @@ impl ModernCompiler {
     }
 
     fn fresh_storage(&mut self, scope: &str, name: &str, ty: ModernType) -> Operand {
-        let index = self.generated_storage;
-        self.generated_storage = self.generated_storage.saturating_add(1);
-        let key = format!("v3:{scope}:{name}:{index}");
+        // `state` names are unique program-wide, so their key is the name
+        // alone: declaring another state must not rename this one's value
+        // in existing saves. Locals still need a counter to stay distinct.
+        let key = if scope == "state" {
+            format!("state:{name}")
+        } else {
+            let index = self.generated_storage;
+            self.generated_storage = self.generated_storage.saturating_add(1);
+            format!("v3:{scope}:{name}:{index}")
+        };
         match ty {
             ModernType::Int | ModernType::Bool => Operand::IntRegister(key),
             ModernType::String => Operand::StringRegister(key),
@@ -2001,6 +2341,137 @@ impl ModernCompiler {
         self.constants.push(Constant::String(value.to_owned()));
         self.string_constants.insert(value.to_owned(), index);
         index
+    }
+
+    /// A stable key for read-state: scene, a digest of speaker and text, and
+    /// the occurrence of that exact line within the scene. It survives edits
+    /// elsewhere in the script, unlike the instruction address.
+    fn line_key(&mut self, scene: &str, speaker: &str, text: &str) -> Operand {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(speaker.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(text.as_bytes());
+        let digest = hasher.finalize().to_hex();
+        let base = format!("{scene}:{}", &digest[..12]);
+        let occurrence = self
+            .anchor_counts
+            .entry(format!("line {base}"))
+            .or_insert(0);
+        let key = if *occurrence == 0 {
+            base
+        } else {
+            format!("{base}.{occurrence}")
+        };
+        *occurrence += 1;
+        Operand::Constant(self.intern_string(&key))
+    }
+
+    /// Evaluates any Bool condition into a 0/1 register.
+    fn condition_flag(
+        &mut self,
+        condition: &Expression,
+        scopes: &[BTreeMap<String, Binding>],
+    ) -> Operand {
+        let target = self.fresh_storage("expr", "offer", ModernType::Bool);
+        let skip = self.fresh_label("offer_skip");
+        self.emit(
+            ByteOp::SetInt,
+            vec![target.clone(), Operand::Integer(0)],
+            &condition.span,
+        );
+        self.emit_jump_if_false(condition, &skip, scopes);
+        self.emit(
+            ByteOp::SetInt,
+            vec![target.clone(), Operand::Integer(1)],
+            &condition.span,
+        );
+        self.define_label(&skip, &condition.span);
+        target
+    }
+
+    /// Rewrites `{name}` to `{=register}` for the VM to fill at display time,
+    /// and validates the markup with each value stood in by a placeholder.
+    fn interpolate(
+        &mut self,
+        text: &str,
+        scopes: &[BTreeMap<String, Binding>],
+        span: &SourceSpan,
+    ) -> String {
+        let mut output = String::with_capacity(text.len());
+        let mut preview = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(open) = rest.find('{') {
+            let (before, after) = rest.split_at(open);
+            output.push_str(before);
+            preview.push_str(before);
+            let Some(close) = after.find('}') else {
+                output.push_str(after);
+                preview.push_str(after);
+                rest = "";
+                break;
+            };
+            let inner = &after[1..close];
+            let is_name = inner
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_alphabetic() || first == '_')
+                && inner
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_');
+            if is_name {
+                match resolve_binding(scopes, inner) {
+                    Some(binding) => match &binding.operand {
+                        Operand::IntRegister(key) | Operand::StringRegister(key) => {
+                            output.push_str(&format!("{{={key}}}"));
+                            preview.push('〇');
+                        }
+                        _ => self.error(
+                            DiagnosticCode::InvalidOperand,
+                            format!("'{{{inner}}}' is a Node and cannot be shown in text"),
+                            Some(span.clone()),
+                        ),
+                    },
+                    None => self.error(
+                        DiagnosticCode::InvalidOperand,
+                        format!("'{{{inner}}}' names no variable in scope"),
+                        Some(span.clone()),
+                    ),
+                }
+            } else {
+                output.push_str(&after[..=close]);
+                preview.push_str(&after[..=close]);
+            }
+            rest = &after[close + 1..];
+        }
+        output.push_str(rest);
+        preview.push_str(rest);
+        self.validate_markup(&preview, span);
+        output
+    }
+
+    fn validate_markup(&mut self, text: &str, span: &SourceSpan) {
+        if let Err(error) = crate::markup::parse(text) {
+            self.error(
+                DiagnosticCode::InvalidOperand,
+                error.to_string(),
+                Some(span.clone()),
+            );
+        }
+    }
+
+    fn next_anchor(&mut self, scene: &str, kind: &str) -> String {
+        let counter = self
+            .anchor_counts
+            .entry(format!("{kind} {scene}"))
+            .or_insert(0);
+        let anchor = format!("{kind}:{scene}:{counter}");
+        *counter += 1;
+        anchor
+    }
+
+    fn emit_anchor(&mut self, anchor: &str, span: &SourceSpan) {
+        let anchor = Operand::Constant(self.intern_string(anchor));
+        self.emit(ByteOp::Nop, vec![anchor], span);
     }
 
     fn emit(&mut self, op: ByteOp, operands: Vec<Operand>, span: &SourceSpan) {
@@ -2084,6 +2555,15 @@ impl ModernCompiler {
     }
 
     fn finish(mut self) -> CompileOutput {
+        for (name, span) in std::mem::take(&mut self.flags_read) {
+            if !self.flags_written.contains(&name) {
+                self.diagnostics.push(Diagnostic::warning(
+                    DiagnosticCode::UnknownLabel,
+                    format!("flag '{name}' is read but never set by any script"),
+                    Some(span),
+                ));
+            }
+        }
         let has_errors = self
             .diagnostics
             .iter()
@@ -2165,6 +2645,7 @@ fn collect_scene_sites(
             | StatementKind::Declare { .. }
             | StatementKind::Assign { .. }
             | StatementKind::AddAssign { .. }
+            | StatementKind::AssignExpr { .. }
             | StatementKind::Return
             | StatementKind::Play { .. }
             | StatementKind::Stop { .. }
@@ -2177,6 +2658,8 @@ fn collect_scene_sites(
             | StatementKind::SetSkip { .. }
             | StatementKind::SetLocale { .. }
             | StatementKind::SetTheme { .. }
+            | StatementKind::SetStage { .. }
+            | StatementKind::Camera { .. }
             | StatementKind::SetTextBox { .. }
             | StatementKind::Tween { .. }
             | StatementKind::Effect { .. }
@@ -2189,6 +2672,16 @@ fn collect_scene_sites(
             | StatementKind::End => {}
         }
     }
+}
+
+/// Stage cues are semantic vocabulary, not CSS. Restricting the alphabet keeps
+/// `#264450` or `rgba(...)` from leaking presentation tokens into a script.
+fn is_stage_cue_name(name: &str) -> bool {
+    (1..=48).contains(&name.len())
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
+        && name.as_bytes()[0].is_ascii_lowercase()
 }
 
 /// True when every route through a statement list transfers control away from
@@ -2229,6 +2722,7 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         | StatementKind::Declare { .. }
         | StatementKind::Assign { .. }
         | StatementKind::AddAssign { .. }
+        | StatementKind::AssignExpr { .. }
         | StatementKind::While { .. }
         | StatementKind::Call { .. }
         | StatementKind::Play { .. }
@@ -2242,6 +2736,8 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         | StatementKind::SetSkip { .. }
         | StatementKind::SetLocale { .. }
         | StatementKind::SetTheme { .. }
+        | StatementKind::SetStage { .. }
+        | StatementKind::Camera { .. }
         | StatementKind::SetTextBox { .. }
         | StatementKind::Tween { .. }
         | StatementKind::Effect { .. }
@@ -2335,19 +2831,7 @@ fn is_presentation_route(route: &str) -> bool {
             | "backlog"
             | "chapter_select"
             | "gallery"
-            // An interlude is a story-owned held surface. It deliberately
-            // remains layout-free in Core, but is a standard semantic route
-            // so strict scripts can save, log, and replay its silence.
-            | "interlude"
-            // A statement is a story-owned, automatic central line. It is
-            // deliberately distinct from an interlude because ordinary
-            // advance input must not release its authored duration.
-            | "statement"
-            // A chapter day card is a semantic presentation checkpoint. It
-            // remains project-rendered, but is deliberately whitelisted so a
-            // saved game can return to the same card rather than falling back
-            // to dialogue on restore.
-            | "day_card"
+            | "confirm"
     )
 }
 
@@ -2368,7 +2852,10 @@ fn comparator_name(operator: BinaryOperator) -> &'static str {
         BinaryOperator::LessEqual => "<=",
         BinaryOperator::Greater => ">",
         BinaryOperator::GreaterEqual => ">=",
-        BinaryOperator::And | BinaryOperator::Or => {
+        BinaryOperator::And
+        | BinaryOperator::Or
+        | BinaryOperator::Add
+        | BinaryOperator::Subtract => {
             unreachable!("handled before comparison lowering")
         }
     }
@@ -2379,6 +2866,7 @@ fn audio_bus_name(bus: AudioBus) -> &'static str {
         AudioBus::Bgm => "bgm",
         AudioBus::Se => "sound_effect",
         AudioBus::Voice => "voice",
+        AudioBus::Ambient => "ambient",
     }
 }
 

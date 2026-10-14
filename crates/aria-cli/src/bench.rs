@@ -25,7 +25,7 @@ struct BenchReport {
 
 pub fn command(path: &Path, steps: u64, json: bool) -> Result<u8> {
     let project = load_runtime_project(path)?;
-    let mut vm = Vm::new(project.program, project.logical_size)?;
+    let mut vm = Vm::with_plugins(project.program, project.logical_size, &project.plugins)?;
 
     let mut sequence = 0u64;
     let mut executed = 0u64;
