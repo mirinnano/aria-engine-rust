@@ -222,14 +222,14 @@ if (stampMatches(runtimeStamp, runtimeFingerprint) && runtimeReady) {
 } else {
   rmSync(runtime, { recursive: true, force: true });
   mkdirSync(runtime, { recursive: true });
-  run(cargo, ["build", "--release", "--locked", "-p", "aria-web", "--target", "wasm32-unknown-unknown"], {
+  run(cargo, ["build", "--profile", "web-release", "--locked", "-p", "aria-web", "--target", "wasm32-unknown-unknown"], {
     env: ariaCargoEnvironment,
   });
   run(wasmBindgen, [
     "--target", "web",
     "--out-dir", runtime,
     "--out-name", "aria_web",
-    resolve(repository, "target/wasm32-unknown-unknown/release/aria_web.wasm"),
+    resolve(repository, "target/wasm32-unknown-unknown/web-release/aria_web.wasm"),
   ]);
   writeFileSync(runtimeStamp, `${runtimeFingerprint}\n`);
 }

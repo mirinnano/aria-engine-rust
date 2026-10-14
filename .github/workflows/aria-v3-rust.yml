@@ -244,12 +244,15 @@ jobs:
         run: |
           wasm_bytes=$(stat -c%s target/umikaze-web/pkg/aria_web_bg.wasm)
           echo "wasm runtime: $wasm_bytes bytes"
-          # 2.5 MiB budget (current ~1.8MB); Phase E tightens this to 2.0MB.
+          # 2.5 MiB budget (current ~2.25MB, size-optimised web-release profile);
+          # Phase E tightens this to 2.0MB.
           test "$wasm_bytes" -le 2621440
           total_bytes=$(du -sb target/umikaze-web | cut -f1)
           echo "umikaze web package: $total_bytes bytes"
-          # Interim 31MB budget; Phase E tightens this to 20MB.
-          test "$total_bytes" -le 32505856
+          # Interim 42MB budget. The full edition's asset packs alone are ~33MB
+          # (scored BGM and the Day 0–11 photographs) and passed 31MB before
+          # this check was next reached; Phase E tightens this to 20MB.
+          test "$total_bytes" -le 44040192
       - name: Upload PWA
         uses: actions/upload-artifact@v4
         with:

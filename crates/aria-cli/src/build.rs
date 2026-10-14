@@ -1251,7 +1251,8 @@ fn auto_build_web_runtime(output: &Path) -> Result<()> {
             "aria-web",
             "--target",
             "wasm32-unknown-unknown",
-            "--release",
+            "--profile",
+            "web-release",
         ])
         .current_dir(&engine_root)
         .status()
@@ -1275,7 +1276,7 @@ fn auto_build_web_runtime(output: &Path) -> Result<()> {
 
     println!("  Running wasm-bindgen...");
     fs::create_dir_all(output)?;
-    let wasm_input = engine_root.join("target/wasm32-unknown-unknown/release/aria_web.wasm");
+    let wasm_input = engine_root.join("target/wasm32-unknown-unknown/web-release/aria_web.wasm");
     let status = Command::new(&wb_path)
         .args(["--target", "web", "--out-dir"])
         .arg(output)

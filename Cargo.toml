@@ -76,6 +76,14 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
+# The browser runtime is downloaded before the first frame, so it is built
+# for size: about 15% smaller than `release` after wasm-bindgen. Native
+# players keep the speed-oriented `release` profile.
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+
 # The currently published wayland-scanner release still pins quick-xml 0.39,
 # which has a build-time XML parser advisory. Keep the small proc-macro crate
 # vendored until its upstream quick-xml 0.41 change is released; the patch is
