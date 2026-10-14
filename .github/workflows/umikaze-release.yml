@@ -2,8 +2,8 @@ name: HesPhoros builds
 
 # The repository is public, so the full game never becomes a workflow artifact
 # or a GitHub Release asset: each desktop job uploads its own installer to the
-# private R2 bucket behind ponkotsu-soft's access-code download page. Only the
-# DAY 0–4 demo is published publicly, on a rolling pre-release.
+# private R2 bucket behind ponkotsu-soft's download page: the full game needs
+# an access code, the free DAY 0–4 demo does not, and both are rate-limited.
 on:
   push:
     branches: [main]
@@ -170,7 +170,7 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then version="$GITHUB_REF_NAME"; else version="main-${GITHUB_SHA::7}"; fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-      - name: Upload full installer to private R2
+      - name: Upload installers to private R2
         if: env.R2_ACCESS_KEY_ID != ''
         shell: bash
         env:
@@ -178,29 +178,28 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
         run: |
-          mkdir -p fragments
-          node scripts/r2-publish.mjs fragment target/umikaze-full/release/bundle \
-            "${{ matrix.platform }}" "$R2_PREFIX/builds/$VERSION" "fragments/${{ matrix.platform }}.json"
-          local_file=$(node -p "require('./fragments/${{ matrix.platform }}.json').local")
-          key=$(node -p "require('./fragments/${{ matrix.platform }}.json').key")
-          aws s3 cp "$local_file" "s3://$R2_BUCKET/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors
+          # Both editions live in the same private bucket; the site serves the
+          # demo without a code and the full game with one, rate-limited per IP.
+          for edition in full demo; do
+            prefix="$R2_PREFIX"; [ "$edition" = demo ] && prefix="$R2_PREFIX-demo"
+            mkdir -p "fragments/$edition"
+            fragment="fragments/$edition/${{ matrix.platform }}.json"
+            node scripts/r2-publish.mjs fragment "target/umikaze-$edition/release/bundle" \
+              "${{ matrix.platform }}" "$prefix/builds/$VERSION" "$fragment"
+            local_file=$(node -p "require('./$fragment').local")
+            key=$(node -p "require('./$fragment').key")
+            aws s3 cp "$local_file" "s3://$R2_BUCKET/$key" --endpoint-url "$R2_ENDPOINT" --only-show-errors
+          done
       # A fragment names the R2 key, size, and SHA-256 only; it holds no game data.
       - uses: actions/upload-artifact@v4
-        if: hashFiles('fragments/*.json') != ''
+        if: hashFiles('fragments/**/*.json') != ''
         with:
-          name: hesphoros-fragment-${{ matrix.platform }}
-          path: fragments/*.json
+          name: hesphoros-fragments-${{ matrix.platform }}
+          path: fragments/
           retention-days: 3
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hesphoros-demo-${{ matrix.artifact }}
-          path: |
-            target/umikaze-demo/release/bundle/**
-          if-no-files-found: error
-          retention-days: 7
 
-  publish-full:
-    name: Publish full game manifest to R2
+  publish:
+    name: Publish manifests to R2
     needs: [web, desktop]
     runs-on: ubuntu-latest
     env:
@@ -214,58 +213,31 @@ jobs:
       - uses: actions/download-artifact@v4
         if: env.R2_ACCESS_KEY_ID != ''
         with:
-          pattern: hesphoros-fragment-*
+          pattern: hesphoros-fragments-*
           path: fragments
           merge-multiple: true
       - name: Write latest.json and prune old builds
         if: env.R2_ACCESS_KEY_ID != ''
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then version="$GITHUB_REF_NAME"; else version="main-${GITHUB_SHA::7}"; fi
-          node scripts/r2-publish.mjs manifest fragments "$version" "$GITHUB_SHA" latest.json
-          aws s3 cp latest.json "s3://$R2_BUCKET/$R2_PREFIX/builds/$version/manifest.json" --endpoint-url "$R2_ENDPOINT" --only-show-errors
-          aws s3 cp latest.json "s3://$R2_BUCKET/$R2_PREFIX/latest.json" --endpoint-url "$R2_ENDPOINT" --only-show-errors \
-            --content-type application/json --cache-control no-store
-          # Keep the five newest builds; tagged releases are never pruned.
-          aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$R2_PREFIX/builds/main-" \
-            --endpoint-url "$R2_ENDPOINT" --output text \
-            --query "Contents[?ends_with(Key, 'manifest.json')].[LastModified,Key]" \
-            | grep -v '^None$' | sort | head -n -5 | awk '{print $2}' | while read -r manifest; do
-              prefix="${manifest%/manifest.json}"
-              echo "pruning $prefix"
-              aws s3 rm "s3://$R2_BUCKET/$prefix" --recursive --endpoint-url "$R2_ENDPOINT" --only-show-errors
-            done
+          for edition in full demo; do
+            prefix="$R2_PREFIX"; [ "$edition" = demo ] && prefix="$R2_PREFIX-demo"
+            node scripts/r2-publish.mjs manifest "fragments/$edition" "$version" "$GITHUB_SHA" "$edition.json"
+            aws s3 cp "$edition.json" "s3://$R2_BUCKET/$prefix/builds/$version/manifest.json" \
+              --endpoint-url "$R2_ENDPOINT" --only-show-errors
+            aws s3 cp "$edition.json" "s3://$R2_BUCKET/$prefix/latest.json" --endpoint-url "$R2_ENDPOINT" \
+              --only-show-errors --content-type application/json --cache-control no-store
+            # Keep the five newest main builds to bound storage; tagged builds stay.
+            # A bucket lifecycle rule also expires main builds after 180 days.
+            aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$prefix/builds/main-" \
+              --endpoint-url "$R2_ENDPOINT" --output text \
+              --query "Contents[?ends_with(Key, 'manifest.json')].[LastModified,Key]" \
+              | grep -v '^None$' | sort | head -n -5 | awk '{print $2}' | while read -r manifest; do
+                old="${manifest%/manifest.json}"
+                echo "pruning $old"
+                aws s3 rm "s3://$R2_BUCKET/$old" --recursive --endpoint-url "$R2_ENDPOINT" --only-show-errors
+              done
+          done
       - name: R2 not configured
         if: env.R2_ACCESS_KEY_ID == ''
-        run: echo "::notice::R2 secrets are not set; the full game was built and tested but not distributed."
-
-  publish-demo:
-    name: Publish demo installers (public pre-release)
-    needs: [web, desktop]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      TAG: hesphoros-demo-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: hesphoros-demo-*
-          path: demo-assets
-      - name: Replace the rolling demo pre-release
-        run: |
-          files=$(find demo-assets -type f \( -name '*-setup.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name checksums.sha256 \) -print)
-          test -n "$files"
-          # checksums.sha256 exists per platform; keep each one under a distinct name.
-          mkdir -p upload
-          for file in $files; do
-            name=$(basename "$file")
-            rel=${file#demo-assets/}
-            artifact=${rel%%/*}
-            if [ "$name" = checksums.sha256 ]; then name="checksums-${artifact#hesphoros-demo-}.sha256"; fi
-            cp "$file" "upload/$name"
-          done
-          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
-          gh release create "$TAG" upload/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "HesPhoros 体験版（DAY 0–4）" \
-            --notes "main の最新ビルドから自動で作り直す体験版です（${GITHUB_SHA::7}）。製品版は ponkotsu-soft のダウンロードページから、アクセスコードで入手できます。"
+        run: echo "::notice::R2 secrets are not set; the builds were tested but not distributed."

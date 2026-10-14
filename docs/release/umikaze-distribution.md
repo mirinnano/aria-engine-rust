@@ -116,8 +116,11 @@ The ponkotsu-soft site reads that manifest and hands out ten-minute signed
 links after an access code is accepted. Main builds keep the five newest;
 tagged builds are never pruned. Without the R2 secrets the workflow still
 builds and tests and simply distributes nothing. The DAY 0–4 demo installers
-are published publicly on the rolling `hesphoros-demo-latest` pre-release,
-and the engine CLI on `engine-nightly` (`engine-nightly.yml`).
+go to the same bucket under `hesphoros-demo/` with their own `latest.json`;
+the site hands them out without a code. Every link issue and file fetch is
+rate-limited per IP so the bucket's operations and storage stay inside the
+free tier. The engine CLI is published on `engine-nightly`
+(`engine-nightly.yml`).
 Desktop release commands also write a checksum manifest
 beside their Tauri bundle. If Windows code signing or macOS notarization
 changes an installer afterward, regenerate that manifest only after the final
