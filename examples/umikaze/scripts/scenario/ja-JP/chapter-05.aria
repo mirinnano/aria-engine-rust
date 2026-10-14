@@ -93,6 +93,9 @@ scene novel_chapter_05_story {
     "それでも、すぐには開けなかった。";
     "俺はブラックコーヒーを開けた。";
     "冷えた缶を口に当てると、雨の音が少し遠くなった。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.rain.room.ogg") loop fade 800ms;
+    wait breath 220ms;
     "「なあ」";
     "「なに」";
     "「ほかに、なんか本ないか」";
@@ -232,6 +235,9 @@ scene novel_chapter_05_story {
     "「俺はお前のパシリじゃねえぞ」";
     "「知ってる」";
     "ミオは布団の中で、少しだけ笑った。";
+    pause 0ms;
+    stop bgm fade 700ms;
+    wait breath 220ms;
     "俺は財布を取り、濡れた靴を履いた。";
     pause 0ms;
     background asset("assets/bg/scenes/rain-street-evening-v1.webp") with fade_through_black(640ms);

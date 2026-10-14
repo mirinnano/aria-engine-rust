@@ -61,6 +61,9 @@ scene novel_chapter_00_story {
     clear dialogue;
     wait 180ms;
     "私はいつものように、窓のむこうを見る。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.ward.first-light.ogg") loop fade 700ms;
+    wait breath 220ms;
     "桜の枝の先を、指でなぞった。";
     "「きれいな桜...」";
     "桜は満開の季節。けれど、近くで見れるわけでもない。";
@@ -90,6 +93,7 @@ scene novel_chapter_00_story {
     "「...帰ろう」";
     "母親は、ハンカチで涙を拭いた...";
     pause 0ms;
+    stop bgm fade 900ms;
     background asset("#6d706f") with fade_through_black(640ms);
     stage stillness;
     wait 640ms;

@@ -80,6 +80,9 @@ scene novel_chapter_01_story {
     "「...一体何を言ってるんだ」";
     "俺は「はぁ」とため息をつき、ボックス席に腰を下ろす。";
     "ガクンと鈍い衝撃があり、列車がゆっくりと滑り出す。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.rail.departure.ogg") loop fade 500ms;
+    wait breath 220ms;
     "ホームの景色が後ろへ後ろへと流れていく。";
     "ミオは膝の上のノートを閉じた。最後の頁にあった「海」の字だけが、目に残った。";
     "ふと、カバンの中を探る。";
@@ -104,6 +107,7 @@ scene novel_chapter_01_story {
     "それ以上は聞けなかった。";
     "聞いたところで、俺にできることなんて何もないしな。";
     pause 0ms;
+    stop bgm fade 600ms;
     wait 680ms;
     "列車はどんどん進み、小田原に着いた。";
     "ここらへんから、人がどっと増える。";

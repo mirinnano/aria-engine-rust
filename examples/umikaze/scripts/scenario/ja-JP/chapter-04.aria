@@ -64,6 +64,9 @@ scene novel_chapter_04_story {
     "「……別々に洗えばよかった」";
     "「いまさら言っても、遅いよ」";
     "洗濯槽が回り始めると、ミオは鞄からMDウォーカーを出した。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.recording.trace.ogg") fade 450ms;
+    wait breath 220ms;
     "小さなマイクをつなぎ、回る洗濯機へ向ける。";
     "「九月二十四日。松江のコインランドリー。私と君の服が回ってる」";
     pause 0ms;
@@ -73,6 +76,9 @@ scene novel_chapter_04_story {
     "ベンチの横には、半透明のケースが何枚か置かれていた。";
     "どのラベルも、まだ白いままだった。";
     "ミオは録音を止め、ディスクを取り出して、半透明のケースへ戻した。";
+    pause 0ms;
+    stop bgm fade 650ms;
+    wait breath 220ms;
     "洗濯槽が止まるまで、俺たちはほとんど話さなかった。";
     "最後に、蓋のロックがカチンと外れた。";
     "ポケットの中で、J-PHONEの角が指に当たった。";
