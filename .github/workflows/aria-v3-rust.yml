@@ -236,7 +236,8 @@ jobs:
         # reader-pack contract needs one focused browser gate of its own.
         run: |
           npm --prefix examples/umikaze/ui run prepare:demo
-          python3 -m http.server 4174 --bind 127.0.0.1 --directory examples/umikaze/dist >/tmp/umikaze-v3-http.log 2>&1 &
+          # prepare:demo writes the demo beside the full edition under dist/build.
+          python3 -m http.server 4174 --bind 127.0.0.1 --directory examples/umikaze/dist/build/demo >/tmp/umikaze-v3-http.log 2>&1 &
           ARIA_UI_URL=http://127.0.0.1:4174/web/ UMIKAZE_DEMO=true \
             npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
       - name: Assert web artifact size budgets
