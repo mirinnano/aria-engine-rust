@@ -12,7 +12,7 @@
 
 | Edition | Entry | Save namespace | Desktop identity | 内容境界 |
 | --- | --- | --- | --- | --- |
-| 完成版 | `scripts/main.aria` | `umikaze-v4` | `jp.example.umikaze` | DAY 0–10 |
+| 完成版 | `scripts/main.aria` | `umikaze-v4` | `jp.example.umikaze` | DAY 0–11 |
 | 体験版 | `scripts/main-demo.aria` | `umikaze-demo-v1` | `jp.example.umikaze.demo` / `umikaze-demo` | DAY 0–4、`demo_end` |
 
 体験版は完成版の停止フラグではない。ビルド時に別入口を選び、DAY 5以降を

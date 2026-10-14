@@ -10,11 +10,11 @@ cargo test --locked -p aria-core
 cargo test --locked -p aria-cli --no-default-features --test umikaze_sample
 cargo test --locked --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml
 
-# 本文正本照合（Day 0–10を明示指定）
+# 本文正本照合（Day 0–11を明示指定）
 cargo run --release --locked --no-default-features -p aria-cli -- import-novel /path/to/Novel/src \
   --out examples/umikaze/scripts/scenario/ja-JP \
   --chapter-select chapter_select_ja --locale ja-JP \
-  --include 00_init.md,01_start.md,02_day2.md,03_day3.md,04_day4.md,05_day5.md,06_day6.md,07_day7.md,08_day8.md,09_day9.md,10_day10.md \
+  --include 00_init.md,01_start.md,02_day2.md,03_day3.md,04_day4.md,05_day5.md,06_day6.md,07_day7.md,08_day8.md,09_day9.md,10_day10.md,11_day11.md \
   --presentation umikaze --layout chapters --verify
 ```
 

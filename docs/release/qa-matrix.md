@@ -11,7 +11,7 @@
 | 整形 | `cargo fmt --all -- --check` | Rust差分が標準整形済み |
 | Core | `cargo test --locked -p aria-core` | 字幕分割、保存、履歴、設定、CG、断章を含む全テスト成功 |
 | Scenario/CLI | `cargo test --locked -p aria-cli --no-default-features --test umikaze_sample` | 通常版の章導線と体験版のDAY 0–4境界が成功 |
-| 正本照合 | `aria import-novel … --verify` | `Desktop/Novel/src` とDay 0–10の本文・話者・順序が一致 |
+| 正本照合 | `aria import-novel … --verify` | `Desktop/Novel/src` とDay 0–11の本文・話者・順序が一致 |
 | 通常Web | `npm run prepare:desktop` → `npm test` | タイトル、章扉、読書、RMenu、設定、保存、履歴、ギャラリーの25件以上が成功 |
 | 体験版Web | `npm run prepare:demo` → `UMIKAZE_DEMO=true npm test -- --grep 'opening arc|offline PWA'` | DAY 4終端、DAY 5以降の不在、体験版保存名、オフライン再起動が確認できる |
 | 静止性能 | 通常/体験版のPlaywright性能テスト | タイトルが継続的な`requestAnimationFrame`を要求しない |

@@ -19,12 +19,14 @@ state mut demo_day4_in_progress: Bool = false;
 scene demo_chapter_select {
   screen chapter_select;
   background asset("#102b38") with wipe(260ms);
+  stage tide;
   choice {
-    "PROLOGUE\nP\n幸福は、世界のなかの事実ではない。\n春から九月\n季節だけが先に進む窓辺で、まだ名もない願いが揺れている。" => novel_chapter_00;
-    "DAY 1\nI\n幸福は、理由ではなく現在に示される。\n9月21日・横浜駅\n西へ向かう最初の列車が、朝のホームを離れる。" => novel_chapter_01;
-    "DAY 2\nII\n幸福の可能性は、行くことのうちにある。\n9月22日・三ノ宮\n雨の気配が近づく街で、二人は次の行き先を探している。" => novel_chapter_02;
-    "DAY 3\nIII\n幸福は、苦痛の不在を意味しない。\n9月23日・岡山\n遠ざかる景色の先で、言葉にできないものと向き合う。" => novel_chapter_03;
-    "DAY 4\nIV\n記録されるのは、幸福の痕跡だけである。\n9月24日・松江\n残そうとする音が、静かな海辺へ続く道を指している。" => demo_day4;
+    chapter canonical_chapter_00;
+    chapter canonical_chapter_01;
+    chapter canonical_chapter_02;
+    chapter canonical_chapter_03;
+    chapter canonical_chapter_04 => demo_day4;
+    cancel => title_screen;
   }
 }
 
@@ -46,9 +48,10 @@ scene chapter_select_ja {
 // telemetry, or forced sharing action is part of the player flow.
 scene novel_chapter_04_complete {
   background asset("#0f2f39") with fade(720ms);
+  stage city;
   screen demo_end;
   choice {
     "もう一度読む" => demo_chapter_select;
-    "タイトルへ戻る" => start;
+    "タイトルへ戻る" => title_screen;
   }
 }
