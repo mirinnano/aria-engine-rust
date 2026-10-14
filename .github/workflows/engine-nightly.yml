@@ -1,0 +1,97 @@
+name: Engine nightly
+
+# The engine is MIT-licensed and contains no game data, so the latest main
+# build of the `aria` CLI (with its native Player) is published publicly on
+# one rolling pre-release. Game builds are handled by umikaze-release.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/engine-nightly.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: aria ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x64
+            binary: aria
+          - os: macos-latest
+            name: macos-arm64
+            binary: aria
+          - os: windows-latest
+            name: windows-x64
+            binary: aria.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: engine-nightly
+      - name: Install Linux audio/input dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev libxkbcommon-dev
+      - name: Build aria CLI and Player
+        run: cargo build --release --locked -p aria-cli
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          staging="aria-${{ matrix.name }}"
+          mkdir -p "$staging"
+          cp "target/release/${{ matrix.binary }}" "$staging/"
+          cp LICENSE README.md "$staging/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "dist/$staging.zip" "$staging" > /dev/null
+          else
+            tar -czf "dist/$staging.tar.gz" "$staging"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Replace engine-nightly pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: engine-nightly
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: engine-*
+          path: assets
+          merge-multiple: true
+      - name: Publish
+        run: |
+          (cd assets && sha256sum * > SHA256SUMS)
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Aria Engine nightly" \
+            --notes "main の最新コミット（${GITHUB_SHA::7}）から自動で作り直す \`aria\` CLI と Native Player です。ゲームのデータは含みません。"

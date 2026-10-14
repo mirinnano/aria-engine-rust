@@ -99,15 +99,26 @@ split, save namespace, and copied Web contract before it reports success. The
 service worker keeps the first-load path small by fetching the hot pack only
 when the reader needs it.
 
-The GitHub Actions workflow `.github/workflows/umikaze-release.yml` builds the
-Web artifact and the three native installer families from the same tag. It
+The GitHub Actions workflow `.github/workflows/umikaze-release.yml` builds and
+tests the Web edition and the three native installer families on every push
+to `main` that touches the engine or the game, and on `umikaze-v*` tags. It
 expects the production PAK signing key in the `ARIA_PAK_SIGNING_KEY` secret;
 the matching public verification key is supplied through
 `ARIA_PAK_VERIFICATION_KEY_ID` and `ARIA_PAK_VERIFICATION_KEY_HEX`. No private
-key is stored in the repository. A tag named `umikaze-v*` assembles a **draft**
-GitHub Release with the installers, Web archives, manifests, and checksums;
-publishing it remains an explicit human decision after platform signing and
-notarization review. Desktop release commands also write a checksum manifest
+key is stored in the repository.
+
+Because this repository is public, the full game is never a workflow artifact
+or a GitHub Release asset. Each desktop job uploads its installer straight to
+the private Cloudflare R2 bucket (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY` secrets; optional `R2_BUCKET` variable), and a final job
+writes `hesphoros/latest.json` with each platform's key, size, and SHA-256.
+The ponkotsu-soft site reads that manifest and hands out ten-minute signed
+links after an access code is accepted. Main builds keep the five newest;
+tagged builds are never pruned. Without the R2 secrets the workflow still
+builds and tests and simply distributes nothing. The DAY 0–4 demo installers
+are published publicly on the rolling `hesphoros-demo-latest` pre-release,
+and the engine CLI on `engine-nightly` (`engine-nightly.yml`).
+Desktop release commands also write a checksum manifest
 beside their Tauri bundle. If Windows code signing or macOS notarization
 changes an installer afterward, regenerate that manifest only after the final
 platform-signing step.
