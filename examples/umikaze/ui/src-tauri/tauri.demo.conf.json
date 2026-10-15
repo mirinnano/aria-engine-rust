@@ -40,6 +40,9 @@
     "resources": {
       "../../licenses": "licenses"
     },
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
