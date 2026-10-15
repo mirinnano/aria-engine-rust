@@ -149,7 +149,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix examples/umikaze/ui
       - name: Verify desktop save adapter
-        run: cargo test --locked --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml
+        shell: bash
+        run: |
+          # tauri::generate_context! requires frontendDist to exist at compile
+          # time; the real bundles are built in the release steps below.
+          mkdir -p examples/umikaze/dist/build/full/web examples/umikaze/dist/build/demo/web
+          cargo test --locked --manifest-path examples/umikaze/ui/src-tauri/Cargo.toml
       - name: Build full native installer
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target/umikaze-full

@@ -179,10 +179,15 @@ if (edition === "demo") {
     "assets/bg/scenes/platform-sea-dawn-v1.webp",
     "assets/bg/scenes/rail-window-sunset-v1.webp",
     "assets/bg/scenes/rain-street-evening-v1.webp",
+    // DAY 1 / DAY 2 catalogue images from their `chapter` declarations.
+    "assets/bg/scenes/rain-window-dusk-v1.webp",
     "assets/bg/scenes/sannomiya-rain-platform-v1.webp",
     "assets/bg/scenes/shore-storm-sunset-v1.webp",
+    "assets/bg/scenes/station-night-pass-v1.webp",
     "assets/fonts/MPLUS1Code-wght.ttf",
     "assets/fonts/NotoSansJP-Regular.ttf",
+    // The story plugin (day cards, interludes, statements) runs in every edition.
+    "assets/plugins/umikaze-story.wasm",
   ].sort();
   const actualDemoAssets = [...packagedAssets].sort();
   if (JSON.stringify(actualDemoAssets) !== JSON.stringify(expectedDemoAssets)) {

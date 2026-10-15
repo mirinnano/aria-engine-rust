@@ -52,6 +52,9 @@ scene novel_chapter_09_story {
     "鞄の底には、昨日波止場の売店で買ったパンが一つ残っていた。";
     "ミオは半分だけ食べ、残りを俺に渡した。";
     "俺は受け取って、黙って食った。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.north.grey.ogg") fade 650ms;
+    wait breath 220ms;
     say ミオ: "「...ねえ」";
     await advance;
     clear dialogue;
@@ -140,6 +143,9 @@ scene novel_chapter_09_story {
     wait breath 220ms;
     "俺は何も言わず、" +;
     "その白いコードを受け取り、右耳に差し込んだ。";
+    pause 0ms;
+    stop bgm fade 900ms;
+    wait breath 220ms;
     "コードが届かないから、俺は向かいの席を立ち、ミオの隣へ座った。";
     "波の音がした。";
     "田儀で、ミオが録ってたやつだ。";

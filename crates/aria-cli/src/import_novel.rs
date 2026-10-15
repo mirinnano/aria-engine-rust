@@ -1121,7 +1121,10 @@ fn render_umikaze_module(
     output.push_str("}\n\n");
 
     for (chapter, style) in chapters.iter().zip(styles) {
-        render_umikaze_chapter_content(&mut output, chapter, style, chapter_select, locale);
+        let mut scored = String::new();
+        render_umikaze_chapter_content(&mut scored, chapter, style, chapter_select, locale);
+        output.push_str(&score_umikaze_chapter(&chapter.source_name, &scored)?);
+        output.push('\n');
     }
 
     Ok(proseify_story_scenes(&annotate_umikaze_stage_cues(&output)))
@@ -1341,6 +1344,161 @@ fn proseify_story_scenes(source: &str) -> String {
     output.join("\n")
 }
 
+/// Music is scored by hand: each cue plays or stops BGM after a line has been
+/// read and cleared, before the next breath. The importer re-applies the score
+/// on every regeneration, and a revised manuscript that loses an anchor line
+/// fails the import instead of silently dropping the music.
+struct ScoreCue {
+    source: &'static str,
+    after: &'static str,
+    cue: &'static str,
+}
+
+const UMIKAZE_SCORE: [ScoreCue; 18] = [
+    ScoreCue {
+        source: "00_init.md",
+        after: "私はいつものように、窓のむこうを見る。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.ward.first-light.ogg\") loop fade 700ms;",
+    },
+    ScoreCue {
+        source: "00_init.md",
+        after: "母親は、ハンカチで涙を拭いた...",
+        cue: "stop bgm fade 900ms;",
+    },
+    ScoreCue {
+        source: "01_start.md",
+        after: "ガクンと鈍い衝撃があり、列車がゆっくりと滑り出す。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.rail.departure.ogg\") loop fade 500ms;",
+    },
+    ScoreCue {
+        source: "01_start.md",
+        after: "聞いたところで、俺にできることなんて何もないしな。",
+        cue: "stop bgm fade 600ms;",
+    },
+    ScoreCue {
+        source: "04_day4.md",
+        after: "洗濯槽が回り始めると、ミオは鞄からMDウォーカーを出した。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.recording.trace.ogg\") fade 450ms;",
+    },
+    ScoreCue {
+        source: "04_day4.md",
+        after: "ミオは録音を止め、ディスクを取り出して、半透明のケースへ戻した。",
+        cue: "stop bgm fade 650ms;",
+    },
+    ScoreCue {
+        source: "05_day5.md",
+        after: "冷えた缶を口に当てると、雨の音が少し遠くなった。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.rain.room.ogg\") loop fade 800ms;",
+    },
+    ScoreCue {
+        source: "05_day5.md",
+        after: "ミオは布団の中で、少しだけ笑った。",
+        cue: "stop bgm fade 700ms;",
+    },
+    ScoreCue {
+        source: "06_day6.md",
+        after: "俺は水２本をカゴに入れ、おにぎりの鮭と昆布、そしてガリガリくんもカゴに入れた。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.everyday.table.ogg\") loop fade 450ms;",
+    },
+    ScoreCue {
+        source: "06_day6.md",
+        after: "「……俺の鮭はやらねえからな」",
+        cue: "stop bgm fade 550ms;",
+    },
+    ScoreCue {
+        source: "06_day6.md",
+        after: "俺は社交辞令を呟き、ロビーのドアを開ける。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.clear-between.ogg\") loop fade 600ms;",
+    },
+    ScoreCue {
+        source: "06_day6.md",
+        after: "エンジンは唸りを上げ、窓の外の寂れた街がゆっくりと後方へと流れていった。",
+        cue: "stop bgm fade 700ms;",
+    },
+    ScoreCue {
+        source: "07_day7.md",
+        after: "待合室の窓は白く曇っている。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.waiting.window.ogg\") loop fade 600ms;",
+    },
+    ScoreCue {
+        source: "07_day7.md",
+        after: "甘い匂いが、始発前の待合室に少しだけ残った。",
+        cue: "stop bgm fade 700ms;",
+    },
+    ScoreCue {
+        source: "07_day7.md",
+        after: "俺はペダルを踏み込み、潮風を切り裂いて走り出す。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.island.distance.ogg\") fade 650ms;",
+    },
+    ScoreCue {
+        source: "07_day7.md",
+        after: "俺はゆっくりとペダルを漕ぐ。",
+        cue: "stop bgm fade 800ms;",
+    },
+    ScoreCue {
+        source: "09_day9.md",
+        after: "俺は受け取って、黙って食った。",
+        cue: "play bgm asset(\"assets/audio/bgm/umk.north.grey.ogg\") fade 650ms;",
+    },
+    ScoreCue {
+        source: "09_day9.md",
+        after: "その白いコードを受け取り、右耳に差し込んだ。",
+        cue: "stop bgm fade 900ms;",
+    },
+];
+
+fn score_umikaze_chapter(source_name: &str, source: &str) -> Result<String> {
+    let mut lines: Vec<String> = source.lines().map(str::to_owned).collect();
+    let cues: Vec<&ScoreCue> = UMIKAZE_SCORE
+        .iter()
+        .filter(|cue| cue.source == source_name)
+        .collect();
+    // An anchor is the whole line, narrated or spoken (`say 俺: "…";`).
+    let quoted = |cue: &ScoreCue| format!("\"{}\";", escape_string(cue.after));
+    let is_anchor = |line: &str, cue: &ScoreCue| {
+        (line.starts_with("  narrate ") || line.starts_with("  say "))
+            && line.ends_with(&quoted(cue))
+    };
+    // A chapter with none of its anchors is a different manuscript (such as a
+    // test fixture): leave it unscored, but say so. A chapter that keeps some
+    // anchors and loses others is a revision that broke the score: fail.
+    if !cues.is_empty()
+        && !cues
+            .iter()
+            .any(|cue| lines.iter().any(|line| is_anchor(line, cue)))
+    {
+        eprintln!(
+            "warning: {source_name} has none of its music anchors; it is imported without BGM"
+        );
+        return Ok(source.to_owned());
+    }
+    for cue in cues {
+        let positions: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| is_anchor(line, cue))
+            .map(|(index, _)| index)
+            .collect();
+        let [position] = positions[..] else {
+            bail!(
+                "music cue '{}' in {} needs exactly one line \"{}\", found {}; re-anchor it in UMIKAZE_SCORE",
+                cue.cue,
+                source_name,
+                cue.after,
+                positions.len()
+            );
+        };
+        let mut at = position + 1;
+        for expected in ["  await advance;", "  clear dialogue;"] {
+            if lines.get(at).map(String::as_str) == Some(expected) {
+                at += 1;
+            }
+        }
+        lines.insert(at, format!("  {}", cue.cue));
+    }
+    Ok(lines.join("\n") + "\n")
+}
+
 fn render_umikaze_chapter_layout(
     chapters: &[NovelChapter],
     chapter_select: &str,
@@ -1400,7 +1558,10 @@ fn render_umikaze_chapter_layout(
         source.push('\n');
         rendered_chapters.push(GeneratedChapterFile {
             file_name: chapter_file_name(chapter),
-            source: proseify_story_scenes(&annotate_umikaze_stage_cues(&source)),
+            source: proseify_story_scenes(&score_umikaze_chapter(
+                &chapter.source_name,
+                &annotate_umikaze_stage_cues(&source),
+            )?),
         });
     }
 
@@ -1735,7 +1896,19 @@ fn verify_umikaze_chapter_presentation(
     let story_body: Vec<Statement> = story
         .body
         .iter()
-        .filter(|statement| !matches!(statement.kind, StatementKind::SetStage { .. }))
+        .filter(|statement| {
+            // Stage cues and hand-scored music (a play, or a stop with a fade;
+            // the manuscript's own `stopbgm` has none) are not timing beats.
+            !matches!(
+                statement.kind,
+                StatementKind::SetStage { .. }
+                    | StatementKind::Play { .. }
+                    | StatementKind::Stop {
+                        fade_ms: Some(_),
+                        ..
+                    }
+            )
+        })
         .cloned()
         .collect();
     let expected_interludes = chapter
@@ -2727,6 +2900,26 @@ mod tests {
             assert!(source.contains(&format!("scene novel_chapter_{chapter:02} {{")));
             assert!(source.contains("screen day_card;"));
         }
+    }
+
+    #[test]
+    fn the_music_score_follows_its_lines_and_fails_loudly_when_one_is_lost() {
+        let chapter = "  narrate \"冷えた缶を口に当てると、雨の音が少し遠くなった。\";\n  await advance;\n  clear dialogue;\n  wait breath 220ms;\n  narrate \"ミオは布団の中で、少しだけ笑った。\";\n  await advance;\n";
+        let scored = score_umikaze_chapter("05_day5.md", chapter).unwrap();
+        assert!(scored.contains(
+            "  clear dialogue;\n  play bgm asset(\"assets/audio/bgm/umk.rain.room.ogg\") loop fade 800ms;\n  wait breath 220ms;"
+        ));
+        assert!(scored.contains("少しだけ笑った。\";\n  await advance;\n  stop bgm fade 700ms;"));
+
+        // One anchor kept, one revised away: the import must stop.
+        let revised = chapter.replace("ミオは布団の中で、少しだけ笑った。", "ミオは黙った。");
+        assert!(score_umikaze_chapter("05_day5.md", &revised).is_err());
+
+        // A chapter with none of its anchors is another manuscript.
+        assert_eq!(
+            score_umikaze_chapter("05_day5.md", "  narrate \"本文。\";\n").unwrap(),
+            "  narrate \"本文。\";\n"
+        );
     }
 
     #[test]

@@ -44,6 +44,9 @@ scene novel_chapter_07_story {
     wait 640ms;
     "始発前のアナウンスで、目を開けた。";
     "待合室の窓は白く曇っている。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.waiting.window.ogg") loop fade 600ms;
+    wait breath 220ms;
     "ベンチの隣で、ミオが温かいココアの缶を持っていた。";
     "「起きてたのか」";
     "「眠れなかった」";
@@ -53,6 +56,9 @@ scene novel_chapter_07_story {
     "「水でいい」";
     "俺は缶を開けた。";
     "甘い匂いが、始発前の待合室に少しだけ残った。";
+    pause 0ms;
+    stop bgm fade 700ms;
+    wait breath 220ms;
     "「今日、行けるか」";
     "「うん」";
     "ミオは鞄を背負い、立ち上がった。";
@@ -139,6 +145,9 @@ scene novel_chapter_07_story {
     clear dialogue;
     wait breath 220ms;
     "俺はペダルを踏み込み、潮風を切り裂いて走り出す。";
+    pause 0ms;
+    play bgm asset("assets/audio/bgm/umk.island.distance.ogg") fade 650ms;
+    wait breath 220ms;
     "緩やかな坂道を下ると、眼下にキラキラと光る瀬戸内海が広がった。";
     say ミオ: "「わぁ……すっごい綺麗」";
     await advance;
@@ -225,6 +234,9 @@ scene novel_chapter_07_story {
     clear dialogue;
     wait breath 220ms;
     "俺はゆっくりとペダルを漕ぐ。";
+    pause 0ms;
+    stop bgm fade 800ms;
+    wait breath 220ms;
     "霧はまだ晴れない。";
     "道の先は白く霞んでいて、どこまで続いているのかもよく見えなかった。";
     "それでも、止まる気にはなれずに、チャリを漕ぐ。";
