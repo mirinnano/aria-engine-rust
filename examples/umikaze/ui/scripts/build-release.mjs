@@ -19,6 +19,10 @@ if (!['desktop', 'web'].includes(mode)) {
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: uiRoot, stdio: "inherit", ...options });
+  if (result.error) {
+    console.error(`build-release: could not run ${command}: ${result.error.message}`);
+    process.exit(1);
+  }
   if (result.status !== 0) process.exit(result.status || 1);
 }
 
@@ -99,7 +103,9 @@ const bundles = process.env.ARIA_TAURI_BUNDLES || (() => {
 const tauriArgs = ["run", "tauri", "--", "build"];
 if (edition === "demo") tauriArgs.push("--config", "src-tauri/tauri.demo.conf.json");
 tauriArgs.push("--bundles", bundles);
-run("npm", tauriArgs, { env });
+// On Windows npm is a .cmd shim, which Node only starts through a shell.
+// The arguments are fixed strings, so the shell has nothing to interpret.
+run("npm", tauriArgs, { env, shell: process.platform === "win32" });
 
 // Keep a portable integrity record adjacent to every native installer. This
 // makes a locally built candidate as inspectable as the CI artifact and keeps
