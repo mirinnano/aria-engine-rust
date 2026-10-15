@@ -132,6 +132,8 @@ function ensureFrontend() {
   console.log("  Building presentation (cache miss)...");
   run("npm", ["run", "build"], {
     cwd: uiRoot,
+    // npm is a .cmd shim on Windows, which Node only starts through a shell.
+    shell: process.platform === "win32",
     env: {
       ...process.env,
       ARIA_PRESENTATION_OUT_DIR: presentationCache,
