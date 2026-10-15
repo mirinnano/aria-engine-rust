@@ -65,6 +65,11 @@ delete ariaCargoEnvironment.CARGO_TARGET_DIR;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: repository, stdio: "inherit", ...options });
+  if (result.error) {
+    // A missing tool produces no output of its own; say which one it was.
+    console.error(`prepare-desktop: could not run ${command}: ${result.error.message}`);
+    process.exit(1);
+  }
   if (result.status !== 0) process.exit(result.status || 1);
 }
 

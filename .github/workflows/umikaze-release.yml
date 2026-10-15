@@ -133,9 +133,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          # prepare:desktop compiles the WASM runtime the bundle ships.
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: umikaze-desktop-v3
+      - name: Restore wasm-bindgen CLI
+        id: wasm-bindgen-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen${{ runner.os == 'Windows' && '.exe' || '' }}
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}
+      - name: Install wasm-bindgen CLI
+        if: steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - uses: actions/setup-node@v4
         with:
           node-version: 24
