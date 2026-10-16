@@ -11,6 +11,7 @@ members = [
     "crates/aria-plugin-host",
     "examples/plugins/lecture",
     "examples/plugins/tally",
+    "examples/plugins/annotate",
 ]
 
 [workspace.package]

@@ -3,8 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use aria_plugin_sdk::{
-    Capability, CommandDecl, PluginExecutor, PluginManifest, PluginRegistration, PluginRequest,
-    PluginResponse, PluginValue, RoutePolicy, StoryState, ValueType,
+    Capability, ChoiceEdit, CommandDecl, HookEvent, PluginExecutor, PluginManifest,
+    PluginRegistration, PluginRequest, PluginResponse, PluginValue, RoutePolicy, StoryState,
+    TextEdit, ValueType,
 };
 use aria_plugin_sdk::{MAX_PLUGINS, MAX_ROUTES};
 use serde::{Deserialize, Serialize};
@@ -128,6 +129,16 @@ impl PluginRegistry {
         self.manifests.get(plugin_id)
     }
 
+    /// The plugins that subscribe to `event`, in plugin-id order.
+    #[must_use]
+    pub fn hooked(&self, event: HookEvent) -> Vec<String> {
+        self.manifests
+            .values()
+            .filter(|manifest| manifest.hooks.contains(&event))
+            .map(|manifest| manifest.id.clone())
+            .collect()
+    }
+
     /// The plugin id behind a script namespace.
     #[must_use]
     pub fn plugin_for_namespace(&self, namespace: &str) -> Option<&str> {
@@ -194,6 +205,7 @@ mod tests {
                 namespace: None,
                 commands: Vec::new(),
                 migrates_from: None,
+                hooks: Default::default(),
             },
             wasm_blake3: "a".repeat(64),
         }

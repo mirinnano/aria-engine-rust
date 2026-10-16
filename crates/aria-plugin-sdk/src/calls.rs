@@ -75,6 +75,61 @@ pub enum PluginRequest {
     },
     /// A save made at `from` state version is being opened.
     Migrate { from: u32, state: serde_json::Value },
+    /// A line is about to be shown. `text` has its `{variables}` filled in.
+    Text {
+        scene: String,
+        speaker: Option<String>,
+        text: String,
+        state: serde_json::Value,
+        story: StoryState,
+    },
+    /// A choice is about to be offered, with these option labels in order.
+    Choices {
+        scene: String,
+        options: Vec<String>,
+        state: serde_json::Value,
+        story: StoryState,
+    },
+    /// The story entered `scene`.
+    SceneEnter {
+        scene: String,
+        state: serde_json::Value,
+        story: StoryState,
+    },
+}
+
+/// A VM event a plugin can intervene in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    Text,
+    Choices,
+    SceneEnter,
+}
+
+/// A replacement for the line about to be shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextEdit {
+    /// The speaker name to show; `None` shows the line as narration.
+    #[serde(default)]
+    pub speaker: Option<String>,
+    pub text: String,
+}
+
+/// One option of the edited choice, in the order to offer it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceEdit {
+    /// Keep the original option at this index (0-based).
+    #[serde(default)]
+    pub from: Option<u32>,
+    /// A new label; required for an added option.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// For an added option (`from` absent): the scene it leads to.
+    #[serde(default)]
+    pub scene: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -89,6 +144,12 @@ pub struct PluginResponse {
     /// Story variables and flags to change. Requires the `state` capability.
     #[serde(default)]
     pub story: StoryState,
+    /// For a `text` event: the line to show instead. Absent keeps it.
+    #[serde(default)]
+    pub text: Option<TextEdit>,
+    /// For a `choices` event: the options to offer instead. Absent keeps them.
+    #[serde(default)]
+    pub choices: Option<Vec<ChoiceEdit>>,
 }
 
 /// Runs plugin calls for a VM. The Core holds one of these, never a Wasm

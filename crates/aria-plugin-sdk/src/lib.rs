@@ -13,7 +13,8 @@ use thiserror::Error;
 
 pub mod calls;
 pub use calls::{
-    CommandDecl, PluginExecutor, PluginRequest, PluginResponse, PluginValue, StoryState, ValueType,
+    ChoiceEdit, CommandDecl, HookEvent, PluginExecutor, PluginRequest, PluginResponse, PluginValue,
+    StoryState, TextEdit, ValueType,
 };
 
 pub const PLUGIN_API_VERSION: u32 = 2;
@@ -47,6 +48,9 @@ pub struct PluginManifest {
     /// it, a save at an older state version cannot be opened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migrates_from: Option<u32>,
+    /// The VM events this plugin intervenes in.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub hooks: BTreeSet<HookEvent>,
 }
 
 fn first_state_version() -> u32 {
@@ -173,6 +177,9 @@ impl PluginManifest {
             if command.params.len() > 8 {
                 return fail("a command takes at most 8 parameters");
             }
+        }
+        if self.capabilities.contains(&Capability::Hooks) == self.hooks.is_empty() {
+            return fail("hooks are declared exactly when the hooks capability is");
         }
         if let Some(from) = self.migrates_from
             && (from == 0 || from >= self.state_version)
@@ -363,6 +370,7 @@ mod tests {
             namespace: None,
             commands: Vec::new(),
             migrates_from: None,
+            hooks: Default::default(),
         }
     }
 

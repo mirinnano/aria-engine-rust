@@ -21,6 +21,7 @@ pub fn manifest() -> PluginManifest {
         // Version 1 saved the total as {"sum": n}; version 2 as {"total": n}.
         state_version: 2,
         migrates_from: Some(1),
+        hooks: Default::default(),
         capabilities: [Capability::Commands, Capability::State].into(),
         routes: Vec::new(),
         namespace: Some("tally".into()),
@@ -54,6 +55,10 @@ pub fn handle(request: PluginRequest) -> Result<PluginResponse, String> {
         PluginRequest::Migrate { from, .. } => {
             Err(format!("cannot migrate from state version {from}"))
         }
+        // Tally does not subscribe to any VM event.
+        PluginRequest::Text { .. }
+        | PluginRequest::Choices { .. }
+        | PluginRequest::SceneEnter { .. } => Err("tally has no hooks".into()),
         PluginRequest::Command {
             command,
             args,

@@ -269,6 +269,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "aria-annotate-plugin"
+version = "1.0.0"
+dependencies = [
+ "aria-plugin-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "aria-cli"
 version = "0.1.0"
 dependencies = [

@@ -2188,7 +2188,7 @@ impl Vm {
     /// `ns::command(args)`: sends the arguments, the plugin's state, and (with
     /// the `state` capability) the story state; applies what comes back.
     fn execute_plugin_call(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
-        use crate::plugins::{Capability, PluginRequest, PluginValue, StoryState, ValueType};
+        use crate::plugins::{PluginRequest, PluginValue, ValueType};
         let plugin_id = self.string(self.operand(instruction, 0)?)?;
         let command = self.string(self.operand(instruction, 1)?)?;
         let fail =
@@ -2214,49 +2214,18 @@ impl Vm {
                 ValueType::String => PluginValue::String(self.string(operand)?),
             });
         }
-        let can_touch_story = self
-            .plugins
-            .manifest(&plugin_id)
-            .is_some_and(|manifest| manifest.capabilities.contains(&Capability::State));
-        let story = if can_touch_story {
-            self.story_state()
-        } else {
-            StoryState::default()
-        };
+        let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
         let request = PluginRequest::Command {
             command: command.clone(),
             args,
-            state: self
-                .state
-                .plugin_state
-                .get(&plugin_id)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
+            state,
             story,
         };
         let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
-        if !can_touch_story && (!response.story.vars.is_empty() || !response.story.flags.is_empty())
-        {
-            return Err(fail(
-                "changing story state requires the state capability".into(),
-            ));
-        }
         // Check everything before changing anything, so a bad response
         // leaves the VM exactly as it was.
-        for (name, value) in &response.story.vars {
-            let key = format!("state:{name}");
-            let fits = match value {
-                PluginValue::Int(_) | PluginValue::Bool(_) => {
-                    self.state.int_registers.contains_key(&key)
-                }
-                PluginValue::String(_) => self.state.string_registers.contains_key(&key),
-            };
-            if !fits {
-                return Err(fail(format!(
-                    "story variable '{name}' does not exist with that type"
-                )));
-            }
-        }
+        self.check_story_changes(can_touch_story, &response.story)
+            .map_err(fail)?;
         let target = &instruction.operands[2];
         let result = match (&declaration.returns, response.result) {
             (None, None) => None,
@@ -2288,7 +2257,76 @@ impl Vm {
             (Some(_), Operand::Integer(0)) => {}
             _ => return Err(fail("the result does not fit its target".into())),
         }
-        for (name, value) in response.story.vars {
+        self.commit_plugin_changes(&plugin_id, response.story, response.state);
+        Ok(())
+    }
+
+    /// What every request to `plugin_id` carries: its saved state, the story
+    /// state when it may see it, and whether it may change the story.
+    fn plugin_context(
+        &self,
+        plugin_id: &str,
+    ) -> (serde_json::Value, crate::plugins::StoryState, bool) {
+        let can_touch_story = self.plugins.manifest(plugin_id).is_some_and(|manifest| {
+            manifest
+                .capabilities
+                .contains(&crate::plugins::Capability::State)
+        });
+        let story = if can_touch_story {
+            self.story_state()
+        } else {
+            crate::plugins::StoryState::default()
+        };
+        let state = self
+            .state
+            .plugin_state
+            .get(plugin_id)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        (state, story, can_touch_story)
+    }
+
+    /// Rejects story changes a plugin may not make: any change without the
+    /// `state` capability, or a variable the script does not declare with
+    /// that type.
+    fn check_story_changes(
+        &self,
+        can_touch_story: bool,
+        story: &crate::plugins::StoryState,
+    ) -> Result<(), String> {
+        use crate::plugins::PluginValue;
+        if story.vars.is_empty() && story.flags.is_empty() {
+            return Ok(());
+        }
+        if !can_touch_story {
+            return Err("changing story state requires the state capability".into());
+        }
+        for (name, value) in &story.vars {
+            let key = format!("state:{name}");
+            let fits = match value {
+                PluginValue::Int(_) | PluginValue::Bool(_) => {
+                    self.state.int_registers.contains_key(&key)
+                }
+                PluginValue::String(_) => self.state.string_registers.contains_key(&key),
+            };
+            if !fits {
+                return Err(format!(
+                    "story variable '{name}' does not exist with that type"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies checked story changes and the plugin's new state.
+    fn commit_plugin_changes(
+        &mut self,
+        plugin_id: &str,
+        story: crate::plugins::StoryState,
+        state: Option<serde_json::Value>,
+    ) {
+        use crate::plugins::PluginValue;
+        for (name, value) in story.vars {
             let key = format!("state:{name}");
             match value {
                 PluginValue::Int(value) => {
@@ -2302,11 +2340,134 @@ impl Vm {
                 }
             }
         }
-        for (name, value) in response.story.flags {
+        for (name, value) in story.flags {
             self.state.flags.insert(name, value);
         }
-        if let Some(state) = response.state {
-            self.state.plugin_state.insert(plugin_id, state);
+        if let Some(state) = state {
+            self.state.plugin_state.insert(plugin_id.to_owned(), state);
+        }
+    }
+
+    /// The plugins that intervene in `event`, in plugin-id order.
+    fn hooked_plugins(&self, event: crate::plugins::HookEvent) -> Vec<String> {
+        self.plugins.hooked(event)
+    }
+
+    /// The scene the instruction at `pc` belongs to.
+    fn current_scene(&self) -> String {
+        self.anchors
+            .at_or_before(self.state.pc)
+            .map(|anchor| anchor.scene.clone())
+            .unwrap_or_default()
+    }
+
+    /// Runs every `text` hook over a line about to be shown.
+    fn apply_text_hooks(
+        &mut self,
+        speaker: Option<String>,
+        text: String,
+    ) -> Result<(Option<String>, String), VmError> {
+        let (mut speaker, mut text) = (speaker, text);
+        for plugin_id in self.hooked_plugins(crate::plugins::HookEvent::Text) {
+            let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+            let request = crate::plugins::PluginRequest::Text {
+                scene: self.current_scene(),
+                speaker: speaker.clone(),
+                text: text.clone(),
+                state,
+                story,
+            };
+            let fail =
+                |message: String| VmError::PluginCall(format!("{plugin_id} text hook: {message}"));
+            let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+            self.check_story_changes(can_touch_story, &response.story)
+                .map_err(fail)?;
+            if let Some(edit) = response.text {
+                speaker = edit.speaker;
+                text = edit.text;
+            }
+            self.commit_plugin_changes(&plugin_id, response.story, response.state);
+        }
+        Ok((speaker, text))
+    }
+
+    /// Runs every `choices` hook over options about to be offered.
+    fn apply_choice_hooks(
+        &mut self,
+        mut options: Vec<ChoiceOptionState>,
+    ) -> Result<Vec<ChoiceOptionState>, VmError> {
+        for plugin_id in self.hooked_plugins(crate::plugins::HookEvent::Choices) {
+            let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+            let request = crate::plugins::PluginRequest::Choices {
+                scene: self.current_scene(),
+                options: options.iter().map(|option| option.text.clone()).collect(),
+                state,
+                story,
+            };
+            let fail = |message: String| {
+                VmError::PluginCall(format!("{plugin_id} choices hook: {message}"))
+            };
+            let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+            self.check_story_changes(can_touch_story, &response.story)
+                .map_err(fail)?;
+            if let Some(edits) = response.choices {
+                let mut edited = Vec::with_capacity(edits.len());
+                for edit in edits {
+                    let option = match (edit.from, edit.scene) {
+                        (Some(index), None) => {
+                            let mut option = options
+                                .get(index as usize)
+                                .cloned()
+                                .ok_or_else(|| fail(format!("there is no option {index}")))?;
+                            if let Some(label) = edit.label {
+                                option.text = label;
+                            }
+                            option
+                        }
+                        (None, Some(scene)) => ChoiceOptionState {
+                            text: edit
+                                .label
+                                .ok_or_else(|| fail("an added option needs a label".into()))?,
+                            target: self
+                                .anchors
+                                .scene_start(&scene)
+                                .ok_or_else(|| fail(format!("there is no scene '{scene}'")))?,
+                            chapter: None,
+                        },
+                        _ => {
+                            return Err(fail(
+                                "an option keeps `from` or adds a `scene`, not both".into(),
+                            ));
+                        }
+                    };
+                    edited.push(option);
+                }
+                if edited.is_empty() {
+                    return Err(fail("a choice needs at least one option".into()));
+                }
+                options = edited;
+            }
+            self.commit_plugin_changes(&plugin_id, response.story, response.state);
+        }
+        Ok(options)
+    }
+
+    /// Runs every `scene_enter` hook when the story reaches a scene's start.
+    fn apply_scene_enter_hooks(&mut self, scene: &str) -> Result<(), VmError> {
+        for plugin_id in self.hooked_plugins(crate::plugins::HookEvent::SceneEnter) {
+            let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+            let request = crate::plugins::PluginRequest::SceneEnter {
+                scene: scene.to_owned(),
+                state,
+                story,
+            };
+            let fail = |message: String| {
+                VmError::PluginCall(format!("{plugin_id} scene_enter hook: {message}"))
+            };
+            let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+            self.check_story_changes(can_touch_story, &response.story)
+                .map_err(fail)?;
+            self.commit_plugin_changes(&plugin_id, response.story, response.state);
         }
         Ok(())
     }
@@ -2333,7 +2494,16 @@ impl Vm {
 
     fn execute(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
         match instruction.op {
-            ByteOp::Nop => {}
+            ByteOp::Nop => {
+                if let Some(scene) = instruction
+                    .operands
+                    .first()
+                    .and_then(|operand| self.string(operand).ok())
+                    .and_then(|anchor| anchor.strip_prefix("scene:").map(str::to_owned))
+                {
+                    self.apply_scene_enter_hooks(&scene)?;
+                }
+            }
             ByteOp::CallPlugin => self.execute_plugin_call(instruction)?,
             ByteOp::Text => {
                 let speaker = match instruction.operands.first() {
@@ -2342,6 +2512,10 @@ impl Vm {
                 };
                 let authored =
                     self.fill_interpolations(&self.string(self.operand(instruction, 1)?)?);
+                // Hooks see and replace the filled-in line. The line key below
+                // still names the authored line, so read state and resume
+                // anchors do not move when a plugin rewrites the text.
+                let (speaker, authored) = self.apply_text_hooks(speaker, authored)?;
                 // The compiler has validated the markup; an unparsable string
                 // from older bytecode is shown exactly as written.
                 let (text, markup) = match crate::markup::parse(&authored) {
@@ -2833,6 +3007,7 @@ impl Vm {
                 chapter,
             });
         }
+        let options = self.apply_choice_hooks(options)?;
         self.state.choice = Some(ChoiceState {
             options,
             focused: 0,
@@ -3880,6 +4055,7 @@ mod tests {
                         namespace: None,
                         commands: Vec::new(),
                         migrates_from: None,
+                        hooks: Default::default(),
                     },
                     wasm_blake3: "0".repeat(64),
                 })

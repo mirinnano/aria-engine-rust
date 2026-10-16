@@ -18,6 +18,7 @@ pub fn manifest() -> PluginManifest {
         namespace: None,
         commands: Vec::new(),
         migrates_from: None,
+        hooks: Default::default(),
     }
 }
 
