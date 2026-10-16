@@ -361,7 +361,7 @@ mod tests {
         ProjectManifest {
             schema: 4,
             game: GameManifest {
-                id: "jp.example.umikaze".to_owned(),
+                id: "jp.example.sample".to_owned(),
                 version: "3.0.0".to_owned(),
                 title: "海風".to_owned(),
             },
@@ -374,7 +374,7 @@ mod tests {
                 fonts: Vec::new(),
                 plugins: Vec::new(),
                 asset_pack_roles: BTreeMap::new(),
-                save_namespace: "umikaze-v3".to_owned(),
+                save_namespace: "sample-v1".to_owned(),
                 legacy_save_namespaces: Vec::new(),
             },
             presentation: PresentationManifest {

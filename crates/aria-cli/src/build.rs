@@ -329,9 +329,10 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
     let asset_inventory = project.asset_inventory()?;
     project.validate_bundled_fonts(&asset_inventory, release)?;
     // An explicit entry override defines a content-limited edition (for
-    // example, Umikaze DAY 0–4). Package only the selected import closure's
-    // literal assets plus the mandatory runtime fonts. Ordinary builds retain
-    // the manifest's complete asset inventory for DLC/dynamic pack workflows.
+    // example, a demo with the first chapters only). Package only the
+    // selected import closure's literal assets plus the mandatory runtime
+    // fonts. Ordinary builds retain the manifest's complete asset inventory
+    // for DLC/dynamic pack workflows.
     let assets_by_role =
         collect_assets_by_role(&project, &asset_inventory, entry.map(|_| &program))?;
 

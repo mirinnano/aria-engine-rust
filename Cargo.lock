@@ -270,7 +270,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "aria-cli"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "aes",
  "anyhow",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "aria-core"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "aria-plugin-sdk",
  "blake3",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "aria-native"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "aria-plugin-host"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "aria-plugin-sdk",
  "blake3",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "aria-plugin-sdk"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "aria-protection"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "aria-core",
  "blake3",
@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "aria-render"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "aria-core",
  "bytemuck",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "aria-web"
-version = "1.0.0"
+version = "0.1.0"
 dependencies = [
  "aria-core",
  "aria-plugin-host",
@@ -3974,13 +3974,6 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "umikaze-story-plugin"
-version = "1.0.0"
-dependencies = [
- "aria-plugin-sdk",
 ]
 
 [[package]]

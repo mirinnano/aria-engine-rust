@@ -7,8 +7,6 @@ use aria_native::{ReplayRunner, ReplayTape};
 use aria_web::PortableWebRuntime;
 
 const LECTURE: &[u8] = include_bytes!("../../../examples/plugins/lecture/assets/lecture.wasm");
-const UMIKAZE: &[u8] =
-    include_bytes!("../../../examples/umikaze/assets/plugins/umikaze-story.wasm");
 const SIZE: LogicalSize = LogicalSize {
     width: 1280,
     height: 720,
@@ -56,7 +54,7 @@ fn registration_lock_cannot_be_reopened_by_restore_or_invalid_input() {
     vm.step(&InputSnapshot::idle(1, 0)).unwrap();
     vm.restore(initial).unwrap();
     assert!(matches!(
-        vm.register_plugin(aria_plugin_host::load_plugin(UMIKAZE).unwrap()),
+        vm.register_plugin(aria_plugin_host::load_plugin(LECTURE).unwrap()),
         Err(VmError::InvalidPlugin(_))
     ));
     let mut fresh = Vm::new(program(), SIZE).unwrap();
@@ -186,20 +184,10 @@ fn independent_rust_guest_has_native_web_replay_and_save_parity() {
 }
 
 #[test]
-fn missing_plugin_fails_closed_and_umikaze_is_not_a_core_default() {
+fn missing_plugin_fails_closed() {
     let mut missing = Vm::new(program(), SIZE).unwrap();
     assert!(
         matches!(missing.step(&InputSnapshot::idle(1, 0)), Err(VmError::InvalidPlugin(message)) if message.contains("lecture_slide"))
-    );
-    let plugin = aria_plugin_host::load_plugin(UMIKAZE).unwrap();
-    assert_eq!(
-        plugin
-            .manifest
-            .routes
-            .iter()
-            .map(|policy| policy.route.as_str())
-            .collect::<Vec<_>>(),
-        ["day_card", "interlude", "statement"]
     );
 }
 

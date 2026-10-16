@@ -114,12 +114,9 @@ enum Command {
         /// Exact Markdown filenames to include (comma-separated; default: every chapter).
         #[arg(long, value_delimiter = ',')]
         include: Vec<String>,
-        /// Optional project-owned presentation rules for the generated scenario.
-        #[arg(long, value_enum, default_value_t = import_novel::NovelPresentation::Plain)]
-        presentation: import_novel::NovelPresentation,
-        /// Write index.aria plus one chapter-NN.aria file per selected chapter.
-        #[arg(long, value_enum, default_value_t = import_novel::NovelImportLayout::Single)]
-        layout: import_novel::NovelImportLayout,
+        /// Speaker labels that mark `名前「…」` lines as dialogue (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        speakers: Vec<String>,
         /// Validate existing output against Markdown without changing files.
         #[arg(long)]
         verify: bool,
@@ -205,8 +202,7 @@ where
             chapter_select,
             locale,
             include,
-            presentation,
-            layout,
+            speakers,
             verify,
         } => import_novel::command(
             &source,
@@ -215,8 +211,7 @@ where
                 chapter_select,
                 locale,
                 include,
-                presentation,
-                layout,
+                speakers,
             },
             verify,
         ),

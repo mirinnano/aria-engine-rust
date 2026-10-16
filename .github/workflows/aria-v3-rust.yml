@@ -15,7 +15,6 @@ on:
       - "examples/v3-minimal/**"
       - "examples/plugins/**"
       - "examples/v3-player-smoke/**"
-      - "examples/umikaze/**"
       - "scripts/build-v3-web.*"
       - "scripts/classify-v3-legacy-tests.py"
       - "scripts/v3-web-smoke.mjs"
@@ -34,7 +33,6 @@ on:
       - "examples/v3-minimal/**"
       - "examples/plugins/**"
       - "examples/v3-player-smoke/**"
-      - "examples/umikaze/**"
       - "scripts/build-v3-web.*"
       - "scripts/classify-v3-legacy-tests.py"
       - "scripts/v3-web-smoke.mjs"
@@ -82,8 +80,6 @@ jobs:
         run: cargo run --locked -p aria-cli -- check examples/v3-minimal --release
       - name: Check native-player release smoke project
         run: cargo run --locked -p aria-cli -- check examples/v3-player-smoke --release
-      - name: Check V3.2 umikaze UI sample
-        run: cargo run --locked -p aria-cli -- check examples/umikaze --release
 
   native:
     name: Native ${{ matrix.os }}
@@ -153,45 +149,6 @@ jobs:
           name: aria-native-${{ matrix.os }}
           path: target/package-*/**
 
-  linux-appimage:
-    name: Linux distro-neutral AppImage shell
-    # This is the oldest Tauri/WebKit baseline we support, not an Ubuntu-only
-    # release. The resulting AppImage is the Linux download for every
-    # supported distribution family.
-    runs-on: ubuntu-22.04
-    env:
-      ARIA_PAK_PROFILE: signed
-      ARIA_PAK_VERIFICATION_KEY_ID: publisher
-      ARIA_PAK_VERIFICATION_KEY_HEX: ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c
-      ARIA_TAURI_BUNDLES: appimage
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.89.0
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: examples/umikaze/ui/package-lock.json
-      - name: Install the portable Linux shell baseline
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libdbus-1-dev libudev-dev pkg-config libwayland-dev
-      - name: Install build tools and frontend dependencies
-        run: |
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
-          npm ci --prefix examples/umikaze/ui
-      - name: Stage content through the Aria CLI and wrap it as AppImage
-        run: npm --prefix examples/umikaze/ui run release:desktop
-      - name: Assert the distro-neutral artifact
-        shell: bash
-        run: |
-          appimage=$(find examples/umikaze/ui/src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' -print -quit)
-          test -n "$appimage"
-          test -x "$appimage"
-          file "$appimage"
-
   wasm-chromium:
     name: WASM Chromium offline shell
     runs-on: ubuntu-latest
@@ -226,33 +183,12 @@ jobs:
             node scripts/v3-web-smoke.mjs http://127.0.0.1:4173/
           ARIA_WEB_TEST_VERIFICATION_KEY=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c \
             node scripts/v3-web-save-smoke.mjs http://127.0.0.1:4173/
-      - name: Build umikaze web package
+      - name: Assert the WASM runtime size budget
         run: |
-          npm --prefix examples/umikaze/ui ci
-          cargo run --locked --release -p aria-cli --no-default-features -- build examples/umikaze --target web --profile signed --release --out target/umikaze-web
-      - name: Exercise Umikaze demo PWA offline from a project subpath
-        # The generic V3 PWA smoke above owns a canvas presentation. Umikaze
-        # instead owns its stage in React, so its service-worker and delayed
-        # reader-pack contract needs one focused browser gate of its own.
-        run: |
-          npm --prefix examples/umikaze/ui run prepare:demo
-          # prepare:demo writes the demo beside the full edition under dist/build.
-          python3 -m http.server 4174 --bind 127.0.0.1 --directory examples/umikaze/dist/build/demo >/tmp/umikaze-v3-http.log 2>&1 &
-          ARIA_UI_URL=http://127.0.0.1:4174/web/ UMIKAZE_DEMO=true \
-            npm --prefix examples/umikaze/ui test -- --grep 'opening arc|animation-frame loop|offline PWA'
-      - name: Assert web artifact size budgets
-        run: |
-          wasm_bytes=$(stat -c%s target/umikaze-web/pkg/aria_web_bg.wasm)
+          wasm_bytes=$(stat -c%s target/v3-web/pkg/aria_web_bg.wasm)
           echo "wasm runtime: $wasm_bytes bytes"
-          # 2.5 MiB budget (current ~2.25MB, size-optimised web-release profile);
-          # Phase E tightens this to 2.0MB.
+          # 2.5 MiB（web-release プロファイルで現状およそ 2.2 MB）。
           test "$wasm_bytes" -le 2621440
-          total_bytes=$(du -sb target/umikaze-web | cut -f1)
-          echo "umikaze web package: $total_bytes bytes"
-          # Interim 42MB budget. The full edition's asset packs alone are ~33MB
-          # (scored BGM and the Day 0–11 photographs) and passed 31MB before
-          # this check was next reached; Phase E tightens this to 20MB.
-          test "$total_bytes" -le 44040192
       - name: Upload PWA
         uses: actions/upload-artifact@v4
         with:
