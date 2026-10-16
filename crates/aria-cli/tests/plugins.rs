@@ -348,5 +348,10 @@ fn a_save_from_the_previous_snapshot_schema_still_opens() {
     let mut restored = Vm::with_plugins(program(), SIZE, &[plugin]).unwrap();
     restored.restore(old).unwrap();
     assert_eq!(restored.snapshot().schema_version, 11);
-    assert!(restored.snapshot().plugins.contains_key("org.example.lecture"));
+    assert!(
+        restored
+            .snapshot()
+            .plugins
+            .contains_key("org.example.lecture")
+    );
 }

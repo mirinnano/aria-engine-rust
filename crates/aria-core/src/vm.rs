@@ -29,6 +29,65 @@ const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
 /// Reads every `DeclareChapter` (id, label, numeral, title, date, synopsis,
 /// image) into catalogue entries that start locked.
+/// Reads every `DeclareItem` into collections, in source order.
+fn collection_catalogue(
+    program: &CompiledProgram,
+) -> BTreeMap<String, Vec<crate::presentation::CollectionItemView>> {
+    let mut collections: BTreeMap<String, Vec<_>> = BTreeMap::new();
+    for instruction in &program.instructions {
+        if instruction.op != ByteOp::DeclareItem {
+            continue;
+        }
+        let texts = instruction
+            .operands
+            .iter()
+            .map(|operand| program_string(program, operand))
+            .collect::<Vec<_>>();
+        let (Some(Some(collection)), Some(Some(id))) = (texts.first(), texts.get(1)) else {
+            continue;
+        };
+        let fields = texts[2..]
+            .chunks_exact(2)
+            .filter_map(|pair| Some((pair[0].clone()?, pair[1].clone()?)))
+            .collect();
+        collections.entry(collection.clone()).or_default().push(
+            crate::presentation::CollectionItemView {
+                id: id.clone(),
+                fields,
+            },
+        );
+    }
+    collections
+}
+
+/// Reads every `DeclareCg`: CG id → (title, image).
+fn cg_catalogue(program: &CompiledProgram) -> BTreeMap<String, (Option<String>, Option<String>)> {
+    program
+        .instructions
+        .iter()
+        .filter(|instruction| instruction.op == ByteOp::DeclareCg)
+        .filter_map(|instruction| {
+            let text = |index: usize| {
+                instruction
+                    .operands
+                    .get(index)
+                    .and_then(|operand| program_string(program, operand))
+            };
+            Some((text(0)?, (text(1), text(2))))
+        })
+        .collect()
+}
+
+fn program_string(program: &CompiledProgram, operand: &Operand) -> Option<String> {
+    let Operand::Constant(index) = operand else {
+        return None;
+    };
+    match program.constants.get(usize::try_from(*index).ok()?)? {
+        crate::bytecode::Constant::String(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
 fn chapter_catalogue(program: &CompiledProgram) -> Vec<ChapterView> {
     let text = |operand: Option<&Operand>| match operand {
         Some(Operand::Constant(index)) => usize::try_from(*index)
@@ -518,6 +577,9 @@ pub struct Vm {
     program_digest: String,
     /// Declared chapters in source order, read from the program at load.
     catalogue: Vec<ChapterView>,
+    /// Declared collections and CGs, also read at load and never saved.
+    collections: BTreeMap<String, Vec<crate::presentation::CollectionItemView>>,
+    cgs: BTreeMap<String, (Option<String>, Option<String>)>,
     /// Runs plugin commands and migrations. Hosts install it with the
     /// plugins; the Core never holds a Wasm instance itself.
     executor: Option<std::sync::Arc<dyn crate::plugins::PluginExecutor>>,
@@ -535,6 +597,8 @@ impl Vm {
         let anchors = crate::resume::AnchorIndex::build(&program);
         let program_digest = crate::resume::program_digest(&program);
         let catalogue = chapter_catalogue(&program);
+        let collections = collection_catalogue(&program);
+        let cgs = cg_catalogue(&program);
         Ok(Self {
             registration_closed: false,
             plugins: PluginRegistry::default(),
@@ -603,6 +667,8 @@ impl Vm {
             anchors,
             program_digest,
             catalogue,
+            collections,
+            cgs,
             executor: None,
         })
     }
@@ -2746,7 +2812,7 @@ impl Vm {
             ByteOp::PresentChoice => self.execute_choice(instruction, 2)?,
             ByteOp::PresentChoiceEx => self.execute_choice(instruction, 4)?,
             // Chapter metadata is read from the program at load.
-            ByteOp::DeclareChapter => {}
+            ByteOp::DeclareChapter | ByteOp::DeclareItem | ByteOp::DeclareCg => {}
             ByteOp::PlayAudio => self.execute_audio_play(instruction)?,
             ByteOp::StopAudio => self.execute_audio_stop(instruction)?,
             ByteOp::SetVolume => self.execute_volume(instruction)?,
@@ -3631,10 +3697,15 @@ impl Vm {
             .state
             .unlocked_cgs
             .iter()
-            .map(|id| GalleryItemView {
-                id: id.clone(),
-                unlocked: true,
-                selected: self.state.ui.gallery_viewer.as_deref() == Some(id.as_str()),
+            .map(|id| {
+                let (title, image) = self.cgs.get(id).cloned().unwrap_or_default();
+                GalleryItemView {
+                    id: id.clone(),
+                    unlocked: true,
+                    selected: self.state.ui.gallery_viewer.as_deref() == Some(id.as_str()),
+                    title,
+                    image,
+                }
             })
             .collect();
         UiViewModel {
@@ -3660,6 +3731,7 @@ impl Vm {
                 .plugins
                 .route_owner(&self.state.ui.route)
                 .map(str::to_owned),
+            collections: self.collections.clone(),
             choices,
             actions: self.presentation_actions(&route),
             settings: self.state.settings.clone(),

@@ -431,6 +431,7 @@ fn asset_operand(op: ByteOp) -> Option<(usize, bool, &'static str)> {
         ByteOp::PlayAudio => Some((2, false, "audio")),
         ByteOp::PreloadAsset => Some((0, false, "preload")),
         ByteOp::DeclareChapter => Some((6, false, "chapter image")),
+        ByteOp::DeclareCg => Some((2, false, "gallery image")),
         _ => None,
     }
 }

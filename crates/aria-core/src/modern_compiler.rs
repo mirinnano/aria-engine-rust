@@ -51,6 +51,8 @@ pub(crate) fn compile_modern(
         anchor_counts: BTreeMap::new(),
         characters: BTreeMap::new(),
         chapters: Vec::new(),
+        collections: Vec::new(),
+        cgs: Vec::new(),
         flags_written: BTreeSet::new(),
         flags_read: Vec::new(),
     };
@@ -166,6 +168,8 @@ struct ModernCompiler {
     anchor_counts: BTreeMap<String, u32>,
     characters: BTreeMap<String, CharacterDecl>,
     chapters: Vec<ChapterDecl>,
+    collections: Vec<crate::modern::CollectionDecl>,
+    cgs: Vec<crate::modern::CgDecl>,
     /// Flags written anywhere, and every `flag("…")` read with its span, so
     /// a read of a name that is never set (a typo) can be reported.
     flags_written: BTreeSet<String>,
@@ -347,6 +351,59 @@ impl ModernCompiler {
                     );
                 } else {
                     self.chapters.push(chapter);
+                }
+            }
+            for collection in module.collections {
+                let mut duplicates = Vec::new();
+                match self
+                    .collections
+                    .iter_mut()
+                    .find(|existing| existing.name == collection.name)
+                {
+                    // A collection may be spread over modules; item ids stay unique.
+                    Some(existing) => {
+                        for item in collection.items {
+                            if existing.items.iter().any(|known| known.id == item.id) {
+                                duplicates.push(item);
+                            } else {
+                                existing.items.push(item);
+                            }
+                        }
+                    }
+                    None => {
+                        let mut seen = BTreeSet::new();
+                        let mut kept = collection.clone();
+                        kept.items.clear();
+                        for item in collection.items {
+                            if seen.insert(item.id.clone()) {
+                                kept.items.push(item);
+                            } else {
+                                duplicates.push(item);
+                            }
+                        }
+                        self.collections.push(kept);
+                    }
+                }
+                for item in duplicates {
+                    self.error(
+                        DiagnosticCode::DuplicateLabel,
+                        format!(
+                            "duplicate item '{}' in collection '{}'",
+                            item.id, collection.name
+                        ),
+                        Some(item.span.clone()),
+                    );
+                }
+            }
+            for cg in module.cgs {
+                if self.cgs.iter().any(|existing| existing.id == cg.id) {
+                    self.error(
+                        DiagnosticCode::DuplicateLabel,
+                        format!("duplicate CG '{}'; CG ids are global", cg.id),
+                        Some(cg.span.clone()),
+                    );
+                } else {
+                    self.cgs.push(cg);
                 }
             }
             for scene in module.scenes {
@@ -658,6 +715,31 @@ impl ModernCompiler {
                 image,
             ];
             self.emit(ByteOp::DeclareChapter, operands, &chapter.span);
+        }
+        for collection in self.collections.clone() {
+            for item in &collection.items {
+                let mut operands = vec![
+                    Operand::Constant(self.intern_string(&collection.name)),
+                    Operand::Constant(self.intern_string(&item.id)),
+                ];
+                for (field, value) in &item.fields {
+                    operands.push(Operand::Constant(self.intern_string(field)));
+                    operands.push(Operand::Constant(self.intern_string(value)));
+                }
+                self.emit(ByteOp::DeclareItem, operands, &item.span);
+            }
+        }
+        for cg in self.cgs.clone() {
+            let title = cg.title.as_ref().map_or(Operand::None, |title| {
+                Operand::Constant(self.intern_string(title))
+            });
+            let image = cg
+                .image
+                .as_ref()
+                .and_then(|asset| self.asset_operand(asset))
+                .unwrap_or(Operand::None);
+            let operands = vec![Operand::Constant(self.intern_string(&cg.id)), title, image];
+            self.emit(ByteOp::DeclareCg, operands, &cg.span);
         }
     }
 

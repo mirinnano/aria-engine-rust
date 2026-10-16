@@ -206,6 +206,18 @@ pub struct GalleryItemView {
     pub id: String,
     pub unlocked: bool,
     pub selected: bool,
+    /// From the script's `cg id { title …; image …; }` declaration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
+/// One `item` of a script `collection`: its id and string fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionItemView {
+    pub id: String,
+    pub fields: BTreeMap<String, String>,
 }
 
 /// Validated plugin policy for the active custom surface. Hosts can route
@@ -256,6 +268,10 @@ pub struct UiViewModel {
     /// can mount that plugin's UI module for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_plugin: Option<String>,
+    /// The script's `collection` declarations, by name. What the story says
+    /// lives here; how it is laid out stays with the presentation.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub collections: BTreeMap<String, Vec<CollectionItemView>>,
     pub choices: Vec<ChoiceView>,
     pub actions: Vec<ActionView>,
     pub settings: SettingsState,

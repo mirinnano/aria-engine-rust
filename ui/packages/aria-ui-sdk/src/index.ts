@@ -126,6 +126,15 @@ export interface GalleryItemView {
   id: string;
   unlocked: boolean;
   selected: boolean;
+  /** From the script's `cg id { title …; image …; }` declaration. */
+  title?: string;
+  image?: string;
+}
+
+/** One `item` of a script `collection`. */
+export interface CollectionItemView {
+  id: string;
+  fields: Record<string, string>;
 }
 
 export interface StorySurfaceView {
@@ -155,6 +164,8 @@ export interface UiViewModel {
   timed_hold_total_ms?: number;
   /** The plugin that registered the current screen; its UI module can draw it. */
   route_plugin?: string;
+  /** The script's `collection` declarations, by name. */
+  collections?: Record<string, CollectionItemView[]>;
   choices: ChoiceView[];
   actions: ActionView[];
   settings: SettingsView;
