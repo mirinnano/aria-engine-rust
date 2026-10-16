@@ -335,7 +335,12 @@ fn validate_program_asset_references(
         let Some((operand_index, accepts_color, kind)) = asset_operand else {
             continue;
         };
-        let Some(operand) = instruction.operands.get(operand_index) else {
+        // Declarations (chapters, CGs) may leave their image out.
+        let Some(operand) = instruction
+            .operands
+            .get(operand_index)
+            .filter(|operand| !matches!(operand, Operand::None))
+        else {
             continue;
         };
         let Some(path) = constant_string(program, operand) else {
@@ -494,5 +499,16 @@ mod tests {
         assert_eq!(diagnostics[0].span.as_ref().map(|span| span.line), Some(5));
         // Without a declared vocabulary there is nothing to compare against.
         assert!(validate_stage_cues(&program, &[]).is_empty());
+    }
+
+    #[test]
+    fn declarations_may_leave_their_image_out() {
+        let program = program(
+            "aria;\nentry start;\nchapter one { title \"一\"; start start; }\ncg first { title \"最初\"; }\nscene start { end; }\n",
+        );
+        let assets = AssetInventory {
+            entries: BTreeMap::new(),
+        };
+        assert!(validate_program_asset_references(&program, &assets).is_empty());
     }
 }

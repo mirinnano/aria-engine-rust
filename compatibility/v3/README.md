@@ -1,17 +1,5 @@
-# V3 compatibility corpus
+# Native と Web の一致を確かめる入力記録
 
-This directory contains platform-neutral fixtures for the Rust-native Aria V3
-runtime.
-
-- `vertical-slice-inputs.json` is a green replay tape. The Rust test suite runs
-  it through the Native and Web wrappers and requires identical VM, render,
-  audio, UI, and runtime-command hashes.
-- `umikaze-legacy/` is the unchanged source snapshot used as migration input;
-  it includes the original `main.aria`, all UI helpers, and every localized
-  scenario file.
-- A behavior becomes a V3 contract only after it is represented by a
-  platform-neutral source/replay fixture and the cross-runtime test is green.
-
-Legacy projects are migrated into this repository with `aria migrate`; the
-legacy runtime and its test inventory are intentionally kept outside this
-Rust-only repository.
+`vertical-slice-inputs.json` は、読者の入力を時刻つきで並べた記録である。
+`crates/aria-cli/tests/cross_runtime_determinism.rs` がこの記録を Native と Web の両方で再生し、毎フレームの出力と最後の保存データのハッシュが一致することを確かめる。
+ある振る舞いを Native と Web で同じにすると約束するときは、その振る舞いを通る入力をこの記録に足す。

@@ -16,7 +16,6 @@ on:
       - "examples/plugins/**"
       - "examples/v3-player-smoke/**"
       - "scripts/build-v3-web.*"
-      - "scripts/classify-v3-legacy-tests.py"
       - "scripts/v3-web-smoke.mjs"
       - "scripts/v3-web-save-smoke.mjs"
       - ".github/workflows/aria-v3-rust.yml"
@@ -34,7 +33,6 @@ on:
       - "examples/plugins/**"
       - "examples/v3-player-smoke/**"
       - "scripts/build-v3-web.*"
-      - "scripts/classify-v3-legacy-tests.py"
       - "scripts/v3-web-smoke.mjs"
       - "scripts/v3-web-save-smoke.mjs"
       - ".github/workflows/aria-v3-rust.yml"
@@ -74,8 +72,6 @@ jobs:
         run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Test workspace and architecture boundary
         run: cargo test --workspace --locked
-      - name: Check legacy-test classification is current
-        run: python3 scripts/classify-v3-legacy-tests.py --check
       - name: Check release-compatible example project
         run: cargo run --locked -p aria-cli -- check examples/v3-minimal --release
       - name: Check native-player release smoke project
