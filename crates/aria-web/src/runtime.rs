@@ -80,6 +80,18 @@ impl PortableWebRuntime {
                 selection.missing.join(", ")
             ));
         }
+        let executor = aria_plugin_host::executor::WasmExecutor::new(
+            selection
+                .plugins
+                .iter()
+                .map(|package| (&package.registration.manifest, package.wasm.as_slice())),
+        )
+        .map_err(|error| error.to_string())?;
+        if !executor.is_empty() {
+            self.vm
+                .set_plugin_executor(std::sync::Arc::new(executor))
+                .map_err(|error| error.to_string())?;
+        }
         let mut installed = Vec::new();
         for package in selection.plugins {
             let manifest = &package.registration.manifest;

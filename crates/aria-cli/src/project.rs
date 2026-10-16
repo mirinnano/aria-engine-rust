@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use aria_core::bytecode::{ByteOp, Constant, Operand};
 use aria_core::{
     CompileInput, CompileOutput, CompiledProgram, Diagnostic, DiagnosticCode, ProjectManifest,
-    SourceSpan, SourceUnit, compile_with_routes,
+    SourceSpan, SourceUnit,
 };
 use walkdir::{DirEntry, WalkDir};
 
@@ -260,24 +260,18 @@ impl LoadedProject {
     pub fn compile(&self) -> Result<CompileOutput> {
         let assets = self.asset_inventory()?;
         self.validate_bundled_fonts(&assets, false)?;
-        let custom_routes = self
+        let manifests = self
             .plugins()?
-            .iter()
-            .flat_map(|plugin| {
-                plugin
-                    .manifest
-                    .routes
-                    .iter()
-                    .map(|policy| policy.route.clone())
-            })
-            .collect();
-        let mut output = compile_with_routes(
+            .into_iter()
+            .map(|plugin| plugin.manifest)
+            .collect::<Vec<_>>();
+        let mut output = aria_core::compiler::compile_with_plugins(
             CompileInput {
                 game_id: self.manifest.game.id.clone(),
                 entry: self.manifest.runtime.entry.clone(),
                 sources: self.sources()?,
             },
-            &custom_routes,
+            &manifests,
         );
         if let Some(program) = &output.program {
             output

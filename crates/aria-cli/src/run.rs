@@ -38,7 +38,7 @@ pub(crate) enum RuntimeAssetSource {
 pub(crate) struct RuntimeProject {
     pub(crate) root: PathBuf,
     pub(crate) program: CompiledProgram,
-    pub(crate) plugins: Vec<aria_core::PluginRegistration>,
+    pub(crate) plugins: aria_core::PluginSet,
     pub(crate) logical_size: LogicalSize,
     pub(crate) save_namespace: String,
     pub(crate) legacy_save_namespaces: Vec<String>,
@@ -65,7 +65,7 @@ pub fn command(path: &Path, headless: bool, replay: Option<&Path>, max_frames: u
         let tape: ReplayTape = serde_json::from_slice(
             &fs::read(replay).with_context(|| format!("cannot read {}", replay.display()))?,
         )?;
-        let (result, _) = ReplayRunner.run_with_plugins(
+        let (result, _) = ReplayRunner.run_with_plugin_set(
             project.program,
             project.logical_size,
             &tape,
@@ -75,7 +75,7 @@ pub fn command(path: &Path, headless: bool, replay: Option<&Path>, max_frames: u
         return Ok(0);
     }
 
-    let mut vm = Vm::with_plugins(project.program, project.logical_size, &project.plugins)?;
+    let mut vm = Vm::with_plugin_set(project.program, project.logical_size, &project.plugins)?;
     let save_root = project.root.join("saves-v3");
     for namespace in &project.legacy_save_namespaces {
         AtomicSaveStore::purge_namespace(&save_root, namespace)?;
@@ -232,10 +232,10 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
                 })?;
             }
         }
-        let plugins = crate::plugins::registrations(&crate::plugins::discover(
+        let plugins = crate::plugins::plugin_set(&crate::plugins::discover(
             &packaged_plugin_directories(&root, &bundle.game_id),
             &bundle.plugins,
-        )?);
+        )?)?;
         let wrapper = root.join("build-manifest.json");
         if wrapper.is_file() {
             let manifest: BuildManifest = serde_json::from_slice(&fs::read(&wrapper)?)?;
@@ -276,7 +276,7 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
         bail!("project has compiler errors");
     }
     let assets = project.asset_inventory()?;
-    let plugins = project.plugins()?;
+    let plugins = crate::plugins::plugin_set(&project.plugin_selection()?)?;
     Ok(RuntimeProject {
         root: project.root,
         program: compiled.program.context("compiler produced no program")?,

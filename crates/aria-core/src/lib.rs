@@ -31,7 +31,7 @@ pub use compiler::{CompileInput, CompileOutput, SourceUnit, compile, compile_wit
 pub use diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceSpan};
 pub use input::{InputAction, InputSnapshot, PointerSnapshot};
 pub use plugins::{
-    PluginManifest, PluginRegistration, PluginRegistry, PluginRegistryError, RoutePolicy,
+    PluginManifest, PluginRegistration, PluginRegistry, PluginRegistryError, PluginSet, RoutePolicy,
 };
 pub use presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,

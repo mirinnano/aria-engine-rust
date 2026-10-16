@@ -403,6 +403,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aria-tally-plugin"
+version = "1.0.0"
+dependencies = [
+ "aria-plugin-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "aria-web"
 version = "0.1.0"
 dependencies = [

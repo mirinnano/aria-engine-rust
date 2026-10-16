@@ -59,6 +59,8 @@ pub struct ModernToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModernTokenKind {
     Identifier,
+    /// `::` between a plugin namespace and a command name.
+    PathSeparator,
     String,
     Number,
     Whitespace,
@@ -274,6 +276,10 @@ pub enum StatementKind {
     Assign {
         name: String,
         value: Value,
+    },
+    /// A plugin command used as a statement; any result is discarded.
+    PluginCall {
+        call: Expression,
     },
     AddAssign {
         name: String,
@@ -580,6 +586,12 @@ pub enum ExpressionKind {
     },
     /// `flag("name")`: a session or persistent flag as a Bool.
     Flag(String),
+    /// `namespace::command(args)`: a command a plugin offers.
+    PluginCall {
+        namespace: String,
+        command: String,
+        args: Vec<Expression>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -755,6 +767,7 @@ impl<'a> Lexer<'a> {
         start: Mark,
     ) -> ModernTokenKind {
         let pairs = [
+            ("::", ModernTokenKind::PathSeparator),
             ("+=", ModernTokenKind::PlusEquals),
             ("-=", ModernTokenKind::MinusEquals),
             ("=>", ModernTokenKind::FatArrow),
@@ -1621,6 +1634,14 @@ impl Parser {
         } else if self.consume_keyword("end") {
             self.expect_statement_end("expected ';' after end statement")?;
             StatementKind::End
+        } else if self.peek().kind == ModernTokenKind::Identifier
+            && self
+                .peek_next()
+                .is_some_and(|next| next.kind == ModernTokenKind::PathSeparator)
+        {
+            let call = self.parse_plugin_call()?;
+            self.expect_statement_end("expected ';' after the plugin command")?;
+            StatementKind::PluginCall { call }
         } else if self.peek().kind == ModernTokenKind::Identifier {
             self.parse_assignment()?
         } else {
@@ -2419,10 +2440,46 @@ impl Parser {
                 kind: ExpressionKind::Flag(name),
             });
         }
+        if self.peek().kind == ModernTokenKind::Identifier
+            && self
+                .peek_next()
+                .is_some_and(|next| next.kind == ModernTokenKind::PathSeparator)
+        {
+            return self.parse_plugin_call();
+        }
         let (name, token) = self.parse_identifier("expected expression")?;
         Some(Expression {
             span: token.span,
             kind: ExpressionKind::Identifier(name),
+        })
+    }
+
+    /// `namespace::command(arg, …)`.
+    fn parse_plugin_call(&mut self) -> Option<Expression> {
+        let (namespace, start) = self.parse_identifier("expected plugin namespace")?;
+        self.expect_kind(ModernTokenKind::PathSeparator, "expected '::'")?;
+        let (command, _) = self.parse_identifier("expected plugin command name")?;
+        self.expect_kind(
+            ModernTokenKind::LeftParen,
+            "expected '(' after the command name",
+        )?;
+        let mut args = Vec::new();
+        if !self.at_kind(ModernTokenKind::RightParen) {
+            loop {
+                args.push(self.parse_expression(0)?);
+                if self.consume_kind(ModernTokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        let end = self.expect_kind(ModernTokenKind::RightParen, "expected ')' after arguments")?;
+        Some(Expression {
+            span: span_between(&start, &end),
+            kind: ExpressionKind::PluginCall {
+                namespace,
+                command,
+                args,
+            },
         })
     }
 

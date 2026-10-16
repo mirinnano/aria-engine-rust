@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_debug_implementations)]
 
+pub mod executor;
 pub mod package;
 pub mod select;
 

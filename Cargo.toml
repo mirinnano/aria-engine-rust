@@ -10,6 +10,7 @@ members = [
     "crates/aria-plugin-sdk",
     "crates/aria-plugin-host",
     "examples/plugins/lecture",
+    "examples/plugins/tally",
 ]
 
 [workspace.package]

@@ -270,7 +270,7 @@ async function boot() {
   }
   if (!bytecodeResponse.ok) throw new Error(`game.ariac: HTTP ${bytecodeResponse.status}`);
   const bundle = await bundleResponse.json();
-  if (bundle.schema_version !== 7 || bundle.vm_abi_version !== 4) {
+  if (bundle.schema_version !== 7 || bundle.vm_abi_version !== 5) {
     throw new Error("unsupported Aria portable bundle");
   }
   logicalSize = { width: bundle.logical_width, height: bundle.logical_height };

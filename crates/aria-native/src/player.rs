@@ -43,7 +43,7 @@ const MAX_FRAME_DELTA_MS: u32 = 250;
 pub struct NativePlayerConfig {
     pub title: String,
     pub program: CompiledProgram,
-    pub plugins: Vec<aria_core::PluginRegistration>,
+    pub plugins: aria_core::PluginSet,
     pub logical_size: LogicalSize,
     /// Parent directory; `AtomicSaveStore` adds `save_namespace` beneath it.
     pub save_root: PathBuf,
@@ -280,7 +280,7 @@ impl NativeApplication {
             WgpuRenderer::new_with_fonts(device, queue, surface_config.format, bundled_fonts)
                 .map_err(|error| NativePlayerError::Renderer(error.to_string()))?;
 
-        let mut vm = Vm::with_plugins(program, logical_size, &plugins)?;
+        let mut vm = Vm::with_plugin_set(program, logical_size, &plugins)?;
         let output = vm.step(&InputSnapshot::idle(1, 0))?;
         let viewport = renderer.viewport_transform(
             &output.scene,

@@ -98,6 +98,9 @@ pub struct VmSnapshot {
     /// The plugins this save was made with.
     #[serde(default)]
     pub plugins: BTreeMap<String, crate::plugins::PluginStamp>,
+    /// Each plugin's own saved state, as the plugin last returned it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_state: BTreeMap<String, serde_json::Value>,
     pub pc: u32,
     pub frame_number: u64,
     pub logical_time_ms: u64,
@@ -507,6 +510,9 @@ pub struct Vm {
     program_digest: String,
     /// Declared chapters in source order, read from the program at load.
     catalogue: Vec<ChapterView>,
+    /// Runs plugin commands and migrations. Hosts install it with the
+    /// plugins; the Core never holds a Wasm instance itself.
+    executor: Option<std::sync::Arc<dyn crate::plugins::PluginExecutor>>,
 }
 
 impl Vm {
@@ -530,6 +536,7 @@ impl Vm {
                 schema_version: VM_SNAPSHOT_SCHEMA,
                 game_id,
                 plugins: BTreeMap::new(),
+                plugin_state: BTreeMap::new(),
                 pc: 0,
                 frame_number: 0,
                 logical_time_ms: 0,
@@ -587,6 +594,7 @@ impl Vm {
             anchors,
             program_digest,
             catalogue,
+            executor: None,
         })
     }
 
@@ -603,6 +611,33 @@ impl Vm {
             .map_err(|error| VmError::InvalidPlugin(error.to_string()))?;
         self.state.plugins = self.plugins.stamps().clone();
         Ok(())
+    }
+
+    /// Installs what runs plugin calls. Like plugins, only before the first
+    /// step: replay and saves depend on the same calls giving the same answers.
+    pub fn set_plugin_executor(
+        &mut self,
+        executor: std::sync::Arc<dyn crate::plugins::PluginExecutor>,
+    ) -> Result<(), VmError> {
+        if self.registration_closed || self.state.frame_number != 0 || self.state.pc != 0 {
+            return Err(VmError::InvalidPlugin(
+                "the plugin executor must be installed before the first step".into(),
+            ));
+        }
+        self.executor = Some(executor);
+        Ok(())
+    }
+
+    pub fn with_plugin_set(
+        program: CompiledProgram,
+        logical_size: LogicalSize,
+        plugins: &crate::plugins::PluginSet,
+    ) -> Result<Self, VmError> {
+        let mut vm = Self::with_plugins(program, logical_size, &plugins.registrations)?;
+        if let Some(executor) = &plugins.executor {
+            vm.set_plugin_executor(executor.clone())?;
+        }
+        Ok(vm)
     }
 
     pub fn with_plugins(
@@ -696,9 +731,25 @@ impl Vm {
         if snapshot.schema_version != VM_SNAPSHOT_SCHEMA {
             return Err(VmError::UnsupportedSnapshot(snapshot.schema_version));
         }
-        self.plugins
-            .accepts(&snapshot.plugins)
+        let migrations = self
+            .plugins
+            .plan_restore(&snapshot.plugins)
             .map_err(VmError::PluginMismatch)?;
+        for (plugin_id, from) in migrations {
+            let state = snapshot
+                .plugin_state
+                .remove(&plugin_id)
+                .unwrap_or(serde_json::Value::Null);
+            let response = self
+                .call_plugin(
+                    &plugin_id,
+                    &crate::plugins::PluginRequest::Migrate { from, state },
+                )
+                .map_err(VmError::PluginMismatch)?;
+            if let Some(state) = response.state {
+                snapshot.plugin_state.insert(plugin_id, state);
+            }
+        }
         // From here on the save belongs to the plugins running now.
         snapshot.plugins = self.plugins.stamps().clone();
         if snapshot.game_id != self.program.game_id {
@@ -1600,6 +1651,7 @@ impl Vm {
 
         let mut replay = Vm::new(self.program.clone(), self.logical_size)?;
         replay.plugins = self.plugins.clone();
+        replay.executor = self.executor.clone();
         replay.state.plugins = self.state.plugins.clone();
         replay.suppress_backlog_recording = true;
         replay.state.ui.viewport = viewport;
@@ -2122,9 +2174,167 @@ impl Vm {
         }
     }
 
+    fn call_plugin(
+        &self,
+        plugin_id: &str,
+        request: &crate::plugins::PluginRequest,
+    ) -> Result<crate::plugins::PluginResponse, String> {
+        self.executor
+            .as_ref()
+            .ok_or_else(|| format!("plugin '{plugin_id}' needs a plugin executor"))?
+            .call(plugin_id, request)
+    }
+
+    /// `ns::command(args)`: sends the arguments, the plugin's state, and (with
+    /// the `state` capability) the story state; applies what comes back.
+    fn execute_plugin_call(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
+        use crate::plugins::{Capability, PluginRequest, PluginValue, StoryState, ValueType};
+        let plugin_id = self.string(self.operand(instruction, 0)?)?;
+        let command = self.string(self.operand(instruction, 1)?)?;
+        let fail =
+            |message: String| VmError::PluginCall(format!("{plugin_id}::{command}: {message}"));
+        let declaration = self
+            .plugins
+            .command(&plugin_id, &command)
+            .cloned()
+            .ok_or_else(|| fail("the installed plugin has no such command".into()))?;
+        let arguments = &instruction.operands[3..];
+        if arguments.len() != declaration.params.len() {
+            return Err(fail(format!(
+                "the plugin expects {} argument(s), the script passes {}",
+                declaration.params.len(),
+                arguments.len()
+            )));
+        }
+        let mut args = Vec::with_capacity(arguments.len());
+        for (operand, ty) in arguments.iter().zip(&declaration.params) {
+            args.push(match ty {
+                ValueType::Int => PluginValue::Int(self.integer(operand)?),
+                ValueType::Bool => PluginValue::Bool(self.boolean(operand)?),
+                ValueType::String => PluginValue::String(self.string(operand)?),
+            });
+        }
+        let can_touch_story = self
+            .plugins
+            .manifest(&plugin_id)
+            .is_some_and(|manifest| manifest.capabilities.contains(&Capability::State));
+        let story = if can_touch_story {
+            self.story_state()
+        } else {
+            StoryState::default()
+        };
+        let request = PluginRequest::Command {
+            command: command.clone(),
+            args,
+            state: self
+                .state
+                .plugin_state
+                .get(&plugin_id)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            story,
+        };
+        let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+        if !can_touch_story && (!response.story.vars.is_empty() || !response.story.flags.is_empty())
+        {
+            return Err(fail(
+                "changing story state requires the state capability".into(),
+            ));
+        }
+        // Check everything before changing anything, so a bad response
+        // leaves the VM exactly as it was.
+        for (name, value) in &response.story.vars {
+            let key = format!("state:{name}");
+            let fits = match value {
+                PluginValue::Int(_) | PluginValue::Bool(_) => {
+                    self.state.int_registers.contains_key(&key)
+                }
+                PluginValue::String(_) => self.state.string_registers.contains_key(&key),
+            };
+            if !fits {
+                return Err(fail(format!(
+                    "story variable '{name}' does not exist with that type"
+                )));
+            }
+        }
+        let target = &instruction.operands[2];
+        let result = match (&declaration.returns, response.result) {
+            (None, None) => None,
+            (Some(ty), Some(value)) if value.value_type() == *ty => Some(value),
+            (Some(ValueType::Int), Some(PluginValue::Bool(value))) => {
+                Some(PluginValue::Int(i64::from(value)))
+            }
+            (expected, actual) => {
+                return Err(fail(format!(
+                    "the plugin returned {:?} where {:?} was declared",
+                    actual.map(|value| value.value_type()),
+                    expected
+                )));
+            }
+        };
+        match (result, target) {
+            (None, _) => {}
+            (Some(PluginValue::Int(value)), Operand::IntRegister(name)) => {
+                self.state.int_registers.insert(name.clone(), value);
+            }
+            (Some(PluginValue::Bool(value)), Operand::IntRegister(name)) => {
+                self.state
+                    .int_registers
+                    .insert(name.clone(), i64::from(value));
+            }
+            (Some(PluginValue::String(value)), Operand::StringRegister(name)) => {
+                self.state.string_registers.insert(name.clone(), value);
+            }
+            (Some(_), Operand::Integer(0)) => {}
+            _ => return Err(fail("the result does not fit its target".into())),
+        }
+        for (name, value) in response.story.vars {
+            let key = format!("state:{name}");
+            match value {
+                PluginValue::Int(value) => {
+                    self.state.int_registers.insert(key, value);
+                }
+                PluginValue::Bool(value) => {
+                    self.state.int_registers.insert(key, i64::from(value));
+                }
+                PluginValue::String(value) => {
+                    self.state.string_registers.insert(key, value);
+                }
+            }
+        }
+        for (name, value) in response.story.flags {
+            self.state.flags.insert(name, value);
+        }
+        if let Some(state) = response.state {
+            self.state.plugin_state.insert(plugin_id, state);
+        }
+        Ok(())
+    }
+
+    /// The script's `state` variables and session flags, as plugins see them.
+    fn story_state(&self) -> crate::plugins::StoryState {
+        use crate::plugins::PluginValue;
+        let mut vars = BTreeMap::new();
+        for (key, value) in &self.state.int_registers {
+            if let Some(name) = key.strip_prefix("state:") {
+                vars.insert(name.to_owned(), PluginValue::Int(*value));
+            }
+        }
+        for (key, value) in &self.state.string_registers {
+            if let Some(name) = key.strip_prefix("state:") {
+                vars.insert(name.to_owned(), PluginValue::String(value.clone()));
+            }
+        }
+        crate::plugins::StoryState {
+            vars,
+            flags: self.state.flags.clone(),
+        }
+    }
+
     fn execute(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
         match instruction.op {
             ByteOp::Nop => {}
+            ByteOp::CallPlugin => self.execute_plugin_call(instruction)?,
             ByteOp::Text => {
                 let speaker = match instruction.operands.first() {
                     Some(Operand::None) | None => None,
@@ -3567,6 +3777,8 @@ pub enum VmError {
     InvalidPlugin(String),
     #[error("save cannot be opened with the installed plugins: {0}")]
     PluginMismatch(String),
+    #[error("plugin call failed: {0}")]
+    PluginCall(String),
     #[error("unsupported VM snapshot schema {0}")]
     UnsupportedSnapshot(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
@@ -3665,6 +3877,9 @@ mod tests {
                                 ..crate::RoutePolicy::reading("statement")
                             },
                         ],
+                        namespace: None,
+                        commands: Vec::new(),
+                        migrates_from: None,
                     },
                     wasm_blake3: "0".repeat(64),
                 })
@@ -3676,6 +3891,7 @@ mod tests {
     fn fresh_vm_with_same_plugins(runtime: &Vm) -> Vm {
         let mut fresh = Vm::new(runtime.program.clone(), SIZE).unwrap();
         fresh.plugins = runtime.plugins.clone();
+        fresh.executor = runtime.executor.clone();
         fresh.state.plugins = runtime.state.plugins.clone();
         fresh
     }

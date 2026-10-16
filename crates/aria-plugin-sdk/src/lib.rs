@@ -11,10 +11,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
+pub mod calls;
+pub use calls::{
+    CommandDecl, PluginExecutor, PluginRequest, PluginResponse, PluginValue, StoryState, ValueType,
+};
+
 pub const PLUGIN_API_VERSION: u32 = 2;
 pub const MAX_PLUGINS: usize = 16;
 pub const MAX_ROUTES: usize = 64;
 pub const MAX_MANIFEST_BYTES: usize = 65_536;
+pub const MAX_COMMANDS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +38,15 @@ pub struct PluginManifest {
     pub capabilities: BTreeSet<Capability>,
     #[serde(default)]
     pub routes: Vec<RoutePolicy>,
+    /// The prefix scripts write before a command: `namespace::name(…)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<CommandDecl>,
+    /// The oldest state version this build can migrate a save from. Without
+    /// it, a save at an older state version cannot be opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migrates_from: Option<u32>,
 }
 
 fn first_state_version() -> u32 {
@@ -135,6 +150,35 @@ impl PluginManifest {
         if self.routes.len() > MAX_ROUTES {
             return fail("a plugin may declare at most 64 routes");
         }
+        let declares_commands = self.capabilities.contains(&Capability::Commands);
+        if declares_commands == self.commands.is_empty() {
+            return fail("commands are declared exactly when the commands capability is");
+        }
+        if declares_commands != self.namespace.is_some() {
+            return fail("a namespace is declared exactly when commands are");
+        }
+        if let Some(namespace) = &self.namespace
+            && !valid_script_name(namespace)
+        {
+            return fail("namespace must be a lowercase script identifier");
+        }
+        if self.commands.len() > MAX_COMMANDS {
+            return fail("a plugin may declare at most 64 commands");
+        }
+        let mut command_names = BTreeSet::new();
+        for command in &self.commands {
+            if !valid_script_name(&command.name) || !command_names.insert(&command.name) {
+                return fail("command name is invalid or duplicated");
+            }
+            if command.params.len() > 8 {
+                return fail("a command takes at most 8 parameters");
+            }
+        }
+        if let Some(from) = self.migrates_from
+            && (from == 0 || from >= self.state_version)
+        {
+            return fail("migrates_from must be below state_version and at least 1");
+        }
         let mut routes = BTreeSet::new();
         let mut actions = BTreeSet::new();
         for policy in &self.routes {
@@ -217,12 +261,34 @@ fn reserved_action(value: &str) -> bool {
         || value == "dismiss"
 }
 
+/// A name scripts write directly: a lowercase letter, then lowercase
+/// letters, digits, or `_`, at most 32 bytes.
+fn valid_script_name(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    value.len() <= 32
+        && bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.bytes().all(|b| {
             b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
         })
+}
+
+/// Decodes a request, runs `handler`, and encodes its `Result`. Used by
+/// `export_plugin!`; plugins do not call it directly.
+#[doc(hidden)]
+pub fn dispatch(
+    input: &[u8],
+    handler: fn(PluginRequest) -> Result<PluginResponse, String>,
+) -> Vec<u8> {
+    let outcome = serde_json::from_slice::<PluginRequest>(input)
+        .map_err(|error| format!("malformed request: {error}"))
+        .and_then(handler);
+    serde_json::to_vec(&outcome).unwrap_or_else(|_| br#"{"Err":"unencodable response"}"#.to_vec())
 }
 
 #[doc(hidden)]
@@ -236,6 +302,27 @@ pub fn manifest_bytes(manifest: &PluginManifest) -> Vec<u8> {
 /// it never dereferences a guest pointer in the native process.
 #[macro_export]
 macro_rules! export_plugin {
+    ($factory:path, $handler:path) => {
+        $crate::export_plugin!($factory);
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn aria_alloc(len: u32) -> u32 {
+            let mut buffer = ::std::vec::Vec::<u8>::with_capacity(len as usize);
+            let pointer = buffer.as_mut_ptr();
+            ::std::mem::forget(buffer);
+            pointer as u32
+        }
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn aria_call(pointer: u32, len: u32) -> u64 {
+            // SAFETY: the host wrote `len` bytes at a pointer from `aria_alloc`.
+            let input = unsafe { ::std::slice::from_raw_parts(pointer as *const u8, len as usize) };
+            let output = $crate::dispatch(input, $handler);
+            let result = ((output.as_ptr() as u64) << 32) | output.len() as u64;
+            ::std::mem::forget(output);
+            result
+        }
+    };
     ($factory:path) => {
         #[cfg(target_arch = "wasm32")]
         fn __aria_plugin_manifest() -> &'static [u8] {
@@ -273,7 +360,68 @@ mod tests {
             state_version: 1,
             capabilities: [Capability::Routes].into(),
             routes: vec![RoutePolicy::reading("lecture")],
+            namespace: None,
+            commands: Vec::new(),
+            migrates_from: None,
         }
+    }
+
+    #[test]
+    fn commands_need_a_namespace_and_valid_names() {
+        let mut plugin = manifest();
+        plugin.capabilities.insert(Capability::Commands);
+        plugin.commands.push(CommandDecl {
+            name: "score".into(),
+            params: vec![ValueType::Int],
+            returns: Some(ValueType::Int),
+        });
+        assert!(plugin.validate().is_err(), "no namespace");
+        plugin.namespace = Some("story".into());
+        assert!(plugin.validate().is_ok());
+        plugin.namespace = Some("Story".into());
+        assert!(plugin.validate().is_err());
+        plugin.namespace = Some("story".into());
+        plugin.commands.push(plugin.commands[0].clone());
+        assert!(plugin.validate().is_err(), "duplicate command");
+        plugin.commands.pop();
+        plugin.migrates_from = Some(1);
+        assert!(plugin.validate().is_err(), "nothing older to migrate from");
+        plugin.state_version = 2;
+        assert!(plugin.validate().is_ok());
+    }
+
+    #[test]
+    fn values_and_responses_have_a_stable_json_form() {
+        let request = PluginRequest::Command {
+            command: "score".into(),
+            args: vec![
+                PluginValue::Int(3),
+                PluginValue::Bool(true),
+                PluginValue::String("a".into()),
+            ],
+            state: serde_json::Value::Null,
+            story: StoryState::default(),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(
+            json.starts_with(r#"{"kind":"command","command":"score","args":[3,true,"a"]"#),
+            "{json}"
+        );
+        assert_eq!(
+            serde_json::from_str::<PluginRequest>(&json).unwrap(),
+            request
+        );
+        let encoded = dispatch(json.as_bytes(), |_| {
+            Ok(PluginResponse {
+                result: Some(PluginValue::Int(7)),
+                ..PluginResponse::default()
+            })
+        });
+        let decoded: Result<PluginResponse, String> = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.unwrap().result, Some(PluginValue::Int(7)));
+        let failed: Result<PluginResponse, String> =
+            serde_json::from_slice(&dispatch(b"{}", |_| unreachable!())).unwrap();
+        assert!(failed.unwrap_err().contains("malformed"));
     }
     #[test]
     fn contract_rejects_reserved_and_duplicate_routes_and_actions() {
@@ -300,7 +448,7 @@ mod tests {
         plugin.state_version = 0;
         assert!(plugin.validate().is_err());
         plugin = manifest();
-        plugin.capabilities = [Capability::Commands].into();
+        plugin.capabilities = [Capability::State].into();
         assert!(plugin.validate().is_err(), "routes without the capability");
         plugin.routes.clear();
         assert!(plugin.validate().is_ok());

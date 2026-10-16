@@ -73,6 +73,23 @@ pub fn discover(directories: &[PathBuf], manifest: &PluginsManifest) -> Result<S
     Ok(selection)
 }
 
+/// The registrations and, when any plugin is called at run time, the Wasm
+/// executor that a VM needs.
+pub fn plugin_set(selection: &Selection) -> Result<aria_core::PluginSet> {
+    let executor = aria_plugin_host::executor::WasmExecutor::new(
+        selection
+            .plugins
+            .iter()
+            .map(|package| (&package.registration.manifest, package.wasm.as_slice())),
+    )?;
+    Ok(aria_core::PluginSet {
+        registrations: registrations(selection),
+        executor: (!executor.is_empty()).then(|| {
+            std::sync::Arc::new(executor) as std::sync::Arc<dyn aria_core::plugins::PluginExecutor>
+        }),
+    })
+}
+
 /// The registrations the VM needs, in plugin-id order.
 #[must_use]
 pub fn registrations(selection: &Selection) -> Vec<PluginRegistration> {

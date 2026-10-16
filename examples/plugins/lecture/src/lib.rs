@@ -15,6 +15,9 @@ pub fn manifest() -> PluginManifest {
             advance_action: Some("lecture.next".into()),
             ..RoutePolicy::reading("lecture_slide")
         }],
+        namespace: None,
+        commands: Vec::new(),
+        migrates_from: None,
     }
 }
 

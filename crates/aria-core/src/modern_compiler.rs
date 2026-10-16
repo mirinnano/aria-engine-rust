@@ -22,9 +22,11 @@ pub(crate) fn compile_modern(
     sources: BTreeMap<String, String>,
     diagnostics: Vec<Diagnostic>,
     custom_routes: BTreeSet<String>,
+    plugin_commands: PluginCommands,
 ) -> CompileOutput {
     let mut compiler = ModernCompiler {
         custom_routes,
+        plugin_commands,
         game_id,
         entry: entry.clone(),
         sources,
@@ -132,8 +134,13 @@ struct TransferSite {
     span: SourceSpan,
 }
 
+/// What the installed plugins offer scripts: namespace → (plugin id, commands).
+pub(crate) type PluginCommands =
+    BTreeMap<String, (String, BTreeMap<String, crate::plugins::CommandDecl>)>;
+
 struct ModernCompiler {
     custom_routes: BTreeSet<String>,
+    plugin_commands: PluginCommands,
     game_id: String,
     entry: String,
     sources: BTreeMap<String, String>,
@@ -928,6 +935,9 @@ impl ModernCompiler {
                     ],
                     &statement.span,
                 );
+            }
+            StatementKind::PluginCall { call } => {
+                self.plugin_call(call, scopes, false);
             }
             StatementKind::AssignExpr { name, expression } => {
                 let Some(binding) = resolve_binding(scopes, name) else {
@@ -1955,6 +1965,16 @@ impl ModernCompiler {
         }
     }
 
+    fn error_none<T>(
+        &mut self,
+        code: DiagnosticCode,
+        message: impl Into<String>,
+        span: &SourceSpan,
+    ) -> Option<T> {
+        self.error(code, message, Some(span.clone()));
+        None
+    }
+
     fn ownership_error<T>(
         &mut self,
         code: DiagnosticCode,
@@ -2027,6 +2047,20 @@ impl ModernCompiler {
                 let Some((operand, _)) = self.expression_value(expression, scopes) else {
                     return;
                 };
+                (operand, "==", Operand::Integer(1))
+            }
+            ExpressionKind::PluginCall { .. } => {
+                let Some((operand, ty)) = self.expression_value(expression, scopes) else {
+                    return;
+                };
+                if ty != ModernType::Bool {
+                    self.error(
+                        DiagnosticCode::InvalidOperand,
+                        "if and while conditions must be Bool expressions",
+                        Some(expression.span.clone()),
+                    );
+                    return;
+                }
                 (operand, "==", Operand::Integer(1))
             }
             ExpressionKind::Identifier(name) => {
@@ -2169,6 +2203,7 @@ impl ModernCompiler {
                 );
                 Some((target, ModernType::Bool))
             }
+            ExpressionKind::PluginCall { .. } => self.plugin_call(expression, scopes, true),
             ExpressionKind::Binary {
                 left,
                 op: op @ (BinaryOperator::Add | BinaryOperator::Subtract),
@@ -2313,6 +2348,99 @@ impl ModernCompiler {
             return None;
         }
         Some(normalized)
+    }
+
+    /// Lowers `namespace::command(args)` after checking it against the
+    /// command the plugin declares. Returns the result's storage when
+    /// `wants_result` (an expression), or nothing for a statement.
+    fn plugin_call(
+        &mut self,
+        expression: &Expression,
+        scopes: &[BTreeMap<String, Binding>],
+        wants_result: bool,
+    ) -> Option<(Operand, ModernType)> {
+        let ExpressionKind::PluginCall {
+            namespace,
+            command,
+            args,
+        } = &expression.kind
+        else {
+            return None;
+        };
+        let span = &expression.span;
+        let Some((plugin_id, commands)) = self.plugin_commands.get(namespace).cloned() else {
+            return self.error_none(
+                DiagnosticCode::InvalidOperand,
+                format!(
+                    "no installed plugin offers the namespace '{namespace}'; put its .ariaplugin in plugins/"
+                ),
+                span,
+            );
+        };
+        let Some(declaration) = commands.get(command) else {
+            return self.error_none(
+                DiagnosticCode::InvalidOperand,
+                format!("plugin '{plugin_id}' has no command '{command}'"),
+                span,
+            );
+        };
+        if args.len() != declaration.params.len() {
+            return self.error_none(
+                DiagnosticCode::InvalidOperand,
+                format!(
+                    "{namespace}::{command} takes {} argument(s), not {}",
+                    declaration.params.len(),
+                    args.len()
+                ),
+                span,
+            );
+        }
+        let mut operands = Vec::with_capacity(args.len() + 3);
+        for (argument, param) in args.iter().zip(&declaration.params) {
+            let (operand, ty) = self.expression_value(argument, scopes)?;
+            let expected = modern_type_of(*param);
+            if ty != expected {
+                return self.error_none(
+                    DiagnosticCode::InvalidOperand,
+                    format!(
+                        "{namespace}::{command} expects {} here, found {}",
+                        type_name(expected),
+                        type_name(ty)
+                    ),
+                    &argument.span,
+                );
+            }
+            operands.push(if ty == ModernType::Bool {
+                Self::bool_runtime_operand(operand)
+            } else {
+                operand
+            });
+        }
+        let result = match (wants_result, declaration.returns) {
+            (true, None) => {
+                return self.error_none(
+                    DiagnosticCode::InvalidOperand,
+                    format!("{namespace}::{command} returns nothing; call it as a statement"),
+                    span,
+                );
+            }
+            (true, Some(ty)) => {
+                let ty = modern_type_of(ty);
+                Some((self.fresh_storage("expr", "plugin", ty), ty))
+            }
+            (false, _) => None,
+        };
+        let target = result
+            .as_ref()
+            .map_or(Operand::Integer(0), |(operand, _)| operand.clone());
+        let mut instruction = vec![
+            Operand::Constant(self.intern_string(&plugin_id)),
+            Operand::Constant(self.intern_string(command)),
+            target,
+        ];
+        instruction.extend(operands);
+        self.emit(ByteOp::CallPlugin, instruction, span);
+        result.or(Some((Operand::None, ModernType::Int)))
     }
 
     fn fresh_storage(&mut self, scope: &str, name: &str, ty: ModernType) -> Operand {
@@ -2646,6 +2774,7 @@ fn collect_scene_sites(
             | StatementKind::Assign { .. }
             | StatementKind::AddAssign { .. }
             | StatementKind::AssignExpr { .. }
+            | StatementKind::PluginCall { .. }
             | StatementKind::Return
             | StatementKind::Play { .. }
             | StatementKind::Stop { .. }
@@ -2723,6 +2852,7 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         | StatementKind::Assign { .. }
         | StatementKind::AddAssign { .. }
         | StatementKind::AssignExpr { .. }
+        | StatementKind::PluginCall { .. }
         | StatementKind::While { .. }
         | StatementKind::Call { .. }
         | StatementKind::Play { .. }
@@ -2833,6 +2963,14 @@ fn is_presentation_route(route: &str) -> bool {
             | "gallery"
             | "confirm"
     )
+}
+
+fn modern_type_of(ty: crate::plugins::ValueType) -> ModernType {
+    match ty {
+        crate::plugins::ValueType::Int => ModernType::Int,
+        crate::plugins::ValueType::Bool => ModernType::Bool,
+        crate::plugins::ValueType::String => ModernType::String,
+    }
 }
 
 fn type_name(ty: ModernType) -> &'static str {
