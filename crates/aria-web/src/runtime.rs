@@ -1,19 +1,40 @@
+use std::collections::BTreeMap;
+
+use aria_core::project::PluginsManifest;
 use aria_core::protocol::{LogicalSize, StepOutput};
 use aria_core::{
     CompiledProgram, InputSnapshot, SaveEnvelopeError, SaveEnvelopeV3, Vm, VmError, VmSnapshot,
 };
+use aria_plugin_host::package::{PluginPackage, open_package};
+use aria_plugin_host::select::{Candidate, select};
+use serde::Serialize;
 
 /// Host-testable Web runtime. The wasm-bindgen API is a thin serialization
 /// wrapper around this exact implementation.
 #[derive(Debug)]
 pub struct PortableWebRuntime {
     vm: Vm,
+    /// Raw `.ariaplugin` files handed over by the page, verified on install.
+    candidates: Vec<(String, Vec<u8>)>,
+    /// Installed packages by plugin id, kept for their Web UI modules.
+    installed: BTreeMap<String, PluginPackage>,
+}
+
+/// What `install_plugins` did, for the page to log or show.
+#[derive(Debug, Serialize)]
+pub struct PluginInstallReport {
+    /// `id@version` of every installed plugin.
+    pub installed: Vec<String>,
+    pub skipped: Vec<String>,
+    pub missing: Vec<String>,
 }
 
 impl PortableWebRuntime {
     pub fn new(program: CompiledProgram, logical_size: LogicalSize) -> Result<Self, VmError> {
         Ok(Self {
             vm: Vm::new(program, logical_size)?,
+            candidates: Vec::new(),
+            installed: BTreeMap::new(),
         })
     }
 
@@ -22,12 +43,63 @@ impl PortableWebRuntime {
         Self::new(program, logical_size).map_err(|error| error.to_string())
     }
 
-    /// Loads a bounded, import-free Wasm plugin before execution starts.
-    pub fn register_plugin(&mut self, bytes: &[u8]) -> Result<(), String> {
-        let plugin = aria_plugin_host::load_plugin(bytes).map_err(|error| error.to_string())?;
-        self.vm
-            .register_plugin(plugin)
-            .map_err(|error| error.to_string())
+    /// Hands over one `.ariaplugin` file the page fetched (the bundle's
+    /// `plugins/index.json` lists them). Nothing is trusted until install.
+    pub fn add_plugin_candidate(&mut self, source: &str, bytes: Vec<u8>) {
+        self.candidates.push((source.to_owned(), bytes));
+    }
+
+    /// Verifies every candidate against the bundle's `plugins` table, keeps
+    /// the newest acceptable build of each plugin, and registers them before
+    /// the first step. Fails when a required plugin is missing.
+    pub fn install_plugins(
+        &mut self,
+        manifest: &PluginsManifest,
+    ) -> Result<PluginInstallReport, String> {
+        let trusted = manifest.trusted_key_bytes();
+        let candidates = std::mem::take(&mut self.candidates)
+            .into_iter()
+            .map(|(source, bytes)| Candidate {
+                source,
+                package: open_package(&bytes, &trusted),
+            })
+            .collect();
+        let require = manifest
+            .require
+            .iter()
+            .map(|(id, range)| {
+                semver::VersionReq::parse(range)
+                    .map(|range| (id.clone(), range))
+                    .map_err(|error| format!("plugins.require.{id}: {error}"))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let selection = select(candidates, &require);
+        if !selection.is_complete() {
+            return Err(format!(
+                "required plugins are missing: {}",
+                selection.missing.join(", ")
+            ));
+        }
+        let mut installed = Vec::new();
+        for package in selection.plugins {
+            let manifest = &package.registration.manifest;
+            installed.push(format!("{}@{}", manifest.id, manifest.version));
+            self.vm
+                .register_plugin(package.registration.clone())
+                .map_err(|error| error.to_string())?;
+            self.installed.insert(manifest.id.clone(), package);
+        }
+        Ok(PluginInstallReport {
+            installed,
+            skipped: selection.skipped,
+            missing: selection.missing,
+        })
+    }
+
+    /// The Web UI module (`ui.js`) an installed plugin ships, if any.
+    #[must_use]
+    pub fn plugin_ui_module(&self, plugin_id: &str) -> Option<&[u8]> {
+        self.installed.get(plugin_id)?.ui_module()
     }
 
     pub fn step(&mut self, input: &InputSnapshot) -> Result<StepOutput, VmError> {

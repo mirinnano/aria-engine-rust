@@ -3,9 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Schema 4 makes a game-owned presentation package explicit. Aria no longer
-/// embeds visual UI declarations in story source or ARIAC.
-pub const PROJECT_SCHEMA: u32 = 5;
+/// Schema 6 adds `[plugins]`. Schemas 4 and 5 still load, without plugins.
+pub const PROJECT_SCHEMA: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,6 +13,73 @@ pub struct ProjectManifest {
     pub game: GameManifest,
     pub runtime: RuntimeManifest,
     pub presentation: PresentationManifest,
+    #[serde(default, skip_serializing_if = "PluginsManifest::is_empty")]
+    pub plugins: PluginsManifest,
+}
+
+/// Plugins are not listed by file: hosts load every `.ariaplugin` they find
+/// in the plugin folders. This table says whose signatures to trust and
+/// which plugins, in which version range, the game cannot run without.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginsManifest {
+    /// Key id → Ed25519 public key (64 hexadecimal characters).
+    #[serde(default)]
+    pub trusted_keys: BTreeMap<String, String>,
+    /// Plugin id → semver range, such as `"^1"`.
+    #[serde(default)]
+    pub require: BTreeMap<String, String>,
+}
+
+impl PluginsManifest {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.trusted_keys.is_empty() && self.require.is_empty()
+    }
+
+    /// The trusted keys as raw bytes. Call after `validate`.
+    #[must_use]
+    pub fn trusted_key_bytes(&self) -> BTreeMap<String, [u8; 32]> {
+        self.trusted_keys
+            .iter()
+            .filter_map(|(id, hex)| {
+                let bytes: [u8; 32] = hex::decode(hex).ok()?.try_into().ok()?;
+                Some((id.clone(), bytes))
+            })
+            .collect()
+    }
+
+    fn validate(&self, problems: &mut Vec<String>) {
+        for (id, key) in &self.trusted_keys {
+            if id.is_empty()
+                || id.len() > 64
+                || !id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            {
+                problems.push(format!("plugins.trusted_keys has an invalid key id '{id}'"));
+            }
+            if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+                problems.push(format!(
+                    "plugins.trusted_keys.{id} must be a 32-byte public key in 64 hexadecimal characters"
+                ));
+            }
+        }
+        for (id, range) in &self.require {
+            if semver::VersionReq::parse(range).is_err() {
+                problems.push(format!(
+                    "plugins.require.\"{id}\" must be a semver range, such as \"^1\""
+                ));
+            }
+        }
+        if !self.require.is_empty() && self.trusted_keys.is_empty() {
+            problems
+                .push("plugins.require needs at least one plugins.trusted_keys entry".to_owned());
+        }
+        if self.require.len() > aria_plugin_sdk::MAX_PLUGINS {
+            problems.push("plugins.require may name at most 16 plugins".to_owned());
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,10 +110,6 @@ pub struct RuntimeManifest {
     /// Windows/Linux/browser system font as part of the game contract.
     #[serde(default)]
     pub fonts: Vec<String>,
-    /// Import-free Wasm plugins mounted as ordinary integrity-checked assets.
-    /// The ordered inventory is fixed before the first VM step.
-    #[serde(default)]
-    pub plugins: Vec<String>,
     /// Optional scheduling roles for shipped assets. Unlisted assets remain
     /// in the boot pack for backwards-compatible startup behavior.
     #[serde(default)]
@@ -97,12 +159,16 @@ impl ProjectManifest {
 
     pub fn validate(&self) -> Result<(), ProjectValidationError> {
         let mut problems = Vec::new();
-        if self.schema != 4 && self.schema != PROJECT_SCHEMA {
+        if !(4..=PROJECT_SCHEMA).contains(&self.schema) {
             problems.push(format!(
                 "schema must be {PROJECT_SCHEMA}, got {}",
                 self.schema
             ));
         }
+        if self.schema < 6 && !self.plugins.is_empty() {
+            problems.push("[plugins] requires project schema 6".to_owned());
+        }
+        self.plugins.validate(&mut problems);
         if !valid_game_id(&self.game.id) {
             problems.push(
                 "game.id must use lowercase ASCII letters, digits, dots, hyphens, or underscores"
@@ -197,35 +263,6 @@ impl ProjectManifest {
             {
                 problems.push(format!(
                     "runtime.fonts '{existing}' and '{font}' collide on a case-insensitive filesystem"
-                ));
-            }
-        }
-        if self.schema == 4 && !self.runtime.plugins.is_empty() {
-            problems.push("runtime.plugins requires project schema 5".to_owned());
-        }
-        if self.runtime.plugins.len() > aria_plugin_sdk::MAX_PLUGINS {
-            problems.push("runtime.plugins may contain at most 16 plugins".to_owned());
-        }
-        let mut plugins = BTreeMap::new();
-        for plugin in &self.runtime.plugins {
-            validate_canonical_logical_path("runtime.plugins", plugin, &mut problems);
-            if !plugin.ends_with(".wasm")
-                || !self
-                    .runtime
-                    .asset_roots
-                    .iter()
-                    .any(|root| is_under_asset_root(plugin, root))
-                || self.runtime.asset_excludes.contains(plugin)
-            {
-                problems.push(format!(
-                    "runtime.plugins '{plugin}' must be a non-excluded .wasm below an asset root"
-                ));
-            }
-            if let Ok(key) = crate::compiler::portable_path_key(plugin)
-                && plugins.insert(key, plugin).is_some()
-            {
-                problems.push(format!(
-                    "runtime.plugins contains duplicate or colliding path '{plugin}'"
                 ));
             }
         }
@@ -363,7 +400,7 @@ mod tests {
             game: GameManifest {
                 id: "jp.example.sample".to_owned(),
                 version: "3.0.0".to_owned(),
-                title: "海風".to_owned(),
+                title: "Sample".to_owned(),
             },
             runtime: RuntimeManifest {
                 entry: "scripts/main.aria".to_owned(),
@@ -372,7 +409,6 @@ mod tests {
                 asset_roots: vec!["assets".to_owned()],
                 asset_excludes: Vec::new(),
                 fonts: Vec::new(),
-                plugins: Vec::new(),
                 asset_pack_roles: BTreeMap::new(),
                 save_namespace: "sample-v1".to_owned(),
                 legacy_save_namespaces: Vec::new(),
@@ -381,6 +417,7 @@ mod tests {
                 frontend: "ui".to_owned(),
                 stages: Vec::new(),
             },
+            plugins: PluginsManifest::default(),
         }
     }
 

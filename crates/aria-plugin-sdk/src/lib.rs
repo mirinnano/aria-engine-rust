@@ -1,16 +1,17 @@
 //! Versioned, layout-free contract for Rust-authored Aria Wasm plugins.
 //!
-//! API v1 runs guest Rust code at registration to describe custom story
-//! surfaces. It does not grant a filesystem, network, clock, or VM mutation.
-//! Hosts validate the result before installing any policy. No Rust ABI or
-//! pointers to host objects cross the boundary.
+//! A plugin declares who it is (`id`, semver `version`), the version of the
+//! state it keeps in saves (`state_version`), and the capabilities it uses.
+//! It never receives a filesystem, network, or clock. Hosts validate the
+//! manifest before installing anything, and no Rust ABI or pointers to host
+//! objects cross the boundary.
 #![deny(missing_debug_implementations)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-pub const PLUGIN_API_VERSION: u32 = 1;
+pub const PLUGIN_API_VERSION: u32 = 2;
 pub const MAX_PLUGINS: usize = 16;
 pub const MAX_ROUTES: usize = 64;
 pub const MAX_MANIFEST_BYTES: usize = 65_536;
@@ -20,8 +21,37 @@ pub const MAX_MANIFEST_BYTES: usize = 65_536;
 pub struct PluginManifest {
     pub api_version: u32,
     pub id: String,
+    /// Semantic version of this build of the plugin. Games require a range.
     pub version: String,
+    /// Version of the state this plugin keeps in saves. A save records it,
+    /// and a later build of the plugin opens that save only at the same
+    /// state version. Raise it only when the saved state changes shape.
+    #[serde(default = "first_state_version")]
+    pub state_version: u32,
+    /// What the plugin uses. Host functions outside this set are not linked.
+    pub capabilities: BTreeSet<Capability>,
+    #[serde(default)]
     pub routes: Vec<RoutePolicy>,
+}
+
+fn first_state_version() -> u32 {
+    1
+}
+
+/// A capability a plugin declares in its manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    /// Functions callable from Aria scripts.
+    Commands,
+    /// Interventions on VM events such as text and choices.
+    Hooks,
+    /// Input and wait policies for custom screens.
+    Routes,
+    /// Reading and writing story state, and keeping plugin state in saves.
+    State,
+    /// Draw commands and, on the Web, a UI module.
+    Render,
 }
 
 /// Only deterministic policy is contributed; layout and copy remain in the
@@ -79,22 +109,31 @@ pub struct PluginRegistration {
 pub struct PluginContractError(pub String);
 
 impl PluginManifest {
+    /// The parsed `version`.
+    pub fn semver(&self) -> Result<semver::Version, semver::Error> {
+        semver::Version::parse(&self.version)
+    }
+
     pub fn validate(&self) -> Result<(), PluginContractError> {
         let fail = |message: &str| Err(PluginContractError(message.to_owned()));
         if self.api_version != PLUGIN_API_VERSION {
-            return fail("unsupported API version (expected 1)");
+            return fail("unsupported API version (expected 2)");
         }
-        if !valid_identifier(&self.id)
-            || self.version.is_empty()
-            || self.version.len() > 64
-            || !self.version.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-')
-            })
-        {
-            return fail("id or version is invalid");
+        if !valid_identifier(&self.id) || self.version.len() > 64 || self.semver().is_err() {
+            return fail("id is invalid or version is not a semantic version");
         }
-        if self.routes.is_empty() || self.routes.len() > MAX_ROUTES {
-            return fail("a plugin must declare 1..=64 routes");
+        if self.state_version == 0 {
+            return fail("state_version starts at 1");
+        }
+        if self.capabilities.is_empty() {
+            return fail("a plugin must declare at least one capability");
+        }
+        let declares_routes = self.capabilities.contains(&Capability::Routes);
+        if declares_routes == self.routes.is_empty() {
+            return fail("routes are declared exactly when the routes capability is");
+        }
+        if self.routes.len() > MAX_ROUTES {
+            return fail("a plugin may declare at most 64 routes");
         }
         let mut routes = BTreeSet::new();
         let mut actions = BTreeSet::new();
@@ -228,9 +267,11 @@ mod tests {
     use super::*;
     fn manifest() -> PluginManifest {
         PluginManifest {
-            api_version: 1,
+            api_version: 2,
             id: "example.lecture".into(),
             version: "1.0.0".into(),
+            state_version: 1,
+            capabilities: [Capability::Routes].into(),
             routes: vec![RoutePolicy::reading("lecture")],
         }
     }
@@ -251,16 +292,40 @@ mod tests {
         assert!(plugin.validate().is_err());
     }
     #[test]
+    fn capabilities_state_version_and_routes_must_agree() {
+        let mut plugin = manifest();
+        plugin.capabilities.clear();
+        assert!(plugin.validate().is_err());
+        plugin = manifest();
+        plugin.state_version = 0;
+        assert!(plugin.validate().is_err());
+        plugin = manifest();
+        plugin.capabilities = [Capability::Commands].into();
+        assert!(plugin.validate().is_err(), "routes without the capability");
+        plugin.routes.clear();
+        assert!(plugin.validate().is_ok());
+        let parsed: PluginManifest = serde_json::from_str(
+            r#"{"api_version":2,"id":"x","version":"0.3.1","capabilities":["state"]}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.state_version, 1);
+        assert!(parsed.validate().is_ok());
+    }
+
+    #[test]
     fn unknown_fields_and_new_api_are_not_silently_accepted() {
         let mut plugin = manifest();
-        plugin.api_version = 2;
+        plugin.api_version = 1;
         assert!(plugin.validate().is_err());
         plugin = manifest();
         plugin.version = "1\u{001b}[2J".into();
         assert!(plugin.validate().is_err());
+        plugin = manifest();
+        plugin.version = "1".into();
+        assert!(plugin.validate().is_err(), "a version must be semver");
         assert!(
             serde_json::from_str::<PluginManifest>(
-                r#"{"api_version":1,"id":"x","version":"1","routes":[],"filesystem":true}"#
+                r#"{"api_version":2,"id":"x","version":"1.0.0","capabilities":["routes"],"routes":[],"filesystem":true}"#
             )
             .is_err()
         );

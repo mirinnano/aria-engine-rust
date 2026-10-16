@@ -108,25 +108,26 @@ impl LoadedProject {
         })
     }
 
-    /// Validates every declared Wasm plugin and rejects cross-plugin route
-    /// collisions before a check/build or runtime can start executing prose.
-    pub fn plugins(&self) -> Result<Vec<aria_core::PluginRegistration>> {
-        let inventory = self.asset_inventory()?;
+    /// The project's own plugin folder, `<project>/plugins/`.
+    #[must_use]
+    pub fn plugin_directory(&self) -> PathBuf {
+        self.root.join(crate::plugins::PLUGIN_DIRECTORY)
+    }
+
+    /// Verifies and selects the project's plugins, and rejects cross-plugin
+    /// route collisions before a check, build, or run executes any prose.
+    pub fn plugin_selection(&self) -> Result<aria_plugin_host::select::Selection> {
+        let selection =
+            crate::plugins::discover(&[self.plugin_directory()], &self.manifest.plugins)?;
         let mut registry = aria_core::PluginRegistry::default();
-        let mut plugins = Vec::new();
-        for logical_path in &self.manifest.runtime.plugins {
-            let path = inventory
-                .path(logical_path)
-                .with_context(|| format!("missing plugin asset '{logical_path}'"))?;
-            if fs::metadata(path)?.len() > aria_plugin_host::MAX_PLUGIN_BYTES as u64 {
-                bail!("plugin '{logical_path}' exceeds the 4 MiB binary limit");
-            }
-            let plugin = aria_plugin_host::load_plugin(&fs::read(path)?)
-                .with_context(|| format!("cannot load plugin '{logical_path}'"))?;
-            registry.register(plugin.clone())?;
-            plugins.push(plugin);
+        for package in &selection.plugins {
+            registry.register(package.registration.clone())?;
         }
-        Ok(plugins)
+        Ok(selection)
+    }
+
+    pub fn plugins(&self) -> Result<Vec<aria_core::PluginRegistration>> {
+        Ok(crate::plugins::registrations(&self.plugin_selection()?))
     }
 
     pub fn sources(&self) -> Result<Vec<SourceUnit>> {

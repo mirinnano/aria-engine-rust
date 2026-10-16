@@ -19,11 +19,9 @@ use crate::protocol::{
 };
 use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
 
-/// Schema 10 binds the exact registered plugin inventory and stores generic
-/// story-surface timing state. Deterministic subtitle paging, replay targets,
-/// gallery state, and structured confirmation remain persisted. Older saves
-/// are rejected explicitly rather than guessing at a changed route policy.
-pub const VM_SNAPSHOT_SCHEMA: u32 = 10;
+/// Schema 11 records each plugin's id, version, and state version, so a save
+/// survives a plugin update that keeps its state version.
+pub const VM_SNAPSHOT_SCHEMA: u32 = 11;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
@@ -97,9 +95,9 @@ const MAX_CALL_DEPTH: usize = 1_024;
 pub struct VmSnapshot {
     pub schema_version: u32,
     pub game_id: String,
-    /// Exact plugin binaries and validated policies required by this save.
+    /// The plugins this save was made with.
     #[serde(default)]
-    pub plugin_fingerprints: BTreeMap<String, String>,
+    pub plugins: BTreeMap<String, crate::plugins::PluginStamp>,
     pub pc: u32,
     pub frame_number: u64,
     pub logical_time_ms: u64,
@@ -531,7 +529,7 @@ impl Vm {
             state: VmSnapshot {
                 schema_version: VM_SNAPSHOT_SCHEMA,
                 game_id,
-                plugin_fingerprints: BTreeMap::new(),
+                plugins: BTreeMap::new(),
                 pc: 0,
                 frame_number: 0,
                 logical_time_ms: 0,
@@ -603,7 +601,7 @@ impl Vm {
         self.plugins
             .register(plugin)
             .map_err(|error| VmError::InvalidPlugin(error.to_string()))?;
-        self.state.plugin_fingerprints = self.plugins.fingerprints().clone();
+        self.state.plugins = self.plugins.stamps().clone();
         Ok(())
     }
 
@@ -698,9 +696,11 @@ impl Vm {
         if snapshot.schema_version != VM_SNAPSHOT_SCHEMA {
             return Err(VmError::UnsupportedSnapshot(snapshot.schema_version));
         }
-        if snapshot.plugin_fingerprints != *self.plugins.fingerprints() {
-            return Err(VmError::PluginMismatch);
-        }
+        self.plugins
+            .accepts(&snapshot.plugins)
+            .map_err(VmError::PluginMismatch)?;
+        // From here on the save belongs to the plugins running now.
+        snapshot.plugins = self.plugins.stamps().clone();
         if snapshot.game_id != self.program.game_id {
             return Err(VmError::WrongGame {
                 expected: self.program.game_id.clone(),
@@ -1600,7 +1600,7 @@ impl Vm {
 
         let mut replay = Vm::new(self.program.clone(), self.logical_size)?;
         replay.plugins = self.plugins.clone();
-        replay.state.plugin_fingerprints = self.state.plugin_fingerprints.clone();
+        replay.state.plugins = self.state.plugins.clone();
         replay.suppress_backlog_recording = true;
         replay.state.ui.viewport = viewport;
         replay.state.settings = settings.clone();
@@ -3565,8 +3565,8 @@ pub enum VmError {
     InvalidUiIntent(String),
     #[error("invalid plugin: {0}")]
     InvalidPlugin(String),
-    #[error("save requires a different plugin set; install the exact plugins used to create it")]
-    PluginMismatch,
+    #[error("save cannot be opened with the installed plugins: {0}")]
+    PluginMismatch(String),
     #[error("unsupported VM snapshot schema {0}")]
     UnsupportedSnapshot(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
@@ -3641,9 +3641,11 @@ mod tests {
             runtime
                 .register_plugin(PluginRegistration {
                     manifest: crate::PluginManifest {
-                        api_version: 1,
+                        api_version: 2,
                         id: "test.story".into(),
-                        version: "1".into(),
+                        version: "1.0.0".into(),
+                        state_version: 1,
+                        capabilities: [crate::plugins::Capability::Routes].into(),
                         routes: vec![
                             crate::RoutePolicy::reading("day_card"),
                             crate::RoutePolicy {
@@ -3674,7 +3676,7 @@ mod tests {
     fn fresh_vm_with_same_plugins(runtime: &Vm) -> Vm {
         let mut fresh = Vm::new(runtime.program.clone(), SIZE).unwrap();
         fresh.plugins = runtime.plugins.clone();
-        fresh.state.plugin_fingerprints = runtime.state.plugin_fingerprints.clone();
+        fresh.state.plugins = runtime.state.plugins.clone();
         fresh
     }
 

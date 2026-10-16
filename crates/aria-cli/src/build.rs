@@ -102,10 +102,12 @@ pub struct BundleManifest {
     /// Ordered logical paths to the only fonts a Player may use. The order is
     /// part of the portable bundle root because it defines fallback order.
     pub font_assets: Vec<String>,
-    /// Ordered Wasm guest assets; inventory and guest bytes are part of the
-    /// bundle identity, and plugins are mounted before the first story step.
+    /// Whose plugin signatures to trust and which plugins the game requires.
+    /// The plugins themselves are `.ariaplugin` files in `plugins/` beside
+    /// this manifest (or in the player's user data), not part of the PAK, so
+    /// they can be updated without rebuilding the game.
     #[serde(default)]
-    pub plugin_assets: Vec<String>,
+    pub plugins: aria_core::project::PluginsManifest,
     pub ariac_blake3: String,
     pub ariac_size: u64,
     pub pak_blake3: String,
@@ -300,7 +302,7 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
     save_namespace: Option<&str>,
 ) -> Result<PathBuf> {
     let project = LoadedProject::load(path)?.with_runtime_overrides(entry, save_namespace)?;
-    project.plugins()?;
+    let plugin_selection = project.plugin_selection()?;
     let compiled = project.compile()?;
     for diagnostic in &compiled.diagnostics {
         eprintln!("{diagnostic}");
@@ -383,7 +385,7 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
     let pak_blake3 = primary.blake3.clone();
     let pak_content_root = primary.content_root_blake3.clone();
     let mut bundle = BundleManifest {
-        schema_version: 6,
+        schema_version: 7,
         engine_version: aria_core::ENGINE_VERSION.to_owned(),
         language_major: program.language_version.major,
         language_minor: program.language_version.minor,
@@ -396,7 +398,7 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
         save_namespace: project.manifest.runtime.save_namespace.clone(),
         legacy_save_namespaces: project.manifest.runtime.legacy_save_namespaces.clone(),
         font_assets: project.manifest.runtime.fonts.clone(),
-        plugin_assets: project.manifest.runtime.plugins.clone(),
+        plugins: project.manifest.plugins.clone(),
         ariac_blake3,
         ariac_size: u64::try_from(ariac.len()).context("compiled program is too large")?,
         pak_blake3,
@@ -474,6 +476,17 @@ fn build_project_with_profile_and_keys_and_runtime_overrides(
         fs::write(staging.join(&pack.file), bytes)?;
     }
     fs::write(staging.join("bundle.aria.json"), &bundle_bytes)?;
+    let plugin_files = crate::plugins::copy_into_bundle(&plugin_selection, &staging)?;
+    if target == BuildTarget::Web {
+        // Browsers cannot list a folder, so the Web runtime reads this index.
+        fs::create_dir_all(staging.join(crate::plugins::PLUGIN_DIRECTORY))?;
+        fs::write(
+            staging
+                .join(crate::plugins::PLUGIN_DIRECTORY)
+                .join("index.json"),
+            serde_json::to_vec_pretty(&plugin_files)?,
+        )?;
+    }
 
     let player_binary_included = if let Some(player) = native_player {
         copy_native_player(&player, &staging.join(native_player_filename(target)))?;
@@ -562,15 +575,17 @@ pub fn bundle_content_root(bundle: &BundleManifest) -> String {
         );
         hasher.update(font.as_bytes());
     }
-    // Preserve schema-5 roots when reading old plugin-free bundles. New
-    // bundles bind the plugin selection/order as well as the PAK payloads.
-    if bundle.schema_version >= 6 {
-        hasher.update(b"Aria plugin inventory v1");
-        hasher.update(&bundle.schema_version.to_le_bytes());
-        hasher.update(&(bundle.plugin_assets.len() as u32).to_le_bytes());
-        for plugin in &bundle.plugin_assets {
-            hasher.update(&(plugin.len() as u32).to_le_bytes());
-            hasher.update(plugin.as_bytes());
+    // Bind the trusted plugin keys and requirements: changing either would
+    // let a different set of plugins run against this game.
+    hasher.update(b"Aria plugin trust v2");
+    hasher.update(&bundle.schema_version.to_le_bytes());
+    for map in [&bundle.plugins.trusted_keys, &bundle.plugins.require] {
+        hasher.update(&(map.len() as u32).to_le_bytes());
+        for (key, value) in map {
+            for part in [key, value] {
+                hasher.update(&(part.len() as u32).to_le_bytes());
+                hasher.update(part.as_bytes());
+            }
         }
     }
     hasher.update(
@@ -711,7 +726,6 @@ fn collect_assets_by_role(
     let included_paths = reachable_program.map(|program| {
         let mut paths = referenced_asset_paths(program);
         paths.extend(project.manifest.runtime.fonts.iter().cloned());
-        paths.extend(project.manifest.runtime.plugins.iter().cloned());
         paths
     });
     for (logical_path, disk_path) in inventory.iter() {
@@ -1439,7 +1453,7 @@ await writeFile(`${output}/service-worker.js`, "const CACHE = '__ARIA_WEB_CACHE_
         assert!(out.join("index.html").is_file());
         let bundle: BundleManifest =
             serde_json::from_slice(&fs::read(out.join("bundle.aria.json")).unwrap()).unwrap();
-        assert_eq!(bundle.schema_version, 6);
+        assert_eq!(bundle.schema_version, 7);
         assert_eq!(bundle.content_root_blake3, bundle_content_root(&bundle));
         let service_worker = fs::read_to_string(out.join("service-worker.js")).unwrap();
         assert!(!service_worker.contains("__ARIA_WEB_SHELL__"));
