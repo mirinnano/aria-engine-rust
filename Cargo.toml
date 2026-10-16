@@ -9,25 +9,24 @@ members = [
     "crates/aria-cli",
     "crates/aria-plugin-sdk",
     "crates/aria-plugin-host",
-    "examples/umikaze/plugin",
     "examples/plugins/lecture",
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/mirinnano/aria-engine-rust"
 
 [workspace.dependencies]
-aria-core = { path = "crates/aria-core", version = "1.0.0" }
-aria-protection = { path = "crates/aria-protection", version = "1.0.0" }
-aria-render = { path = "crates/aria-render", version = "1.0.0" }
-aria-native = { path = "crates/aria-native", version = "1.0.0" }
-aria-web = { path = "crates/aria-web", version = "1.0.0" }
-aria-plugin-sdk = { path = "crates/aria-plugin-sdk", version = "1.0.0" }
-aria-plugin-host = { path = "crates/aria-plugin-host", version = "1.0.0" }
+aria-core = { path = "crates/aria-core", version = "0.1.0" }
+aria-protection = { path = "crates/aria-protection", version = "0.1.0" }
+aria-render = { path = "crates/aria-render", version = "0.1.0" }
+aria-native = { path = "crates/aria-native", version = "0.1.0" }
+aria-web = { path = "crates/aria-web", version = "0.1.0" }
+aria-plugin-sdk = { path = "crates/aria-plugin-sdk", version = "0.1.0" }
+aria-plugin-host = { path = "crates/aria-plugin-host", version = "0.1.0" }
 wasmi = { version = "=0.46.0", default-features = false, features = ["std", "prefer-btree-collections"] }
 
 aes = "=0.8.4"

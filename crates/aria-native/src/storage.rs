@@ -199,12 +199,12 @@ mod tests {
     #[test]
     fn purge_namespace_removes_only_the_explicit_legacy_directory() {
         let temp = tempfile::tempdir().unwrap();
-        let legacy = AtomicSaveStore::new(temp.path(), "umikaze-v3").unwrap();
-        let current = AtomicSaveStore::new(temp.path(), "umikaze-v4").unwrap();
+        let legacy = AtomicSaveStore::new(temp.path(), "sample-v1").unwrap();
+        let current = AtomicSaveStore::new(temp.path(), "sample-v2").unwrap();
         legacy.save(1, &save(1, 1)).unwrap();
         current.save(1, &save(2, 2)).unwrap();
 
-        assert!(AtomicSaveStore::purge_namespace(temp.path(), "umikaze-v3").unwrap());
+        assert!(AtomicSaveStore::purge_namespace(temp.path(), "sample-v1").unwrap());
         assert!(!legacy.directory().exists());
         assert!(current.directory().exists());
         assert_eq!(

@@ -3167,7 +3167,7 @@ mod tests {
              ui_theme coast { string title \"Coast\"; }\n\
              ui_screen dialogue { slot dialogue; }\n\
              entry start;\n\
-             scene start { theme umikaze; end; }\n",
+             scene start { theme sample; end; }\n",
         );
         assert!(retired.has_errors());
         assert!(retired.diagnostics.iter().any(|diagnostic| {
