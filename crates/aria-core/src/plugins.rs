@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use aria_plugin_sdk::{
-    Capability, ChoiceEdit, CommandDecl, HookEvent, PluginExecutor, PluginManifest,
-    PluginRegistration, PluginRequest, PluginResponse, PluginValue, RoutePolicy, StoryState,
-    TextEdit, ValueType,
+    Capability, ChoiceEdit, CommandDecl, HookEvent, MAX_DRAW_COMMANDS, PluginDraw, PluginExecutor,
+    PluginManifest, PluginRegistration, PluginRequest, PluginResponse, PluginValue, RoutePolicy,
+    StoryState, TextEdit, ValueType,
 };
 use aria_plugin_sdk::{MAX_PLUGINS, MAX_ROUTES};
 use serde::{Deserialize, Serialize};
@@ -137,6 +137,15 @@ impl PluginRegistry {
             .filter(|manifest| manifest.hooks.contains(&event))
             .map(|manifest| manifest.id.clone())
             .collect()
+    }
+
+    /// The plugin that registered `route`, if a plugin did.
+    #[must_use]
+    pub fn route_owner(&self, route: &str) -> Option<&str> {
+        self.manifests
+            .values()
+            .find(|manifest| manifest.routes.iter().any(|policy| policy.route == route))
+            .map(|manifest| manifest.id.as_str())
     }
 
     /// The plugin id behind a script namespace.

@@ -1,8 +1,9 @@
 //! A sample plugin with hooks: it rewrites lines, edits choices, and counts
-//! scene visits, without the script calling it.
+//! scene visits, which it also draws in a corner, without the script
+//! calling it.
 use aria_plugin_sdk::{
-    Capability, ChoiceEdit, HookEvent, PLUGIN_API_VERSION, PluginManifest, PluginRequest,
-    PluginResponse, PluginValue, TextEdit,
+    Capability, ChoiceEdit, HookEvent, PLUGIN_API_VERSION, PluginDraw, PluginManifest,
+    PluginRequest, PluginResponse, PluginValue, TextEdit,
 };
 use serde_json::{Value, json};
 
@@ -14,7 +15,7 @@ pub fn manifest() -> PluginManifest {
         version: "1.0.0".into(),
         state_version: 1,
         migrates_from: None,
-        capabilities: [Capability::Hooks, Capability::State].into(),
+        capabilities: [Capability::Hooks, Capability::State, Capability::Render].into(),
         hooks: [HookEvent::Text, HookEvent::Choices, HookEvent::SceneEnter].into(),
         routes: Vec::new(),
         namespace: None,
@@ -60,6 +61,27 @@ pub fn handle(request: PluginRequest) -> Result<PluginResponse, String> {
             let count = state.get("scenes").and_then(Value::as_i64).unwrap_or(0) + 1;
             let mut response = PluginResponse {
                 state: Some(json!({ "scenes": count })),
+                draw: Some(vec![
+                    PluginDraw::Rect {
+                        x: 1180.0,
+                        y: 24.0,
+                        width: 76.0,
+                        height: 40.0,
+                        color: "#05070bcc".into(),
+                        corner_radius: 6.0,
+                        z: 500,
+                    },
+                    PluginDraw::Text {
+                        text: count.to_string(),
+                        x: 1180.0,
+                        y: 30.0,
+                        width: 76.0,
+                        height: 28.0,
+                        font_size: 20.0,
+                        color: "#ffffff".into(),
+                        z: 501,
+                    },
+                ]),
                 ..PluginResponse::default()
             };
             if story.vars.contains_key("visits") {

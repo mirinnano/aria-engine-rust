@@ -13,8 +13,8 @@ use thiserror::Error;
 
 pub mod calls;
 pub use calls::{
-    ChoiceEdit, CommandDecl, HookEvent, PluginExecutor, PluginRequest, PluginResponse, PluginValue,
-    StoryState, TextEdit, ValueType,
+    ChoiceEdit, CommandDecl, HookEvent, MAX_DRAW_COMMANDS, PluginDraw, PluginExecutor,
+    PluginRequest, PluginResponse, PluginValue, StoryState, TextEdit, ValueType,
 };
 
 pub const PLUGIN_API_VERSION: u32 = 2;

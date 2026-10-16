@@ -12,11 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::vm::{AutoMode, SettingsState, SkipMode};
 
 /// Version of the JSON view contract consumed by game presentation packages.
-///
-/// Schema 8 replaces game-specific interlude metadata with a validated
-/// plugin story-surface policy. Subtitle paging, replay IDs, gallery and
-/// confirmation state, and remaining authored hold time remain layout-free.
-pub const UI_VIEW_MODEL_SCHEMA: u16 = 9;
+/// Schema 10 adds the total of an authored hold and the plugin that owns
+/// the current screen.
+pub const UI_VIEW_MODEL_SCHEMA: u16 = 10;
 
 /// Standard surfaces understood by the engine. A frontend may render a
 /// project-specific surface for [`Self::Custom`] without changing the VM
@@ -250,6 +248,14 @@ pub struct UiViewModel {
     /// may sleep until input, resize, or a distinct active visual transition.
     #[serde(default)]
     pub timed_hold_remaining_ms: Option<u32>,
+    /// The whole length of the current authored hold, so a presentation can
+    /// draw its progress without assuming a duration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_hold_total_ms: Option<u32>,
+    /// The plugin that registered the current screen. A Web presentation
+    /// can mount that plugin's UI module for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_plugin: Option<String>,
     pub choices: Vec<ChoiceView>,
     pub actions: Vec<ActionView>,
     pub settings: SettingsState,

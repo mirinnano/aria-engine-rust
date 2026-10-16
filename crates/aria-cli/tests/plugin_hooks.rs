@@ -138,6 +138,21 @@ scene second { narrate "{visits}"; await advance; end; }
         vm.snapshot().plugin_state["org.example.annotate"],
         serde_json::json!({ "scenes": 2 })
     );
+    // The plugin's layer is drawn over the scene and kept in the save.
+    let label = output
+        .scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            aria_core::protocol::DrawCommand::Text { id, text, .. }
+                if id.starts_with("plugin:org.example.annotate:") =>
+            {
+                Some(text.clone())
+            }
+            _ => None,
+        });
+    assert_eq!(label.as_deref(), Some("2"));
+    assert_eq!(vm.snapshot().plugin_layers["org.example.annotate"].len(), 2);
 }
 
 #[test]

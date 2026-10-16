@@ -150,7 +150,58 @@ pub struct PluginResponse {
     /// For a `choices` event: the options to offer instead. Absent keeps them.
     #[serde(default)]
     pub choices: Option<Vec<ChoiceEdit>>,
+    /// The plugin's whole draw layer, replacing the previous one; an empty
+    /// list clears it. Requires the `render` capability.
+    #[serde(default)]
+    pub draw: Option<Vec<PluginDraw>>,
 }
+
+/// One primitive in a plugin's draw layer, in logical pixels. Colors are
+/// `#rrggbb` or `#rrggbbaa`; images name a game asset by logical path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PluginDraw {
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: String,
+        #[serde(default)]
+        corner_radius: f32,
+        #[serde(default)]
+        z: i32,
+    },
+    Image {
+        asset: String,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        #[serde(default = "opaque")]
+        opacity: u8,
+        #[serde(default)]
+        z: i32,
+    },
+    Text {
+        text: String,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        font_size: f32,
+        color: String,
+        #[serde(default)]
+        z: i32,
+    },
+}
+
+fn opaque() -> u8 {
+    255
+}
+
+/// At most this many primitives per plugin layer.
+pub const MAX_DRAW_COMMANDS: usize = 256;
 
 /// Runs plugin calls for a VM. The Core holds one of these, never a Wasm
 /// instance; `aria-plugin-host` provides the Wasm implementation.

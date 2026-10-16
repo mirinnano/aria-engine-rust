@@ -320,6 +320,11 @@ fn plugin_policy_survives_backlog_reconstruction() {
     vm.step(&action(5, &format!("backlog:{page_id}"))).unwrap();
     let resumed = vm.step(&action(6, "confirm.accept")).unwrap();
     assert_eq!(resumed.view.route, UiRoute::Custom("lecture_slide".into()));
+    // The presentation learns which plugin owns the screen, to mount its UI.
+    assert_eq!(
+        resumed.view.route_plugin.as_deref(),
+        Some("org.example.lecture")
+    );
     assert!(resumed.view.dialogue.unwrap().complete);
     assert!(
         resumed

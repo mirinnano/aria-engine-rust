@@ -101,6 +101,9 @@ pub struct VmSnapshot {
     /// Each plugin's own saved state, as the plugin last returned it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugin_state: BTreeMap<String, serde_json::Value>,
+    /// Each plugin's draw layer, as the plugin last returned it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_layers: BTreeMap<String, Vec<crate::plugins::PluginDraw>>,
     pub pc: u32,
     pub frame_number: u64,
     pub logical_time_ms: u64,
@@ -351,6 +354,9 @@ pub enum ExecutionState {
         /// the historical hard-hold behaviour.
         #[serde(default)]
         release_at_remaining_ms: Option<u32>,
+        /// The hold's full length, for presentations that show progress.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_ms: Option<u32>,
     },
     WaitingForChoice,
 }
@@ -537,6 +543,7 @@ impl Vm {
                 game_id,
                 plugins: BTreeMap::new(),
                 plugin_state: BTreeMap::new(),
+                plugin_layers: BTreeMap::new(),
                 pc: 0,
                 frame_number: 0,
                 logical_time_ms: 0,
@@ -1107,6 +1114,7 @@ impl Vm {
             ExecutionState::WaitingForDelay {
                 remaining_ms,
                 release_at_remaining_ms,
+                total_ms,
             } => {
                 let mut remaining = remaining_ms.saturating_sub(input.delta_ms);
                 let policy = self.plugins.policy(&self.state.ui.route);
@@ -1133,6 +1141,7 @@ impl Vm {
                     self.state.execution = ExecutionState::WaitingForDelay {
                         remaining_ms: remaining,
                         release_at_remaining_ms,
+                        total_ms,
                     };
                 }
             }
@@ -1275,6 +1284,7 @@ impl Vm {
             if let ExecutionState::WaitingForDelay {
                 remaining_ms,
                 release_at_remaining_ms,
+                ..
             } = self.state.execution
             {
                 // Buttons, terminals, keyboards and controllers share the
@@ -2224,7 +2234,7 @@ impl Vm {
         let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
         // Check everything before changing anything, so a bad response
         // leaves the VM exactly as it was.
-        self.check_story_changes(can_touch_story, &response.story)
+        self.check_response(&plugin_id, can_touch_story, &response)
             .map_err(fail)?;
         let target = &instruction.operands[2];
         let result = match (&declaration.returns, response.result) {
@@ -2257,7 +2267,7 @@ impl Vm {
             (Some(_), Operand::Integer(0)) => {}
             _ => return Err(fail("the result does not fit its target".into())),
         }
-        self.commit_plugin_changes(&plugin_id, response.story, response.state);
+        self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
         Ok(())
     }
 
@@ -2318,13 +2328,60 @@ impl Vm {
         Ok(())
     }
 
-    /// Applies checked story changes and the plugin's new state.
+    /// Checks a whole response before any of it is applied.
+    fn check_response(
+        &self,
+        plugin_id: &str,
+        can_touch_story: bool,
+        response: &crate::plugins::PluginResponse,
+    ) -> Result<(), String> {
+        self.check_story_changes(can_touch_story, &response.story)?;
+        let Some(draw) = &response.draw else {
+            return Ok(());
+        };
+        let can_render = self.plugins.manifest(plugin_id).is_some_and(|manifest| {
+            manifest
+                .capabilities
+                .contains(&crate::plugins::Capability::Render)
+        });
+        if !can_render {
+            return Err("drawing requires the render capability".into());
+        }
+        if draw.len() > crate::plugins::MAX_DRAW_COMMANDS {
+            return Err("a draw layer holds at most 256 primitives".into());
+        }
+        for primitive in draw {
+            use crate::plugins::PluginDraw;
+            let color = match primitive {
+                PluginDraw::Rect { color, .. } | PluginDraw::Text { color, .. } => Some(color),
+                PluginDraw::Image { .. } => None,
+            };
+            if let Some(color) = color
+                && parse_color(color).is_none()
+            {
+                return Err(format!("'{color}' is not a #rrggbb or #rrggbbaa color"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies checked story changes, the plugin's new state, and its layer.
     fn commit_plugin_changes(
         &mut self,
         plugin_id: &str,
         story: crate::plugins::StoryState,
         state: Option<serde_json::Value>,
+        draw: Option<Vec<crate::plugins::PluginDraw>>,
     ) {
+        match draw {
+            Some(draw) if draw.is_empty() => {
+                self.state.plugin_layers.remove(plugin_id);
+            }
+            Some(draw) => {
+                self.state.plugin_layers.insert(plugin_id.to_owned(), draw);
+            }
+            None => {}
+        }
         use crate::plugins::PluginValue;
         for (name, value) in story.vars {
             let key = format!("state:{name}");
@@ -2380,13 +2437,13 @@ impl Vm {
             let fail =
                 |message: String| VmError::PluginCall(format!("{plugin_id} text hook: {message}"));
             let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
-            self.check_story_changes(can_touch_story, &response.story)
+            self.check_response(&plugin_id, can_touch_story, &response)
                 .map_err(fail)?;
             if let Some(edit) = response.text {
                 speaker = edit.speaker;
                 text = edit.text;
             }
-            self.commit_plugin_changes(&plugin_id, response.story, response.state);
+            self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
         }
         Ok((speaker, text))
     }
@@ -2408,7 +2465,7 @@ impl Vm {
                 VmError::PluginCall(format!("{plugin_id} choices hook: {message}"))
             };
             let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
-            self.check_story_changes(can_touch_story, &response.story)
+            self.check_response(&plugin_id, can_touch_story, &response)
                 .map_err(fail)?;
             if let Some(edits) = response.choices {
                 let mut edited = Vec::with_capacity(edits.len());
@@ -2447,7 +2504,7 @@ impl Vm {
                 }
                 options = edited;
             }
-            self.commit_plugin_changes(&plugin_id, response.story, response.state);
+            self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
         }
         Ok(options)
     }
@@ -2465,9 +2522,9 @@ impl Vm {
                 VmError::PluginCall(format!("{plugin_id} scene_enter hook: {message}"))
             };
             let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
-            self.check_story_changes(can_touch_story, &response.story)
+            self.check_response(&plugin_id, can_touch_story, &response)
                 .map_err(fail)?;
-            self.commit_plugin_changes(&plugin_id, response.story, response.state);
+            self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
         }
         Ok(())
     }
@@ -2586,6 +2643,7 @@ impl Vm {
                         remaining_ms: duration,
                         release_at_remaining_ms: release_after_ms
                             .map(|floor| duration.saturating_sub(floor)),
+                        total_ms: Some(duration),
                     };
                 }
             }
@@ -3349,15 +3407,99 @@ impl Vm {
             transition,
             effects,
         };
+        frame.commands.extend(self.plugin_layer_commands());
         frame.sort_commands();
         frame
     }
 
+    /// Plugin draw layers as draw commands. Depth is clamped so a plugin
+    /// stays above the background and below the system's own overlays.
+    fn plugin_layer_commands(&self) -> Vec<DrawCommand> {
+        use crate::plugins::PluginDraw;
+        let mut commands = Vec::new();
+        for (plugin_id, layer) in &self.state.plugin_layers {
+            for (index, primitive) in layer.iter().enumerate() {
+                let id = format!("plugin:{plugin_id}:{index}");
+                let bounds = |x: f32, y: f32, width: f32, height: f32| Rect {
+                    x,
+                    y,
+                    width: width.max(0.0),
+                    height: height.max(0.0),
+                };
+                commands.push(match primitive {
+                    PluginDraw::Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                        color,
+                        corner_radius,
+                        z,
+                    } => DrawCommand::Rectangle {
+                        id,
+                        bounds: bounds(*x, *y, *width, *height),
+                        color: parse_color(color).unwrap_or(Color::BLACK),
+                        corner_radius: corner_radius.max(0.0),
+                        z: (*z).clamp(-9_000, 9_000),
+                        style: DrawStyle::default(),
+                    },
+                    PluginDraw::Image {
+                        asset,
+                        x,
+                        y,
+                        width,
+                        height,
+                        opacity,
+                        z,
+                    } => DrawCommand::Sprite {
+                        id,
+                        asset: asset.clone(),
+                        destination: bounds(*x, *y, *width, *height),
+                        opacity: *opacity,
+                        z: (*z).clamp(-9_000, 9_000),
+                        visible: true,
+                        blend: BlendMode::Alpha,
+                        mask: None,
+                        scale: 1.0,
+                        rotation_degrees: 0.0,
+                        tint: Color::WHITE,
+                        fit: SpriteFit::default(),
+                        style: DrawStyle::default(),
+                    },
+                    PluginDraw::Text {
+                        text,
+                        x,
+                        y,
+                        width,
+                        height,
+                        font_size,
+                        color,
+                        z,
+                    } => DrawCommand::Text {
+                        id,
+                        text: text.clone(),
+                        speaker: None,
+                        bounds: bounds(*x, *y, *width, *height),
+                        color: parse_color(color).unwrap_or(Color::WHITE),
+                        font_size: font_size.clamp(1.0, 512.0),
+                        z: (*z).clamp(-9_000, 9_000),
+                        style: DrawStyle::default(),
+                    },
+                });
+            }
+        }
+        commands
+    }
+
     fn build_view_model(&self) -> UiViewModel {
         let route = UiRoute::parse(&self.state.ui.route);
-        let timed_hold_remaining_ms = match &self.state.execution {
-            ExecutionState::WaitingForDelay { remaining_ms, .. } => Some(*remaining_ms),
-            _ => None,
+        let (timed_hold_remaining_ms, timed_hold_total_ms) = match &self.state.execution {
+            ExecutionState::WaitingForDelay {
+                remaining_ms,
+                total_ms,
+                ..
+            } => (Some(*remaining_ms), *total_ms),
+            _ => (None, None),
         };
         let dialogue_pages = self.subtitle_pages();
         let dialogue_page_index = self
@@ -3504,6 +3646,11 @@ impl Vm {
             camera: self.state.camera.clone(),
             dialogue,
             timed_hold_remaining_ms,
+            timed_hold_total_ms,
+            route_plugin: self
+                .plugins
+                .route_owner(&self.state.ui.route)
+                .map(str::to_owned),
             choices,
             actions: self.presentation_actions(&route),
             settings: self.state.settings.clone(),
