@@ -22,6 +22,8 @@ use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
 /// Schema 11 records each plugin's id, version, and state version, so a save
 /// survives a plugin update that keeps its state version.
 pub const VM_SNAPSHOT_SCHEMA: u32 = 11;
+/// The previous schema, which `restore` still opens.
+const PLUGIN_HASH_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
@@ -735,6 +737,13 @@ impl Vm {
     }
 
     pub fn restore(&mut self, mut snapshot: VmSnapshot) -> Result<(), VmError> {
+        // Schema 10 differs only in how it named the plugins it was made
+        // with (by binary hash, a field that no longer deserializes). It
+        // carries no plugin state, so it opens with the plugins installed now.
+        if snapshot.schema_version == PLUGIN_HASH_SNAPSHOT_SCHEMA {
+            snapshot.schema_version = VM_SNAPSHOT_SCHEMA;
+            snapshot.plugins.clear();
+        }
         if snapshot.schema_version != VM_SNAPSHOT_SCHEMA {
             return Err(VmError::UnsupportedSnapshot(snapshot.schema_version));
         }

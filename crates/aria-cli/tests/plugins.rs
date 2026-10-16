@@ -334,3 +334,19 @@ fn plugin_policy_survives_backlog_reconstruction() {
             .any(|action| action.id == "lecture.next")
     );
 }
+
+#[test]
+fn a_save_from_the_previous_snapshot_schema_still_opens() {
+    let plugin = aria_plugin_host::load_plugin(LECTURE).unwrap();
+    let mut vm = Vm::with_plugins(program(), SIZE, std::slice::from_ref(&plugin)).unwrap();
+    vm.step(&InputSnapshot::idle(1, 0)).unwrap();
+    let mut json = serde_json::to_value(vm.snapshot()).unwrap();
+    json["schema_version"] = 10.into();
+    json.as_object_mut().unwrap().remove("plugins");
+    json["plugin_fingerprints"] = serde_json::json!({ "org.example.lecture": "ab".repeat(32) });
+    let old: aria_core::VmSnapshot = serde_json::from_value(json).unwrap();
+    let mut restored = Vm::with_plugins(program(), SIZE, &[plugin]).unwrap();
+    restored.restore(old).unwrap();
+    assert_eq!(restored.snapshot().schema_version, 11);
+    assert!(restored.snapshot().plugins.contains_key("org.example.lecture"));
+}
