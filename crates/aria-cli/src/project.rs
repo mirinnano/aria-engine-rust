@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use aria_core::bytecode::{ByteOp, Constant, Operand};
 use aria_core::{
     CompileInput, CompileOutput, CompiledProgram, Diagnostic, DiagnosticCode, ProjectManifest,
-    SourceSpan, SourceUnit, compile_with_routes,
+    SourceSpan, SourceUnit,
 };
 use walkdir::{DirEntry, WalkDir};
 
@@ -108,25 +108,26 @@ impl LoadedProject {
         })
     }
 
-    /// Validates every declared Wasm plugin and rejects cross-plugin route
-    /// collisions before a check/build or runtime can start executing prose.
-    pub fn plugins(&self) -> Result<Vec<aria_core::PluginRegistration>> {
-        let inventory = self.asset_inventory()?;
+    /// The project's own plugin folder, `<project>/plugins/`.
+    #[must_use]
+    pub fn plugin_directory(&self) -> PathBuf {
+        self.root.join(crate::plugins::PLUGIN_DIRECTORY)
+    }
+
+    /// Verifies and selects the project's plugins, and rejects cross-plugin
+    /// route collisions before a check, build, or run executes any prose.
+    pub fn plugin_selection(&self) -> Result<aria_plugin_host::select::Selection> {
+        let selection =
+            crate::plugins::discover(&[self.plugin_directory()], &self.manifest.plugins)?;
         let mut registry = aria_core::PluginRegistry::default();
-        let mut plugins = Vec::new();
-        for logical_path in &self.manifest.runtime.plugins {
-            let path = inventory
-                .path(logical_path)
-                .with_context(|| format!("missing plugin asset '{logical_path}'"))?;
-            if fs::metadata(path)?.len() > aria_plugin_host::MAX_PLUGIN_BYTES as u64 {
-                bail!("plugin '{logical_path}' exceeds the 4 MiB binary limit");
-            }
-            let plugin = aria_plugin_host::load_plugin(&fs::read(path)?)
-                .with_context(|| format!("cannot load plugin '{logical_path}'"))?;
-            registry.register(plugin.clone())?;
-            plugins.push(plugin);
+        for package in &selection.plugins {
+            registry.register(package.registration.clone())?;
         }
-        Ok(plugins)
+        Ok(selection)
+    }
+
+    pub fn plugins(&self) -> Result<Vec<aria_core::PluginRegistration>> {
+        Ok(crate::plugins::registrations(&self.plugin_selection()?))
     }
 
     pub fn sources(&self) -> Result<Vec<SourceUnit>> {
@@ -259,24 +260,18 @@ impl LoadedProject {
     pub fn compile(&self) -> Result<CompileOutput> {
         let assets = self.asset_inventory()?;
         self.validate_bundled_fonts(&assets, false)?;
-        let custom_routes = self
+        let manifests = self
             .plugins()?
-            .iter()
-            .flat_map(|plugin| {
-                plugin
-                    .manifest
-                    .routes
-                    .iter()
-                    .map(|policy| policy.route.clone())
-            })
-            .collect();
-        let mut output = compile_with_routes(
+            .into_iter()
+            .map(|plugin| plugin.manifest)
+            .collect::<Vec<_>>();
+        let mut output = aria_core::compiler::compile_with_plugins(
             CompileInput {
                 game_id: self.manifest.game.id.clone(),
                 entry: self.manifest.runtime.entry.clone(),
                 sources: self.sources()?,
             },
-            &custom_routes,
+            &manifests,
         );
         if let Some(program) = &output.program {
             output
@@ -340,7 +335,12 @@ fn validate_program_asset_references(
         let Some((operand_index, accepts_color, kind)) = asset_operand else {
             continue;
         };
-        let Some(operand) = instruction.operands.get(operand_index) else {
+        // Declarations (chapters, CGs) may leave their image out.
+        let Some(operand) = instruction
+            .operands
+            .get(operand_index)
+            .filter(|operand| !matches!(operand, Operand::None))
+        else {
             continue;
         };
         let Some(path) = constant_string(program, operand) else {
@@ -436,6 +436,7 @@ fn asset_operand(op: ByteOp) -> Option<(usize, bool, &'static str)> {
         ByteOp::PlayAudio => Some((2, false, "audio")),
         ByteOp::PreloadAsset => Some((0, false, "preload")),
         ByteOp::DeclareChapter => Some((6, false, "chapter image")),
+        ByteOp::DeclareCg => Some((2, false, "gallery image")),
         _ => None,
     }
 }
@@ -498,5 +499,16 @@ mod tests {
         assert_eq!(diagnostics[0].span.as_ref().map(|span| span.line), Some(5));
         // Without a declared vocabulary there is nothing to compare against.
         assert!(validate_stage_cues(&program, &[]).is_empty());
+    }
+
+    #[test]
+    fn declarations_may_leave_their_image_out() {
+        let program = program(
+            "aria;\nentry start;\nchapter one { title \"一\"; start start; }\ncg first { title \"最初\"; }\nscene start { end; }\n",
+        );
+        let assets = AssetInventory {
+            entries: BTreeMap::new(),
+        };
+        assert!(validate_program_asset_references(&program, &assets).is_empty());
     }
 }

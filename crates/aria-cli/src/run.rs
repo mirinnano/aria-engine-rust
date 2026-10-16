@@ -38,7 +38,7 @@ pub(crate) enum RuntimeAssetSource {
 pub(crate) struct RuntimeProject {
     pub(crate) root: PathBuf,
     pub(crate) program: CompiledProgram,
-    pub(crate) plugins: Vec<aria_core::PluginRegistration>,
+    pub(crate) plugins: aria_core::PluginSet,
     pub(crate) logical_size: LogicalSize,
     pub(crate) save_namespace: String,
     pub(crate) legacy_save_namespaces: Vec<String>,
@@ -65,7 +65,7 @@ pub fn command(path: &Path, headless: bool, replay: Option<&Path>, max_frames: u
         let tape: ReplayTape = serde_json::from_slice(
             &fs::read(replay).with_context(|| format!("cannot read {}", replay.display()))?,
         )?;
-        let (result, _) = ReplayRunner.run_with_plugins(
+        let (result, _) = ReplayRunner.run_with_plugin_set(
             project.program,
             project.logical_size,
             &tape,
@@ -75,7 +75,7 @@ pub fn command(path: &Path, headless: bool, replay: Option<&Path>, max_frames: u
         return Ok(0);
     }
 
-    let mut vm = Vm::with_plugins(project.program, project.logical_size, &project.plugins)?;
+    let mut vm = Vm::with_plugin_set(project.program, project.logical_size, &project.plugins)?;
     let save_root = project.root.join("saves-v3");
     for namespace in &project.legacy_save_namespaces {
         AtomicSaveStore::purge_namespace(&save_root, namespace)?;
@@ -182,7 +182,7 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
             bail!("bundle.aria.json does not declare the primary game.ariapak");
         }
         let package_profile = bundle.pak_profile;
-        let plugins = match package_profile {
+        match package_profile {
             BuildProfile::Dev => {
                 let mut mounted = Vec::with_capacity(packs.len());
                 for pack in &packs {
@@ -201,12 +201,6 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
                         .find_map(|archive| archive.read(path).ok())
                         .ok_or_else(|| anyhow::anyhow!("missing asset '{path}'"))
                 })?;
-                load_packaged_plugins(&bundle, |path| {
-                    mounted
-                        .iter()
-                        .find_map(|archive| archive.read(path).ok())
-                        .ok_or_else(|| anyhow::anyhow!("missing plugin asset '{path}'"))
-                })?
             }
             BuildProfile::Signed | BuildProfile::Protected => {
                 let keys = resolve_pak_keys(package_profile, None, None)?;
@@ -236,14 +230,12 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
                         .find_map(|package| package.read(path).ok())
                         .ok_or_else(|| anyhow::anyhow!("missing asset '{path}'"))
                 })?;
-                load_packaged_plugins(&bundle, |path| {
-                    mounted
-                        .iter()
-                        .find_map(|package| package.read(path).ok())
-                        .ok_or_else(|| anyhow::anyhow!("missing plugin asset '{path}'"))
-                })?
             }
-        };
+        }
+        let plugins = crate::plugins::plugin_set(&crate::plugins::discover(
+            &packaged_plugin_directories(&root, &bundle.game_id),
+            &bundle.plugins,
+        )?)?;
         let wrapper = root.join("build-manifest.json");
         if wrapper.is_file() {
             let manifest: BuildManifest = serde_json::from_slice(&fs::read(&wrapper)?)?;
@@ -284,7 +276,7 @@ pub(crate) fn load_runtime_project(path: &Path) -> Result<RuntimeProject> {
         bail!("project has compiler errors");
     }
     let assets = project.asset_inventory()?;
-    let plugins = project.plugins()?;
+    let plugins = crate::plugins::plugin_set(&project.plugin_selection()?)?;
     Ok(RuntimeProject {
         root: project.root,
         program: compiled.program.context("compiler produced no program")?,
@@ -351,47 +343,24 @@ fn validate_packaged_fonts(
     Ok(())
 }
 
-fn load_packaged_plugins(
-    bundle: &BundleManifest,
-    mut read: impl FnMut(&str) -> Result<Vec<u8>>,
-) -> Result<Vec<aria_core::PluginRegistration>> {
-    let mut registry = aria_core::PluginRegistry::default();
-    let mut plugins = Vec::new();
-    for path in &bundle.plugin_assets {
-        let plugin = aria_plugin_host::load_plugin(&read(path)?)
-            .with_context(|| format!("cannot load packaged plugin '{path}'"))?;
-        registry.register(plugin.clone())?;
-        plugins.push(plugin);
-    }
-    Ok(plugins)
+/// The bundle's own `plugins/`, then the player's user-data folder, where
+/// an updated plugin can be placed without touching the installed game.
+fn packaged_plugin_directories(root: &Path, game_id: &str) -> Vec<PathBuf> {
+    #[cfg_attr(not(feature = "desktop-player"), allow(unused_mut))]
+    let mut directories = vec![root.join(crate::plugins::PLUGIN_DIRECTORY)];
+    #[cfg(feature = "desktop-player")]
+    directories.push(crate::plugins::user_plugin_directory(game_id));
+    #[cfg(not(feature = "desktop-player"))]
+    let _ = game_id;
+    directories
 }
 
 fn validate_bundle(bundle: &BundleManifest) -> Result<()> {
-    if bundle.schema_version != 5 && bundle.schema_version != 6 {
+    if bundle.schema_version != 7 {
         bail!(
-            "unsupported bundle.aria.json schema {}",
+            "unsupported bundle.aria.json schema {}; rebuild the game with this engine",
             bundle.schema_version
         );
-    }
-    if (bundle.schema_version == 5 && !bundle.plugin_assets.is_empty())
-        || bundle.plugin_assets.len() > 16
-    {
-        bail!("bundle plugin inventory requires schema 6 and at most 16 plugins");
-    }
-    let mut plugin_paths = BTreeSet::new();
-    for plugin in &bundle.plugin_assets {
-        let canonical = aria_core::compiler::normalize_logical_path(plugin)
-            .map_err(|error| anyhow::anyhow!(error))?;
-        if canonical != *plugin
-            || !plugin.ends_with(".wasm")
-            || !plugin_paths.insert(plugin)
-            || !bundle
-                .pak_packs
-                .iter()
-                .any(|pack| pack.assets.contains(plugin))
-        {
-            bail!("invalid or missing bundled plugin asset '{plugin}'");
-        }
     }
     if bundle.vm_abi_version != aria_core::bytecode::ARIAC_VM_ABI_VERSION {
         bail!(

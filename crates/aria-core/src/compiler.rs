@@ -54,6 +54,40 @@ pub fn compile_with_routes(
     input: CompileInput,
     custom_routes: &std::collections::BTreeSet<String>,
 ) -> CompileOutput {
+    compile_inner(input, custom_routes.clone(), BTreeMap::new())
+}
+
+/// Compiles against the manifests of the installed plugins: their custom
+/// routes and the commands scripts may call as `namespace::command(…)`.
+#[must_use]
+pub fn compile_with_plugins(
+    input: CompileInput,
+    plugins: &[crate::plugins::PluginManifest],
+) -> CompileOutput {
+    let routes = plugins
+        .iter()
+        .flat_map(|manifest| manifest.routes.iter().map(|policy| policy.route.clone()))
+        .collect();
+    let commands = plugins
+        .iter()
+        .filter_map(|manifest| {
+            let namespace = manifest.namespace.clone()?;
+            let commands = manifest
+                .commands
+                .iter()
+                .map(|command| (command.name.clone(), command.clone()))
+                .collect();
+            Some((namespace, (manifest.id.clone(), commands)))
+        })
+        .collect();
+    compile_inner(input, routes, commands)
+}
+
+fn compile_inner(
+    input: CompileInput,
+    custom_routes: std::collections::BTreeSet<String>,
+    plugin_commands: crate::modern_compiler::PluginCommands,
+) -> CompileOutput {
     let mut diagnostics = Vec::new();
     let mut sources = BTreeMap::new();
     let mut portable_source_names = BTreeMap::new();
@@ -120,7 +154,8 @@ pub fn compile_with_routes(
         entry,
         sources,
         diagnostics,
-        custom_routes.clone(),
+        custom_routes,
+        plugin_commands,
     )
 }
 

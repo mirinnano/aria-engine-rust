@@ -59,7 +59,22 @@ impl ReplayRunner {
         tape: &ReplayTape,
         plugins: &[aria_core::PluginRegistration],
     ) -> Result<(ReplayResult, VmSnapshot), VmError> {
-        let mut vm = Vm::with_plugins(program, logical_size, plugins)?;
+        let set = aria_core::PluginSet {
+            registrations: plugins.to_vec(),
+            executor: None,
+        };
+        self.run_with_plugin_set(program, logical_size, tape, &set)
+    }
+
+    /// Replays with plugins whose commands run through `plugins.executor`.
+    pub fn run_with_plugin_set(
+        &self,
+        program: CompiledProgram,
+        logical_size: LogicalSize,
+        tape: &ReplayTape,
+        plugins: &aria_core::PluginSet,
+    ) -> Result<(ReplayResult, VmSnapshot), VmError> {
+        let mut vm = Vm::with_plugin_set(program, logical_size, plugins)?;
         let inputs = tape.resolved_inputs();
         let mut output_hashes = Vec::with_capacity(inputs.len());
         for input in &inputs {

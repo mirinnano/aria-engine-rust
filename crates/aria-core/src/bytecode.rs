@@ -9,7 +9,7 @@ use thiserror::Error;
 /// file remains a deterministic description of narrative semantics.
 pub const ARIAC_FORMAT_VERSION: u16 = 7;
 pub const ARIAC_MAGIC: [u8; 8] = *b"ARIAC7\0\0";
-pub const ARIAC_VM_ABI_VERSION: u16 = 4;
+pub const ARIAC_VM_ABI_VERSION: u16 = 5;
 
 /// Resume anchors are `Nop` instructions whose single operand names them.
 pub const SCENE_ANCHOR_PREFIX: &str = "scene:";
@@ -98,6 +98,12 @@ pub enum ByteOp {
     PresentChoiceEx,
     /// zoom %, pan x %, pan y %, duration ms, easing.
     SetCamera,
+    /// (plugin id, command, result register or 0, arguments…).
+    CallPlugin,
+    /// (collection, item id, field, value, field, value, …).
+    DeclareItem,
+    /// (CG id, title or none, image or none).
+    DeclareCg,
 }
 
 impl ByteOp {
@@ -148,6 +154,9 @@ impl ByteOp {
             Self::DeclareChapter => 45,
             Self::PresentChoiceEx => 46,
             Self::SetCamera => 47,
+            Self::CallPlugin => 48,
+            Self::DeclareItem => 49,
+            Self::DeclareCg => 50,
         }
     }
 
@@ -198,6 +207,9 @@ impl ByteOp {
             45 => Ok(Self::DeclareChapter),
             46 => Ok(Self::PresentChoiceEx),
             47 => Ok(Self::SetCamera),
+            48 => Ok(Self::CallPlugin),
+            49 => Ok(Self::DeclareItem),
+            50 => Ok(Self::DeclareCg),
             value => Err(AriacError::InvalidOpcode(value)),
         }
     }
@@ -230,6 +242,9 @@ impl ByteOp {
             Self::PresentChoiceEx => operand_count >= 4 && operand_count.is_multiple_of(4),
             Self::DeclareChapter => operand_count == 7,
             Self::SetCamera => operand_count == 5,
+            Self::CallPlugin => (3..=11).contains(&operand_count),
+            Self::DeclareItem => operand_count >= 2 && operand_count.is_multiple_of(2),
+            Self::DeclareCg => operand_count == 3,
             Self::SetFlag
             | Self::SetPersistentFlag
             | Self::UnlockChapter

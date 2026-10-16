@@ -269,6 +269,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "aria-annotate-plugin"
+version = "1.0.0"
+dependencies = [
+ "aria-plugin-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "aria-cli"
 version = "0.1.0"
 dependencies = [
@@ -286,6 +294,8 @@ dependencies = [
  "flate2",
  "fontdb",
  "getrandom 0.3.4",
+ "hex",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
@@ -302,6 +312,7 @@ dependencies = [
  "blake3",
  "flate2",
  "hex",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -348,6 +359,9 @@ version = "0.1.0"
 dependencies = [
  "aria-plugin-sdk",
  "blake3",
+ "ed25519-dalek",
+ "semver",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
  "wasmi",
@@ -358,6 +372,7 @@ dependencies = [
 name = "aria-plugin-sdk"
 version = "0.1.0"
 dependencies = [
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -396,6 +411,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aria-tally-plugin"
+version = "1.0.0"
+dependencies = [
+ "aria-plugin-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "aria-web"
 version = "0.1.0"
 dependencies = [
@@ -404,6 +427,7 @@ dependencies = [
  "aria-protection",
  "aria-render",
  "hex",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

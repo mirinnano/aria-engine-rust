@@ -6,7 +6,7 @@
  * consume the deterministic WASM VM without recreating a renderer DSL.
  */
 
-export const UI_VIEW_MODEL_SCHEMA = 9 as const;
+export const UI_VIEW_MODEL_SCHEMA = 10 as const;
 
 export type StandardRoute =
   | "setup"
@@ -126,6 +126,15 @@ export interface GalleryItemView {
   id: string;
   unlocked: boolean;
   selected: boolean;
+  /** From the script's `cg id { title …; image …; }` declaration. */
+  title?: string;
+  image?: string;
+}
+
+/** One `item` of a script `collection`. */
+export interface CollectionItemView {
+  id: string;
+  fields: Record<string, string>;
 }
 
 export interface StorySurfaceView {
@@ -151,6 +160,12 @@ export interface UiViewModel {
   dialogue: DialogueView | null;
   /** Remaining VM-owned story hold, or null when the surface may sleep. */
   timed_hold_remaining_ms: number | null;
+  /** The whole length of the current authored hold. */
+  timed_hold_total_ms?: number;
+  /** The plugin that registered the current screen; its UI module can draw it. */
+  route_plugin?: string;
+  /** The script's `collection` declarations, by name. */
+  collections?: Record<string, CollectionItemView[]>;
   choices: ChoiceView[];
   actions: ActionView[];
   settings: SettingsView;

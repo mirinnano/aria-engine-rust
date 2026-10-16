@@ -10,6 +10,7 @@ mod package_runtime;
 #[cfg(all(feature = "desktop-player", not(target_arch = "wasm32")))]
 pub mod player;
 pub mod plugin;
+pub mod plugins;
 pub mod project;
 pub mod release;
 pub mod run;

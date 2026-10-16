@@ -59,6 +59,8 @@ pub struct ModernToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModernTokenKind {
     Identifier,
+    /// `::` between a plugin namespace and a command name.
+    PathSeparator,
     String,
     Number,
     Whitespace,
@@ -112,6 +114,8 @@ pub struct ModernModule {
     pub scenes: Vec<SceneDecl>,
     pub characters: Vec<CharacterDecl>,
     pub chapters: Vec<ChapterDecl>,
+    pub collections: Vec<CollectionDecl>,
+    pub cgs: Vec<CgDecl>,
     /// Retired visual declarations retained only long enough to produce a
     /// source-located retirement diagnostic. They are never lowered into a
     /// program, a render protocol, or a VM layout tree.
@@ -214,6 +218,34 @@ pub struct ChapterDecl {
     pub start: Option<String>,
 }
 
+/// `collection name { item id { key "value"; … } … }`: story material a
+/// presentation shows (quotations, notes, credits) without deciding what
+/// it says.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionDecl {
+    pub span: SourceSpan,
+    pub name: String,
+    pub items: Vec<CollectionItemDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionItemDecl {
+    pub span: SourceSpan,
+    pub id: String,
+    /// Field name and string value, in source order.
+    pub fields: Vec<(String, String)>,
+}
+
+/// `cg id { title "…"; image asset("…"); }`: what the gallery shows for an
+/// unlocked CG.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CgDecl {
+    pub span: SourceSpan,
+    pub id: String,
+    pub title: Option<String>,
+    pub image: Option<AssetRef>,
+}
+
 /// A statement and its source location.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Statement {
@@ -274,6 +306,10 @@ pub enum StatementKind {
     Assign {
         name: String,
         value: Value,
+    },
+    /// A plugin command used as a statement; any result is discarded.
+    PluginCall {
+        call: Expression,
     },
     AddAssign {
         name: String,
@@ -580,6 +616,12 @@ pub enum ExpressionKind {
     },
     /// `flag("name")`: a session or persistent flag as a Bool.
     Flag(String),
+    /// `namespace::command(args)`: a command a plugin offers.
+    PluginCall {
+        namespace: String,
+        command: String,
+        args: Vec<Expression>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -755,6 +797,7 @@ impl<'a> Lexer<'a> {
         start: Mark,
     ) -> ModernTokenKind {
         let pairs = [
+            ("::", ModernTokenKind::PathSeparator),
             ("+=", ModernTokenKind::PlusEquals),
             ("-=", ModernTokenKind::MinusEquals),
             ("=>", ModernTokenKind::FatArrow),
@@ -949,6 +992,8 @@ impl Parser {
             scenes: Vec::new(),
             characters: Vec::new(),
             chapters: Vec::new(),
+            collections: Vec::new(),
+            cgs: Vec::new(),
             retired_ui_syntax: Vec::new(),
         };
 
@@ -1031,6 +1076,16 @@ impl Parser {
             } else if self.consume_keyword("chapter") {
                 if let Some(declaration) = self.parse_chapter_decl() {
                     module.chapters.push(declaration);
+                }
+                Some(self.previous_or(&header_start).clone())
+            } else if self.consume_keyword("collection") {
+                if let Some(declaration) = self.parse_collection() {
+                    module.collections.push(declaration);
+                }
+                Some(self.previous_or(&header_start).clone())
+            } else if self.consume_keyword("cg") {
+                if let Some(declaration) = self.parse_cg() {
+                    module.cgs.push(declaration);
                 }
                 Some(self.previous_or(&header_start).clone())
             } else if self.consume_keyword("ui_theme") {
@@ -1229,6 +1284,82 @@ impl Parser {
         }
         chapter.span = span_between(&start, &end);
         Some(chapter)
+    }
+
+    fn parse_collection(&mut self) -> Option<CollectionDecl> {
+        let start = self.peek().clone();
+        let (name, _) = self.parse_identifier("expected collection name after 'collection'")?;
+        self.expect_kind(
+            ModernTokenKind::LeftBrace,
+            "expected '{' after collection name",
+        )?;
+        let mut items = Vec::new();
+        while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
+            let item_start = self.peek().clone();
+            self.expect_keyword("item", "expected 'item' inside a collection")?;
+            let (id, _) = self.parse_identifier("expected item id after 'item'")?;
+            self.expect_kind(ModernTokenKind::LeftBrace, "expected '{' after item id")?;
+            let mut fields = Vec::new();
+            while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
+                let before = self.index;
+                let (field, _) = self.parse_identifier("expected item field name")?;
+                let value = self.parse_string("expected a string value")?;
+                self.expect_statement_end("expected ';' after item field")?;
+                if fields.iter().any(|(existing, _)| *existing == field) {
+                    self.error_here(format!("field '{field}' appears twice in item '{id}'"));
+                }
+                fields.push((field, value));
+                if self.index == before {
+                    self.advance();
+                }
+            }
+            let end =
+                self.expect_kind(ModernTokenKind::RightBrace, "expected '}' to close item")?;
+            items.push(CollectionItemDecl {
+                span: span_between(&item_start, &end),
+                id,
+                fields,
+            });
+        }
+        let end = self.expect_kind(
+            ModernTokenKind::RightBrace,
+            "expected '}' to close collection",
+        )?;
+        Some(CollectionDecl {
+            span: span_between(&start, &end),
+            name,
+            items,
+        })
+    }
+
+    fn parse_cg(&mut self) -> Option<CgDecl> {
+        let start = self.peek().clone();
+        let (id, _) = self.parse_identifier("expected CG id after 'cg'")?;
+        self.expect_kind(ModernTokenKind::LeftBrace, "expected '{' after CG id")?;
+        let mut cg = CgDecl {
+            span: start.span.clone(),
+            id,
+            title: None,
+            image: None,
+        };
+        while !self.at_eof() && !self.at_kind(ModernTokenKind::RightBrace) {
+            let before = self.index;
+            let field = self.parse_word("expected CG field")?;
+            match field.as_str() {
+                "title" => cg.title = Some(self.parse_string("expected title string")?),
+                "image" => cg.image = Some(self.parse_asset_ref()?),
+                other => self.error_here(format!(
+                    "unknown CG field '{other}'; expected title or image"
+                )),
+            }
+            self.expect_statement_end("expected ';' after CG field")?;
+            if self.index == before {
+                self.advance();
+            }
+        }
+        let end = self.expect_kind(ModernTokenKind::RightBrace, "expected '}' to close CG")?;
+        cg.span = span_between(&start, &end);
+        Some(cg)
     }
 
     fn parse_scene(&mut self) -> Option<SceneDecl> {
@@ -1621,6 +1752,14 @@ impl Parser {
         } else if self.consume_keyword("end") {
             self.expect_statement_end("expected ';' after end statement")?;
             StatementKind::End
+        } else if self.peek().kind == ModernTokenKind::Identifier
+            && self
+                .peek_next()
+                .is_some_and(|next| next.kind == ModernTokenKind::PathSeparator)
+        {
+            let call = self.parse_plugin_call()?;
+            self.expect_statement_end("expected ';' after the plugin command")?;
+            StatementKind::PluginCall { call }
         } else if self.peek().kind == ModernTokenKind::Identifier {
             self.parse_assignment()?
         } else {
@@ -2419,10 +2558,46 @@ impl Parser {
                 kind: ExpressionKind::Flag(name),
             });
         }
+        if self.peek().kind == ModernTokenKind::Identifier
+            && self
+                .peek_next()
+                .is_some_and(|next| next.kind == ModernTokenKind::PathSeparator)
+        {
+            return self.parse_plugin_call();
+        }
         let (name, token) = self.parse_identifier("expected expression")?;
         Some(Expression {
             span: token.span,
             kind: ExpressionKind::Identifier(name),
+        })
+    }
+
+    /// `namespace::command(arg, …)`.
+    fn parse_plugin_call(&mut self) -> Option<Expression> {
+        let (namespace, start) = self.parse_identifier("expected plugin namespace")?;
+        self.expect_kind(ModernTokenKind::PathSeparator, "expected '::'")?;
+        let (command, _) = self.parse_identifier("expected plugin command name")?;
+        self.expect_kind(
+            ModernTokenKind::LeftParen,
+            "expected '(' after the command name",
+        )?;
+        let mut args = Vec::new();
+        if !self.at_kind(ModernTokenKind::RightParen) {
+            loop {
+                args.push(self.parse_expression(0)?);
+                if self.consume_kind(ModernTokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        let end = self.expect_kind(ModernTokenKind::RightParen, "expected ')' after arguments")?;
+        Some(Expression {
+            span: span_between(&start, &end),
+            kind: ExpressionKind::PluginCall {
+                namespace,
+                command,
+                args,
+            },
         })
     }
 

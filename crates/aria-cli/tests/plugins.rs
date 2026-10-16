@@ -7,6 +7,23 @@ use aria_native::{ReplayRunner, ReplayTape};
 use aria_web::PortableWebRuntime;
 
 const LECTURE: &[u8] = include_bytes!("../../../examples/plugins/lecture/assets/lecture.wasm");
+
+/// Signs the lecture guest and installs it the way a Web page does.
+fn install_lecture(web: &mut PortableWebRuntime) -> Result<(), String> {
+    let secret = [7; 32];
+    let public = aria_protection::PakSigningKey::from_bytes("publisher", secret)
+        .unwrap()
+        .verifying_key_bytes();
+    let package =
+        aria_plugin_host::package::pack(LECTURE, &Default::default(), "publisher", &secret)
+            .unwrap();
+    web.add_plugin_candidate("plugins/org.example.lecture.ariaplugin", package);
+    let manifest = aria_core::project::PluginsManifest {
+        trusted_keys: [("publisher".to_owned(), hex::encode(public))].into(),
+        require: [("org.example.lecture".to_owned(), "^1".to_owned())].into(),
+    };
+    web.install_plugins(&manifest).map(|_| ())
+}
 const SIZE: LogicalSize = LogicalSize {
     width: 1280,
     height: 720,
@@ -97,7 +114,7 @@ fn custom_advance_handles_await_and_reveals_every_atomic_page() {
     ));
     let mut vm = Vm::with_plugins(program.clone(), SIZE, &[plugin]).unwrap();
     let mut web = PortableWebRuntime::new(program, SIZE).unwrap();
-    web.register_plugin(LECTURE).unwrap();
+    install_lecture(&mut web).unwrap();
     let mut output = vm.step(&InputSnapshot::idle(1, 0)).unwrap();
     assert_eq!(
         output.digest(),
@@ -122,7 +139,7 @@ fn independent_rust_guest_has_native_web_replay_and_save_parity() {
     assert_eq!(plugin.manifest.id, "org.example.lecture");
     let mut native = Vm::with_plugins(program(), SIZE, std::slice::from_ref(&plugin)).unwrap();
     let mut web = PortableWebRuntime::new(program(), SIZE).unwrap();
-    web.register_plugin(LECTURE).unwrap();
+    install_lecture(&mut web).unwrap();
     let inputs = vec![
         InputSnapshot::idle(1, 0),
         InputSnapshot::idle(2, 100),
@@ -148,21 +165,24 @@ fn independent_rust_guest_has_native_web_replay_and_save_parity() {
             let mut restored =
                 Vm::with_plugins(program(), SIZE, std::slice::from_ref(&plugin)).unwrap();
             restored.restore(save.clone()).unwrap();
-            assert_eq!(
-                restored.snapshot().plugin_fingerprints,
-                save.plugin_fingerprints
-            );
+            assert_eq!(restored.snapshot().plugins, save.plugins);
             let mut missing = Vm::new(program(), SIZE).unwrap();
             assert!(matches!(
                 missing.restore(save.clone()),
-                Err(VmError::PluginMismatch)
+                Err(VmError::PluginMismatch(_))
             ));
-            let mut changed = plugin.clone();
-            changed.wasm_blake3 = "f".repeat(64);
-            let mut incompatible = Vm::with_plugins(program(), SIZE, &[changed]).unwrap();
+            // A new build of the plugin with the same state version still
+            // opens the save; only a changed state version refuses it.
+            let mut updated = plugin.clone();
+            updated.wasm_blake3 = "f".repeat(64);
+            updated.manifest.version = "1.1.0".into();
+            let mut later = Vm::with_plugins(program(), SIZE, &[updated.clone()]).unwrap();
+            later.restore(save.clone()).unwrap();
+            updated.manifest.state_version += 1;
+            let mut incompatible = Vm::with_plugins(program(), SIZE, &[updated]).unwrap();
             assert!(matches!(
                 incompatible.restore(save),
-                Err(VmError::PluginMismatch)
+                Err(VmError::PluginMismatch(_))
             ));
         }
     }
@@ -177,7 +197,7 @@ fn independent_rust_guest_has_native_web_replay_and_save_parity() {
     assert_eq!(replay, native.snapshot());
     assert_eq!(web.snapshot(), native.snapshot());
     assert!(
-        web.register_plugin(LECTURE)
+        install_lecture(&mut web)
             .unwrap_err()
             .contains("before the first step")
     );
@@ -200,11 +220,31 @@ fn entry_limited_package_keeps_plugins_and_native_cli_mounts_them() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("game");
     fs::create_dir_all(root.join("scripts")).unwrap();
-    fs::create_dir_all(root.join("assets/plugins")).unwrap();
-    fs::write(root.join("assets/plugins/lecture.wasm"), LECTURE).unwrap();
+    fs::create_dir_all(root.join("assets")).unwrap();
+    fs::create_dir_all(root.join("assets/fonts")).unwrap();
+    fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/v3-minimal/assets/fonts/NotoSansJP-Regular.ttf"
+        ),
+        root.join("assets/fonts/NotoSansJP-Regular.ttf"),
+    )
+    .unwrap();
+    let secret = [7; 32];
+    let public = aria_protection::PakSigningKey::from_bytes("publisher", secret)
+        .unwrap()
+        .verifying_key_bytes();
+    fs::create_dir_all(root.join("plugins")).unwrap();
+    fs::write(
+        root.join("plugins/lecture.ariaplugin"),
+        aria_plugin_host::package::pack(LECTURE, &Default::default(), "publisher", &secret)
+            .unwrap(),
+    )
+    .unwrap();
     fs::write(
         root.join("aria.toml"),
-        r#"schema = 5
+        format!(
+            r#"schema = 6
 [game]
 id = "org.example.packaged-plugin"
 version = "1.0.0"
@@ -213,11 +253,16 @@ entry = "scripts/main.aria"
 logical_width = 1280
 logical_height = 720
 asset_roots = ["assets"]
-plugins = ["assets/plugins/lecture.wasm"]
+fonts = ["assets/fonts/NotoSansJP-Regular.ttf"]
 save_namespace = "packaged-plugin"
 [presentation]
 frontend = "ui"
+[plugins]
+trusted_keys = {{ publisher = "{}" }}
+require = {{ "org.example.lecture" = "^1" }}
 "#,
+            hex::encode(public)
+        ),
     )
     .unwrap();
     fs::write(root.join("scripts/main.aria"), "aria; entry start; scene start { screen lecture_slide; narrate \"スライド。\"; wait 900ms; end; }").unwrap();
@@ -238,16 +283,19 @@ frontend = "ui"
     .unwrap();
     let bundle: BundleManifest =
         serde_json::from_slice(&fs::read(out.join("bundle.aria.json")).unwrap()).unwrap();
-    assert_eq!(bundle.schema_version, 6);
-    assert_eq!(bundle.plugin_assets, ["assets/plugins/lecture.wasm"]);
+    assert_eq!(bundle.schema_version, 7);
+    assert_eq!(bundle.plugins.require["org.example.lecture"], "^1");
+    // The plugin ships beside the PAK, not inside it, so it can be replaced.
+    assert!(out.join("plugins/org.example.lecture.ariaplugin").is_file());
     assert!(
         bundle
             .pak_packs
             .iter()
-            .any(|pack| pack.assets.contains(&bundle.plugin_assets[0]))
+            .all(|pack| pack.assets.iter().all(|asset| !asset.ends_with(".wasm")))
     );
     let output = Command::new(env!("CARGO_BIN_EXE_aria"))
         .args(["run", out.to_str().unwrap(), "--headless"])
+        .env("ARIA_SAVE_DIR", temp.path().join("user"))
         .output()
         .unwrap();
     assert!(
@@ -272,6 +320,11 @@ fn plugin_policy_survives_backlog_reconstruction() {
     vm.step(&action(5, &format!("backlog:{page_id}"))).unwrap();
     let resumed = vm.step(&action(6, "confirm.accept")).unwrap();
     assert_eq!(resumed.view.route, UiRoute::Custom("lecture_slide".into()));
+    // The presentation learns which plugin owns the screen, to mount its UI.
+    assert_eq!(
+        resumed.view.route_plugin.as_deref(),
+        Some("org.example.lecture")
+    );
     assert!(resumed.view.dialogue.unwrap().complete);
     assert!(
         resumed
@@ -279,5 +332,26 @@ fn plugin_policy_survives_backlog_reconstruction() {
             .actions
             .iter()
             .any(|action| action.id == "lecture.next")
+    );
+}
+
+#[test]
+fn a_save_from_the_previous_snapshot_schema_still_opens() {
+    let plugin = aria_plugin_host::load_plugin(LECTURE).unwrap();
+    let mut vm = Vm::with_plugins(program(), SIZE, std::slice::from_ref(&plugin)).unwrap();
+    vm.step(&InputSnapshot::idle(1, 0)).unwrap();
+    let mut json = serde_json::to_value(vm.snapshot()).unwrap();
+    json["schema_version"] = 10.into();
+    json.as_object_mut().unwrap().remove("plugins");
+    json["plugin_fingerprints"] = serde_json::json!({ "org.example.lecture": "ab".repeat(32) });
+    let old: aria_core::VmSnapshot = serde_json::from_value(json).unwrap();
+    let mut restored = Vm::with_plugins(program(), SIZE, &[plugin]).unwrap();
+    restored.restore(old).unwrap();
+    assert_eq!(restored.snapshot().schema_version, 11);
+    assert!(
+        restored
+            .snapshot()
+            .plugins
+            .contains_key("org.example.lecture")
     );
 }
