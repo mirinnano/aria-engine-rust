@@ -4,8 +4,11 @@ aria;
 // story exercises only the semantic screen route.
 entry start;
 
+// The launch check needs a player that stays open, so the story waits for
+// the reader instead of ending (a finished story closes the player).
 scene start {
   background asset("#07131f");
-  wait 1ms;
+  narrate "起動の確認。";
+  await advance;
   end;
 }
