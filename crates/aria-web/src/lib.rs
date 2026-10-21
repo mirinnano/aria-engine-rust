@@ -141,10 +141,29 @@ mod wasm_api {
             Ok(Self { inner })
         }
 
-        pub fn register_plugin(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        /// Hands over one fetched `.ariaplugin`; see `install_plugins`.
+        pub fn add_plugin_candidate(&mut self, source: &str, bytes: &[u8]) {
+            self.inner.add_plugin_candidate(source, bytes.to_vec());
+        }
+
+        /// Verifies and installs the candidates against the bundle's
+        /// `plugins` table (its JSON) and returns a JSON report.
+        pub fn install_plugins(&mut self, plugins_json: &str) -> Result<String, JsValue> {
+            let manifest = serde_json::from_str(plugins_json)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            let report = self
+                .inner
+                .install_plugins(&manifest)
+                .map_err(|error| JsValue::from_str(&error))?;
+            serde_json::to_string(&report).map_err(|error| JsValue::from_str(&error.to_string()))
+        }
+
+        /// The `ui.js` bytes an installed plugin ships, or an empty array.
+        pub fn plugin_ui_module(&self, plugin_id: &str) -> Vec<u8> {
             self.inner
-                .register_plugin(bytes)
-                .map_err(|error| JsValue::from_str(&error))
+                .plugin_ui_module(plugin_id)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default()
         }
 
         pub fn step(&mut self, input_json: &str) -> Result<String, JsValue> {

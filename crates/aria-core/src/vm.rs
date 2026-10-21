@@ -19,16 +19,75 @@ use crate::protocol::{
 };
 use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
 
-/// Schema 10 binds the exact registered plugin inventory and stores generic
-/// story-surface timing state. Deterministic subtitle paging, replay targets,
-/// gallery state, and structured confirmation remain persisted. Older saves
-/// are rejected explicitly rather than guessing at a changed route policy.
-pub const VM_SNAPSHOT_SCHEMA: u32 = 10;
+/// Schema 11 records each plugin's id, version, and state version, so a save
+/// survives a plugin update that keeps its state version.
+pub const VM_SNAPSHOT_SCHEMA: u32 = 11;
+/// The previous schema, which `restore` still opens.
+const PLUGIN_HASH_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
 /// Reads every `DeclareChapter` (id, label, numeral, title, date, synopsis,
 /// image) into catalogue entries that start locked.
+/// Reads every `DeclareItem` into collections, in source order.
+fn collection_catalogue(
+    program: &CompiledProgram,
+) -> BTreeMap<String, Vec<crate::presentation::CollectionItemView>> {
+    let mut collections: BTreeMap<String, Vec<_>> = BTreeMap::new();
+    for instruction in &program.instructions {
+        if instruction.op != ByteOp::DeclareItem {
+            continue;
+        }
+        let texts = instruction
+            .operands
+            .iter()
+            .map(|operand| program_string(program, operand))
+            .collect::<Vec<_>>();
+        let (Some(Some(collection)), Some(Some(id))) = (texts.first(), texts.get(1)) else {
+            continue;
+        };
+        let fields = texts[2..]
+            .chunks_exact(2)
+            .filter_map(|pair| Some((pair[0].clone()?, pair[1].clone()?)))
+            .collect();
+        collections.entry(collection.clone()).or_default().push(
+            crate::presentation::CollectionItemView {
+                id: id.clone(),
+                fields,
+            },
+        );
+    }
+    collections
+}
+
+/// Reads every `DeclareCg`: CG id → (title, image).
+fn cg_catalogue(program: &CompiledProgram) -> BTreeMap<String, (Option<String>, Option<String>)> {
+    program
+        .instructions
+        .iter()
+        .filter(|instruction| instruction.op == ByteOp::DeclareCg)
+        .filter_map(|instruction| {
+            let text = |index: usize| {
+                instruction
+                    .operands
+                    .get(index)
+                    .and_then(|operand| program_string(program, operand))
+            };
+            Some((text(0)?, (text(1), text(2))))
+        })
+        .collect()
+}
+
+fn program_string(program: &CompiledProgram, operand: &Operand) -> Option<String> {
+    let Operand::Constant(index) = operand else {
+        return None;
+    };
+    match program.constants.get(usize::try_from(*index).ok()?)? {
+        crate::bytecode::Constant::String(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
 fn chapter_catalogue(program: &CompiledProgram) -> Vec<ChapterView> {
     let text = |operand: Option<&Operand>| match operand {
         Some(Operand::Constant(index)) => usize::try_from(*index)
@@ -97,9 +156,15 @@ const MAX_CALL_DEPTH: usize = 1_024;
 pub struct VmSnapshot {
     pub schema_version: u32,
     pub game_id: String,
-    /// Exact plugin binaries and validated policies required by this save.
+    /// The plugins this save was made with.
     #[serde(default)]
-    pub plugin_fingerprints: BTreeMap<String, String>,
+    pub plugins: BTreeMap<String, crate::plugins::PluginStamp>,
+    /// Each plugin's own saved state, as the plugin last returned it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_state: BTreeMap<String, serde_json::Value>,
+    /// Each plugin's draw layer, as the plugin last returned it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_layers: BTreeMap<String, Vec<crate::plugins::PluginDraw>>,
     pub pc: u32,
     pub frame_number: u64,
     pub logical_time_ms: u64,
@@ -350,6 +415,9 @@ pub enum ExecutionState {
         /// the historical hard-hold behaviour.
         #[serde(default)]
         release_at_remaining_ms: Option<u32>,
+        /// The hold's full length, for presentations that show progress.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_ms: Option<u32>,
     },
     WaitingForChoice,
 }
@@ -509,6 +577,12 @@ pub struct Vm {
     program_digest: String,
     /// Declared chapters in source order, read from the program at load.
     catalogue: Vec<ChapterView>,
+    /// Declared collections and CGs, also read at load and never saved.
+    collections: BTreeMap<String, Vec<crate::presentation::CollectionItemView>>,
+    cgs: BTreeMap<String, (Option<String>, Option<String>)>,
+    /// Runs plugin commands and migrations. Hosts install it with the
+    /// plugins; the Core never holds a Wasm instance itself.
+    executor: Option<std::sync::Arc<dyn crate::plugins::PluginExecutor>>,
 }
 
 impl Vm {
@@ -523,6 +597,8 @@ impl Vm {
         let anchors = crate::resume::AnchorIndex::build(&program);
         let program_digest = crate::resume::program_digest(&program);
         let catalogue = chapter_catalogue(&program);
+        let collections = collection_catalogue(&program);
+        let cgs = cg_catalogue(&program);
         Ok(Self {
             registration_closed: false,
             plugins: PluginRegistry::default(),
@@ -531,7 +607,9 @@ impl Vm {
             state: VmSnapshot {
                 schema_version: VM_SNAPSHOT_SCHEMA,
                 game_id,
-                plugin_fingerprints: BTreeMap::new(),
+                plugins: BTreeMap::new(),
+                plugin_state: BTreeMap::new(),
+                plugin_layers: BTreeMap::new(),
                 pc: 0,
                 frame_number: 0,
                 logical_time_ms: 0,
@@ -589,6 +667,9 @@ impl Vm {
             anchors,
             program_digest,
             catalogue,
+            collections,
+            cgs,
+            executor: None,
         })
     }
 
@@ -603,8 +684,35 @@ impl Vm {
         self.plugins
             .register(plugin)
             .map_err(|error| VmError::InvalidPlugin(error.to_string()))?;
-        self.state.plugin_fingerprints = self.plugins.fingerprints().clone();
+        self.state.plugins = self.plugins.stamps().clone();
         Ok(())
+    }
+
+    /// Installs what runs plugin calls. Like plugins, only before the first
+    /// step: replay and saves depend on the same calls giving the same answers.
+    pub fn set_plugin_executor(
+        &mut self,
+        executor: std::sync::Arc<dyn crate::plugins::PluginExecutor>,
+    ) -> Result<(), VmError> {
+        if self.registration_closed || self.state.frame_number != 0 || self.state.pc != 0 {
+            return Err(VmError::InvalidPlugin(
+                "the plugin executor must be installed before the first step".into(),
+            ));
+        }
+        self.executor = Some(executor);
+        Ok(())
+    }
+
+    pub fn with_plugin_set(
+        program: CompiledProgram,
+        logical_size: LogicalSize,
+        plugins: &crate::plugins::PluginSet,
+    ) -> Result<Self, VmError> {
+        let mut vm = Self::with_plugins(program, logical_size, &plugins.registrations)?;
+        if let Some(executor) = &plugins.executor {
+            vm.set_plugin_executor(executor.clone())?;
+        }
+        Ok(vm)
     }
 
     pub fn with_plugins(
@@ -695,12 +803,37 @@ impl Vm {
     }
 
     pub fn restore(&mut self, mut snapshot: VmSnapshot) -> Result<(), VmError> {
+        // Schema 10 differs only in how it named the plugins it was made
+        // with (by binary hash, a field that no longer deserializes). It
+        // carries no plugin state, so it opens with the plugins installed now.
+        if snapshot.schema_version == PLUGIN_HASH_SNAPSHOT_SCHEMA {
+            snapshot.schema_version = VM_SNAPSHOT_SCHEMA;
+            snapshot.plugins.clear();
+        }
         if snapshot.schema_version != VM_SNAPSHOT_SCHEMA {
             return Err(VmError::UnsupportedSnapshot(snapshot.schema_version));
         }
-        if snapshot.plugin_fingerprints != *self.plugins.fingerprints() {
-            return Err(VmError::PluginMismatch);
+        let migrations = self
+            .plugins
+            .plan_restore(&snapshot.plugins)
+            .map_err(VmError::PluginMismatch)?;
+        for (plugin_id, from) in migrations {
+            let state = snapshot
+                .plugin_state
+                .remove(&plugin_id)
+                .unwrap_or(serde_json::Value::Null);
+            let response = self
+                .call_plugin(
+                    &plugin_id,
+                    &crate::plugins::PluginRequest::Migrate { from, state },
+                )
+                .map_err(VmError::PluginMismatch)?;
+            if let Some(state) = response.state {
+                snapshot.plugin_state.insert(plugin_id, state);
+            }
         }
+        // From here on the save belongs to the plugins running now.
+        snapshot.plugins = self.plugins.stamps().clone();
         if snapshot.game_id != self.program.game_id {
             return Err(VmError::WrongGame {
                 expected: self.program.game_id.clone(),
@@ -1056,6 +1189,7 @@ impl Vm {
             ExecutionState::WaitingForDelay {
                 remaining_ms,
                 release_at_remaining_ms,
+                total_ms,
             } => {
                 let mut remaining = remaining_ms.saturating_sub(input.delta_ms);
                 let policy = self.plugins.policy(&self.state.ui.route);
@@ -1082,6 +1216,7 @@ impl Vm {
                     self.state.execution = ExecutionState::WaitingForDelay {
                         remaining_ms: remaining,
                         release_at_remaining_ms,
+                        total_ms,
                     };
                 }
             }
@@ -1224,6 +1359,7 @@ impl Vm {
             if let ExecutionState::WaitingForDelay {
                 remaining_ms,
                 release_at_remaining_ms,
+                ..
             } = self.state.execution
             {
                 // Buttons, terminals, keyboards and controllers share the
@@ -1600,7 +1736,8 @@ impl Vm {
 
         let mut replay = Vm::new(self.program.clone(), self.logical_size)?;
         replay.plugins = self.plugins.clone();
-        replay.state.plugin_fingerprints = self.state.plugin_fingerprints.clone();
+        replay.executor = self.executor.clone();
+        replay.state.plugins = self.state.plugins.clone();
         replay.suppress_backlog_recording = true;
         replay.state.ui.viewport = viewport;
         replay.state.settings = settings.clone();
@@ -2122,9 +2259,384 @@ impl Vm {
         }
     }
 
+    fn call_plugin(
+        &self,
+        plugin_id: &str,
+        request: &crate::plugins::PluginRequest,
+    ) -> Result<crate::plugins::PluginResponse, String> {
+        self.executor
+            .as_ref()
+            .ok_or_else(|| format!("plugin '{plugin_id}' needs a plugin executor"))?
+            .call(plugin_id, request)
+    }
+
+    /// `ns::command(args)`: sends the arguments, the plugin's state, and (with
+    /// the `state` capability) the story state; applies what comes back.
+    fn execute_plugin_call(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
+        use crate::plugins::{PluginRequest, PluginValue, ValueType};
+        let plugin_id = self.string(self.operand(instruction, 0)?)?;
+        let command = self.string(self.operand(instruction, 1)?)?;
+        let fail =
+            |message: String| VmError::PluginCall(format!("{plugin_id}::{command}: {message}"));
+        let declaration = self
+            .plugins
+            .command(&plugin_id, &command)
+            .cloned()
+            .ok_or_else(|| fail("the installed plugin has no such command".into()))?;
+        let arguments = &instruction.operands[3..];
+        if arguments.len() != declaration.params.len() {
+            return Err(fail(format!(
+                "the plugin expects {} argument(s), the script passes {}",
+                declaration.params.len(),
+                arguments.len()
+            )));
+        }
+        let mut args = Vec::with_capacity(arguments.len());
+        for (operand, ty) in arguments.iter().zip(&declaration.params) {
+            args.push(match ty {
+                ValueType::Int => PluginValue::Int(self.integer(operand)?),
+                ValueType::Bool => PluginValue::Bool(self.boolean(operand)?),
+                ValueType::String => PluginValue::String(self.string(operand)?),
+            });
+        }
+        let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+        let request = PluginRequest::Command {
+            command: command.clone(),
+            args,
+            state,
+            story,
+        };
+        let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+        // Check everything before changing anything, so a bad response
+        // leaves the VM exactly as it was.
+        self.check_response(&plugin_id, can_touch_story, &response)
+            .map_err(fail)?;
+        let target = &instruction.operands[2];
+        let result = match (&declaration.returns, response.result) {
+            (None, None) => None,
+            (Some(ty), Some(value)) if value.value_type() == *ty => Some(value),
+            (Some(ValueType::Int), Some(PluginValue::Bool(value))) => {
+                Some(PluginValue::Int(i64::from(value)))
+            }
+            (expected, actual) => {
+                return Err(fail(format!(
+                    "the plugin returned {:?} where {:?} was declared",
+                    actual.map(|value| value.value_type()),
+                    expected
+                )));
+            }
+        };
+        match (result, target) {
+            (None, _) => {}
+            (Some(PluginValue::Int(value)), Operand::IntRegister(name)) => {
+                self.state.int_registers.insert(name.clone(), value);
+            }
+            (Some(PluginValue::Bool(value)), Operand::IntRegister(name)) => {
+                self.state
+                    .int_registers
+                    .insert(name.clone(), i64::from(value));
+            }
+            (Some(PluginValue::String(value)), Operand::StringRegister(name)) => {
+                self.state.string_registers.insert(name.clone(), value);
+            }
+            (Some(_), Operand::Integer(0)) => {}
+            _ => return Err(fail("the result does not fit its target".into())),
+        }
+        self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
+        Ok(())
+    }
+
+    /// What every request to `plugin_id` carries: its saved state, the story
+    /// state when it may see it, and whether it may change the story.
+    fn plugin_context(
+        &self,
+        plugin_id: &str,
+    ) -> (serde_json::Value, crate::plugins::StoryState, bool) {
+        let can_touch_story = self.plugins.manifest(plugin_id).is_some_and(|manifest| {
+            manifest
+                .capabilities
+                .contains(&crate::plugins::Capability::State)
+        });
+        let story = if can_touch_story {
+            self.story_state()
+        } else {
+            crate::plugins::StoryState::default()
+        };
+        let state = self
+            .state
+            .plugin_state
+            .get(plugin_id)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        (state, story, can_touch_story)
+    }
+
+    /// Rejects story changes a plugin may not make: any change without the
+    /// `state` capability, or a variable the script does not declare with
+    /// that type.
+    fn check_story_changes(
+        &self,
+        can_touch_story: bool,
+        story: &crate::plugins::StoryState,
+    ) -> Result<(), String> {
+        use crate::plugins::PluginValue;
+        if story.vars.is_empty() && story.flags.is_empty() {
+            return Ok(());
+        }
+        if !can_touch_story {
+            return Err("changing story state requires the state capability".into());
+        }
+        for (name, value) in &story.vars {
+            let key = format!("state:{name}");
+            let fits = match value {
+                PluginValue::Int(_) | PluginValue::Bool(_) => {
+                    self.state.int_registers.contains_key(&key)
+                }
+                PluginValue::String(_) => self.state.string_registers.contains_key(&key),
+            };
+            if !fits {
+                return Err(format!(
+                    "story variable '{name}' does not exist with that type"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks a whole response before any of it is applied.
+    fn check_response(
+        &self,
+        plugin_id: &str,
+        can_touch_story: bool,
+        response: &crate::plugins::PluginResponse,
+    ) -> Result<(), String> {
+        self.check_story_changes(can_touch_story, &response.story)?;
+        let Some(draw) = &response.draw else {
+            return Ok(());
+        };
+        let can_render = self.plugins.manifest(plugin_id).is_some_and(|manifest| {
+            manifest
+                .capabilities
+                .contains(&crate::plugins::Capability::Render)
+        });
+        if !can_render {
+            return Err("drawing requires the render capability".into());
+        }
+        if draw.len() > crate::plugins::MAX_DRAW_COMMANDS {
+            return Err("a draw layer holds at most 256 primitives".into());
+        }
+        for primitive in draw {
+            use crate::plugins::PluginDraw;
+            let color = match primitive {
+                PluginDraw::Rect { color, .. } | PluginDraw::Text { color, .. } => Some(color),
+                PluginDraw::Image { .. } => None,
+            };
+            if let Some(color) = color
+                && parse_color(color).is_none()
+            {
+                return Err(format!("'{color}' is not a #rrggbb or #rrggbbaa color"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies checked story changes, the plugin's new state, and its layer.
+    fn commit_plugin_changes(
+        &mut self,
+        plugin_id: &str,
+        story: crate::plugins::StoryState,
+        state: Option<serde_json::Value>,
+        draw: Option<Vec<crate::plugins::PluginDraw>>,
+    ) {
+        match draw {
+            Some(draw) if draw.is_empty() => {
+                self.state.plugin_layers.remove(plugin_id);
+            }
+            Some(draw) => {
+                self.state.plugin_layers.insert(plugin_id.to_owned(), draw);
+            }
+            None => {}
+        }
+        use crate::plugins::PluginValue;
+        for (name, value) in story.vars {
+            let key = format!("state:{name}");
+            match value {
+                PluginValue::Int(value) => {
+                    self.state.int_registers.insert(key, value);
+                }
+                PluginValue::Bool(value) => {
+                    self.state.int_registers.insert(key, i64::from(value));
+                }
+                PluginValue::String(value) => {
+                    self.state.string_registers.insert(key, value);
+                }
+            }
+        }
+        for (name, value) in story.flags {
+            self.state.flags.insert(name, value);
+        }
+        if let Some(state) = state {
+            self.state.plugin_state.insert(plugin_id.to_owned(), state);
+        }
+    }
+
+    /// The plugins that intervene in `event`, in plugin-id order.
+    fn hooked_plugins(&self, event: crate::plugins::HookEvent) -> Vec<String> {
+        self.plugins.hooked(event)
+    }
+
+    /// The scene the instruction at `pc` belongs to.
+    fn current_scene(&self) -> String {
+        self.anchors
+            .at_or_before(self.state.pc)
+            .map(|anchor| anchor.scene.clone())
+            .unwrap_or_default()
+    }
+
+    /// Runs every `text` hook over a line about to be shown.
+    fn apply_text_hooks(
+        &mut self,
+        speaker: Option<String>,
+        text: String,
+    ) -> Result<(Option<String>, String), VmError> {
+        let (mut speaker, mut text) = (speaker, text);
+        for plugin_id in self.hooked_plugins(crate::plugins::HookEvent::Text) {
+            let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+            let request = crate::plugins::PluginRequest::Text {
+                scene: self.current_scene(),
+                speaker: speaker.clone(),
+                text: text.clone(),
+                state,
+                story,
+            };
+            let fail =
+                |message: String| VmError::PluginCall(format!("{plugin_id} text hook: {message}"));
+            let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+            self.check_response(&plugin_id, can_touch_story, &response)
+                .map_err(fail)?;
+            if let Some(edit) = response.text {
+                speaker = edit.speaker;
+                text = edit.text;
+            }
+            self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
+        }
+        Ok((speaker, text))
+    }
+
+    /// Runs every `choices` hook over options about to be offered.
+    fn apply_choice_hooks(
+        &mut self,
+        mut options: Vec<ChoiceOptionState>,
+    ) -> Result<Vec<ChoiceOptionState>, VmError> {
+        for plugin_id in self.hooked_plugins(crate::plugins::HookEvent::Choices) {
+            let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+            let request = crate::plugins::PluginRequest::Choices {
+                scene: self.current_scene(),
+                options: options.iter().map(|option| option.text.clone()).collect(),
+                state,
+                story,
+            };
+            let fail = |message: String| {
+                VmError::PluginCall(format!("{plugin_id} choices hook: {message}"))
+            };
+            let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+            self.check_response(&plugin_id, can_touch_story, &response)
+                .map_err(fail)?;
+            if let Some(edits) = response.choices {
+                let mut edited = Vec::with_capacity(edits.len());
+                for edit in edits {
+                    let option = match (edit.from, edit.scene) {
+                        (Some(index), None) => {
+                            let mut option = options
+                                .get(index as usize)
+                                .cloned()
+                                .ok_or_else(|| fail(format!("there is no option {index}")))?;
+                            if let Some(label) = edit.label {
+                                option.text = label;
+                            }
+                            option
+                        }
+                        (None, Some(scene)) => ChoiceOptionState {
+                            text: edit
+                                .label
+                                .ok_or_else(|| fail("an added option needs a label".into()))?,
+                            target: self
+                                .anchors
+                                .scene_start(&scene)
+                                .ok_or_else(|| fail(format!("there is no scene '{scene}'")))?,
+                            chapter: None,
+                        },
+                        _ => {
+                            return Err(fail(
+                                "an option keeps `from` or adds a `scene`, not both".into(),
+                            ));
+                        }
+                    };
+                    edited.push(option);
+                }
+                if edited.is_empty() {
+                    return Err(fail("a choice needs at least one option".into()));
+                }
+                options = edited;
+            }
+            self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
+        }
+        Ok(options)
+    }
+
+    /// Runs every `scene_enter` hook when the story reaches a scene's start.
+    fn apply_scene_enter_hooks(&mut self, scene: &str) -> Result<(), VmError> {
+        for plugin_id in self.hooked_plugins(crate::plugins::HookEvent::SceneEnter) {
+            let (state, story, can_touch_story) = self.plugin_context(&plugin_id);
+            let request = crate::plugins::PluginRequest::SceneEnter {
+                scene: scene.to_owned(),
+                state,
+                story,
+            };
+            let fail = |message: String| {
+                VmError::PluginCall(format!("{plugin_id} scene_enter hook: {message}"))
+            };
+            let response = self.call_plugin(&plugin_id, &request).map_err(fail)?;
+            self.check_response(&plugin_id, can_touch_story, &response)
+                .map_err(fail)?;
+            self.commit_plugin_changes(&plugin_id, response.story, response.state, response.draw);
+        }
+        Ok(())
+    }
+
+    /// The script's `state` variables and session flags, as plugins see them.
+    fn story_state(&self) -> crate::plugins::StoryState {
+        use crate::plugins::PluginValue;
+        let mut vars = BTreeMap::new();
+        for (key, value) in &self.state.int_registers {
+            if let Some(name) = key.strip_prefix("state:") {
+                vars.insert(name.to_owned(), PluginValue::Int(*value));
+            }
+        }
+        for (key, value) in &self.state.string_registers {
+            if let Some(name) = key.strip_prefix("state:") {
+                vars.insert(name.to_owned(), PluginValue::String(value.clone()));
+            }
+        }
+        crate::plugins::StoryState {
+            vars,
+            flags: self.state.flags.clone(),
+        }
+    }
+
     fn execute(&mut self, instruction: &EncodedInstruction) -> Result<(), VmError> {
         match instruction.op {
-            ByteOp::Nop => {}
+            ByteOp::Nop => {
+                if let Some(scene) = instruction
+                    .operands
+                    .first()
+                    .and_then(|operand| self.string(operand).ok())
+                    .and_then(|anchor| anchor.strip_prefix("scene:").map(str::to_owned))
+                {
+                    self.apply_scene_enter_hooks(&scene)?;
+                }
+            }
+            ByteOp::CallPlugin => self.execute_plugin_call(instruction)?,
             ByteOp::Text => {
                 let speaker = match instruction.operands.first() {
                     Some(Operand::None) | None => None,
@@ -2132,6 +2644,10 @@ impl Vm {
                 };
                 let authored =
                     self.fill_interpolations(&self.string(self.operand(instruction, 1)?)?);
+                // Hooks see and replace the filled-in line. The line key below
+                // still names the authored line, so read state and resume
+                // anchors do not move when a plugin rewrites the text.
+                let (speaker, authored) = self.apply_text_hooks(speaker, authored)?;
                 // The compiler has validated the markup; an unparsable string
                 // from older bytecode is shown exactly as written.
                 let (text, markup) = match crate::markup::parse(&authored) {
@@ -2202,6 +2718,7 @@ impl Vm {
                         remaining_ms: duration,
                         release_at_remaining_ms: release_after_ms
                             .map(|floor| duration.saturating_sub(floor)),
+                        total_ms: Some(duration),
                     };
                 }
             }
@@ -2295,7 +2812,7 @@ impl Vm {
             ByteOp::PresentChoice => self.execute_choice(instruction, 2)?,
             ByteOp::PresentChoiceEx => self.execute_choice(instruction, 4)?,
             // Chapter metadata is read from the program at load.
-            ByteOp::DeclareChapter => {}
+            ByteOp::DeclareChapter | ByteOp::DeclareItem | ByteOp::DeclareCg => {}
             ByteOp::PlayAudio => self.execute_audio_play(instruction)?,
             ByteOp::StopAudio => self.execute_audio_stop(instruction)?,
             ByteOp::SetVolume => self.execute_volume(instruction)?,
@@ -2623,6 +3140,7 @@ impl Vm {
                 chapter,
             });
         }
+        let options = self.apply_choice_hooks(options)?;
         self.state.choice = Some(ChoiceState {
             options,
             focused: 0,
@@ -2964,15 +3482,99 @@ impl Vm {
             transition,
             effects,
         };
+        frame.commands.extend(self.plugin_layer_commands());
         frame.sort_commands();
         frame
     }
 
+    /// Plugin draw layers as draw commands. Depth is clamped so a plugin
+    /// stays above the background and below the system's own overlays.
+    fn plugin_layer_commands(&self) -> Vec<DrawCommand> {
+        use crate::plugins::PluginDraw;
+        let mut commands = Vec::new();
+        for (plugin_id, layer) in &self.state.plugin_layers {
+            for (index, primitive) in layer.iter().enumerate() {
+                let id = format!("plugin:{plugin_id}:{index}");
+                let bounds = |x: f32, y: f32, width: f32, height: f32| Rect {
+                    x,
+                    y,
+                    width: width.max(0.0),
+                    height: height.max(0.0),
+                };
+                commands.push(match primitive {
+                    PluginDraw::Rect {
+                        x,
+                        y,
+                        width,
+                        height,
+                        color,
+                        corner_radius,
+                        z,
+                    } => DrawCommand::Rectangle {
+                        id,
+                        bounds: bounds(*x, *y, *width, *height),
+                        color: parse_color(color).unwrap_or(Color::BLACK),
+                        corner_radius: corner_radius.max(0.0),
+                        z: (*z).clamp(-9_000, 9_000),
+                        style: DrawStyle::default(),
+                    },
+                    PluginDraw::Image {
+                        asset,
+                        x,
+                        y,
+                        width,
+                        height,
+                        opacity,
+                        z,
+                    } => DrawCommand::Sprite {
+                        id,
+                        asset: asset.clone(),
+                        destination: bounds(*x, *y, *width, *height),
+                        opacity: *opacity,
+                        z: (*z).clamp(-9_000, 9_000),
+                        visible: true,
+                        blend: BlendMode::Alpha,
+                        mask: None,
+                        scale: 1.0,
+                        rotation_degrees: 0.0,
+                        tint: Color::WHITE,
+                        fit: SpriteFit::default(),
+                        style: DrawStyle::default(),
+                    },
+                    PluginDraw::Text {
+                        text,
+                        x,
+                        y,
+                        width,
+                        height,
+                        font_size,
+                        color,
+                        z,
+                    } => DrawCommand::Text {
+                        id,
+                        text: text.clone(),
+                        speaker: None,
+                        bounds: bounds(*x, *y, *width, *height),
+                        color: parse_color(color).unwrap_or(Color::WHITE),
+                        font_size: font_size.clamp(1.0, 512.0),
+                        z: (*z).clamp(-9_000, 9_000),
+                        style: DrawStyle::default(),
+                    },
+                });
+            }
+        }
+        commands
+    }
+
     fn build_view_model(&self) -> UiViewModel {
         let route = UiRoute::parse(&self.state.ui.route);
-        let timed_hold_remaining_ms = match &self.state.execution {
-            ExecutionState::WaitingForDelay { remaining_ms, .. } => Some(*remaining_ms),
-            _ => None,
+        let (timed_hold_remaining_ms, timed_hold_total_ms) = match &self.state.execution {
+            ExecutionState::WaitingForDelay {
+                remaining_ms,
+                total_ms,
+                ..
+            } => (Some(*remaining_ms), *total_ms),
+            _ => (None, None),
         };
         let dialogue_pages = self.subtitle_pages();
         let dialogue_page_index = self
@@ -3095,10 +3697,15 @@ impl Vm {
             .state
             .unlocked_cgs
             .iter()
-            .map(|id| GalleryItemView {
-                id: id.clone(),
-                unlocked: true,
-                selected: self.state.ui.gallery_viewer.as_deref() == Some(id.as_str()),
+            .map(|id| {
+                let (title, image) = self.cgs.get(id).cloned().unwrap_or_default();
+                GalleryItemView {
+                    id: id.clone(),
+                    unlocked: true,
+                    selected: self.state.ui.gallery_viewer.as_deref() == Some(id.as_str()),
+                    title,
+                    image,
+                }
             })
             .collect();
         UiViewModel {
@@ -3119,6 +3726,12 @@ impl Vm {
             camera: self.state.camera.clone(),
             dialogue,
             timed_hold_remaining_ms,
+            timed_hold_total_ms,
+            route_plugin: self
+                .plugins
+                .route_owner(&self.state.ui.route)
+                .map(str::to_owned),
+            collections: self.collections.clone(),
             choices,
             actions: self.presentation_actions(&route),
             settings: self.state.settings.clone(),
@@ -3565,8 +4178,10 @@ pub enum VmError {
     InvalidUiIntent(String),
     #[error("invalid plugin: {0}")]
     InvalidPlugin(String),
-    #[error("save requires a different plugin set; install the exact plugins used to create it")]
-    PluginMismatch,
+    #[error("save cannot be opened with the installed plugins: {0}")]
+    PluginMismatch(String),
+    #[error("plugin call failed: {0}")]
+    PluginCall(String),
     #[error("unsupported VM snapshot schema {0}")]
     UnsupportedSnapshot(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
@@ -3641,9 +4256,11 @@ mod tests {
             runtime
                 .register_plugin(PluginRegistration {
                     manifest: crate::PluginManifest {
-                        api_version: 1,
+                        api_version: 2,
                         id: "test.story".into(),
-                        version: "1".into(),
+                        version: "1.0.0".into(),
+                        state_version: 1,
+                        capabilities: [crate::plugins::Capability::Routes].into(),
                         routes: vec![
                             crate::RoutePolicy::reading("day_card"),
                             crate::RoutePolicy {
@@ -3663,6 +4280,10 @@ mod tests {
                                 ..crate::RoutePolicy::reading("statement")
                             },
                         ],
+                        namespace: None,
+                        commands: Vec::new(),
+                        migrates_from: None,
+                        hooks: Default::default(),
                     },
                     wasm_blake3: "0".repeat(64),
                 })
@@ -3674,7 +4295,8 @@ mod tests {
     fn fresh_vm_with_same_plugins(runtime: &Vm) -> Vm {
         let mut fresh = Vm::new(runtime.program.clone(), SIZE).unwrap();
         fresh.plugins = runtime.plugins.clone();
-        fresh.state.plugin_fingerprints = runtime.state.plugin_fingerprints.clone();
+        fresh.executor = runtime.executor.clone();
+        fresh.state.plugins = runtime.state.plugins.clone();
         fresh
     }
 

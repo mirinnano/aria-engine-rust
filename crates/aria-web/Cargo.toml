@@ -16,6 +16,7 @@ aria-plugin-host.workspace = true
 aria-protection.workspace = true
 aria-render.workspace = true
 hex.workspace = true
+semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

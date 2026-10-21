@@ -209,6 +209,22 @@ async function registerServiceWorker() {
   });
 }
 
+async function fetchPluginFiles() {
+  const response = await fetch("./plugins/index.json");
+  if (response.status === 404) return [];
+  if (!response.ok) throw new Error(`plugins/index.json: HTTP ${response.status}`);
+  const names = await response.json();
+  if (!Array.isArray(names) || names.length > 16
+    || names.some((name) => typeof name !== "string" || !/^[a-z0-9._-]+\.ariaplugin$/.test(name))) {
+    throw new Error("plugins/index.json is not a list of .ariaplugin file names");
+  }
+  return Promise.all(names.map(async (name) => {
+    const file = await fetch(`./plugins/${name}`);
+    if (!file.ok) throw new Error(`plugins/${name}: HTTP ${file.status}`);
+    return [`plugins/${name}`, new Uint8Array(await file.arrayBuffer())];
+  }));
+}
+
 async function loadBundledFonts(fontAssets, readAsset) {
   if (!Array.isArray(fontAssets)) {
     throw new Error("bundle.aria.json font_assets must be an array");
@@ -254,8 +270,7 @@ async function boot() {
   }
   if (!bytecodeResponse.ok) throw new Error(`game.ariac: HTTP ${bytecodeResponse.status}`);
   const bundle = await bundleResponse.json();
-  if (![5, 6].includes(bundle.schema_version) || bundle.vm_abi_version !== 4
-    || (bundle.schema_version === 5 && bundle.plugin_assets?.length)) {
+  if (bundle.schema_version !== 7 || bundle.vm_abi_version !== 5) {
     throw new Error("unsupported Aria portable bundle");
   }
   logicalSize = { width: bundle.logical_width, height: bundle.logical_height };
@@ -314,16 +329,15 @@ async function boot() {
     }
     throw lastError || new Error(`missing asset '${logicalPath}'`);
   };
-  const pluginPaths = bundle.plugin_assets ?? [];
-  if (pluginPaths.length > 16 || new Set(pluginPaths).size !== pluginPaths.length
-    || pluginPaths.some((path) => !path.endsWith(".wasm") || !packs.some((pack) => pack.assets?.includes(path)))) {
-    throw new Error("invalid bundled plugin inventory");
-  }
-  const pluginBytes = pluginPaths.map(readAsset);
+  // Plugins are signed .ariaplugin files beside the bundle, listed in
+  // plugins/index.json because a browser cannot list a folder. The runtime
+  // verifies each one against bundle.plugins before installing it.
+  const plugins = await fetchPluginFiles();
   const createRuntime = () => {
     const instance = new WebRuntime(bytecode, bundle.logical_width, bundle.logical_height);
     try {
-      for (const bytes of pluginBytes) instance.register_plugin(bytes);
+      for (const [source, bytes] of plugins) instance.add_plugin_candidate(source, bytes);
+      instance.install_plugins(JSON.stringify(bundle.plugins ?? {}));
       return instance;
     } catch (error) {
       instance.free?.();

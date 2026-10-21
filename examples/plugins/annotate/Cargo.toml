@@ -1,0 +1,13 @@
+[package]
+name = "aria-annotate-plugin"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aria-plugin-sdk.workspace = true
+serde_json.workspace = true

@@ -105,6 +105,17 @@ impl AnchorIndex {
         Self { anchors }
     }
 
+    /// The address where `scene` starts.
+    #[must_use]
+    pub fn scene_start(&self, scene: &str) -> Option<u32> {
+        self.anchors
+            .iter()
+            .find(|anchor| {
+                anchor.reference.kind == AnchorKind::Scene && anchor.reference.scene == scene
+            })
+            .map(|anchor| anchor.address)
+    }
+
     /// The nearest anchor at or before `address`.
     #[must_use]
     pub fn at_or_before(&self, address: u32) -> Option<&AnchorRef> {

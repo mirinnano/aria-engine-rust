@@ -29,6 +29,8 @@ cbc = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive"] }
 flate2.workspace = true
 fontdb.workspace = true
+hex.workspace = true
+semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true

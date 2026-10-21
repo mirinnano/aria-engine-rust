@@ -1,8 +1,14 @@
-//! The same bounded, import-free Wasm plugin loader on Native and Web.
-//! Guest code runs only at registration. The returned data is validated and
-//! the interpreter is dropped before the deterministic story loop begins.
+//! The same bounded Wasm plugin loader on Native and Web.
+//!
+//! `package` verifies signed `.ariaplugin` files, `select` picks one build
+//! per plugin id from everything a host found, and `load_plugin` runs the
+//! guest's manifest export inside a fuel- and memory-bounded interpreter.
 #![forbid(unsafe_code)]
 #![deny(missing_debug_implementations)]
+
+pub mod executor;
+pub mod package;
+pub mod select;
 
 use aria_plugin_sdk::{MAX_MANIFEST_BYTES, PLUGIN_API_VERSION, PluginManifest, PluginRegistration};
 use thiserror::Error;
@@ -18,7 +24,7 @@ pub enum PluginLoadError {
     TooLarge,
     #[error("plugins may not import host functions, memory, or WASI")]
     Imports,
-    #[error("plugin API version {0} is unsupported (expected 1)")]
+    #[error("plugin API version {0} is unsupported (expected 2)")]
     ApiVersion(u32),
     #[error("plugin manifest exceeds the 64 KiB limit")]
     ManifestSize,
@@ -104,13 +110,23 @@ fn wasm_error(error: impl std::fmt::Display) -> PluginLoadError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A guest that exports `json` as its manifest.
+    pub(crate) fn guest_with_manifest(json: &str) -> Vec<u8> {
+        let escaped = json
+            .bytes()
+            .map(|byte| format!("\\{byte:02x}"))
+            .collect::<String>();
+        guest("i32.const 0", json.len() as u32, "", &escaped)
+    }
+
     fn guest(pointer: &str, length: u32, extra: &str, data: &str) -> Vec<u8> {
         wat::parse_str(format!(
             r#"(module
             (memory (export "memory") 1)
-            (func (export "aria_plugin_api_version") (result i32) i32.const 1)
+            (func (export "aria_plugin_api_version") (result i32) i32.const 2)
             (func (export "aria_plugin_manifest_ptr") (result i32) {pointer})
             (func (export "aria_plugin_manifest_len") (result i32) i32.const {length})
             {extra} (data (i32.const 0) "{data}"))"#
@@ -119,13 +135,8 @@ mod tests {
     }
     #[test]
     fn validates_contract_and_binds_it_to_guest_bytes() {
-        let json =
-            r#"{"api_version":1,"id":"test.lecture","version":"1","routes":[{"route":"lecture"}]}"#;
-        let escaped = json
-            .bytes()
-            .map(|byte| format!("\\{byte:02x}"))
-            .collect::<String>();
-        let bytes = guest("i32.const 0", json.len() as u32, "", &escaped);
+        let json = r#"{"api_version":2,"id":"test.lecture","version":"1.0.0","capabilities":["routes"],"routes":[{"route":"lecture"}]}"#;
+        let bytes = guest_with_manifest(json);
         let registration = load_plugin(&bytes).unwrap();
         assert_eq!(registration.manifest.routes[0].route, "lecture");
         assert_eq!(

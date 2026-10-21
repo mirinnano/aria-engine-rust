@@ -10,6 +10,8 @@ members = [
     "crates/aria-plugin-sdk",
     "crates/aria-plugin-host",
     "examples/plugins/lecture",
+    "examples/plugins/tally",
+    "examples/plugins/annotate",
 ]
 
 [workspace.package]
@@ -54,6 +56,7 @@ image = { version = "=0.25.8", default-features = false, features = ["bmp", "gif
 kira = "=0.12.2"
 pollster = "=0.4.0"
 resvg = { version = "=0.47.0", default-features = false }
+semver = "=1.0.28"
 serde = "=1.0.228"
 serde_json = "=1.0.150"
 sha2 = "=0.10.9"

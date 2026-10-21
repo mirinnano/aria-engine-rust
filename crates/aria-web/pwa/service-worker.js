@@ -25,10 +25,30 @@ self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
+// Plugins can be replaced on the server without rebuilding the game, so
+// they are fetched from the network first and served from the cache only
+// when offline. The runtime verifies every file's signature either way.
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) (await caches.open(CACHE)).put(request, response.clone());
+    return response;
+  } catch (error) {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    throw error;
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  const scope = new URL(self.registration.scope);
+  if (url.pathname.startsWith(`${scope.pathname}plugins/`)) {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then(async (cached) => {
       if (cached) return cached;
