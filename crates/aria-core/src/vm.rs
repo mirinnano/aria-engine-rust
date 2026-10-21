@@ -1202,10 +1202,11 @@ impl Vm {
                 // without knowing any particular game's custom route names.
                 let advance_releases_hold =
                     self.can_release_delay_by_advance(remaining, release_at_remaining_ms);
+                // A skip turned on from the menu passes authored holds the
+                // same way a held Skip key does.
                 if remaining == 0
                     || input.is_held(InputAction::Skip)
-                    || (policy.is_some_and(|policy| policy.skip_releases_hold)
-                        && self.state.skip_mode != SkipMode::Off)
+                    || self.state.skip_mode != SkipMode::Off
                     || (advance_releases_hold
                         && (input.is_pressed(InputAction::Advance)
                             || input.is_pressed(InputAction::Confirm)
@@ -1221,14 +1222,28 @@ impl Vm {
                 }
             }
             ExecutionState::WaitingForAdvance { .. } => {
-                self.state.auto_elapsed_ms =
-                    self.state.auto_elapsed_ms.saturating_add(input.delta_ms);
+                // Auto waits for the reader after the whole page is shown,
+                // not from the first grapheme: counting during the reveal cut
+                // long lines short and then advanced on the very next frame.
+                let page_complete =
+                    self.state.text.visible_graphemes >= self.current_page_grapheme_count();
+                self.state.auto_elapsed_ms = if page_complete {
+                    self.state.auto_elapsed_ms.saturating_add(input.delta_ms)
+                } else {
+                    0
+                };
+                // Read-only skip ends at the first unread line, as a reader
+                // expects, instead of staying on while nothing moves.
+                if self.state.skip_mode == SkipMode::Read && !self.skip_current_line() {
+                    self.state.skip_mode = SkipMode::Off;
+                }
                 let activated = input.is_pressed(InputAction::Advance)
                     || input.is_pressed(InputAction::Confirm)
                     || input.pointer.is_some_and(|pointer| pointer.primary_pressed)
                     || input.is_held(InputAction::Skip)
                     || self.skip_current_line()
                     || (self.state.auto_mode == AutoMode::On
+                        && page_complete
                         && self.state.auto_elapsed_ms >= self.state.auto_delay_ms);
                 if activated {
                     self.advance_dialogue();
