@@ -2,7 +2,7 @@ name: Engine nightly
 
 # The engine is MIT-licensed and contains no game data, so the latest main
 # build of the `aria` CLI (with its native Player) is published publicly on
-# one rolling pre-release. Game builds are handled by umikaze-release.yml.
+# one rolling pre-release.
 on:
   push:
     branches: [main]

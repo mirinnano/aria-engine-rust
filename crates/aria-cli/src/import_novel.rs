@@ -6,7 +6,7 @@
 //! narrowly defined non-verbal presentation profile, but the source text
 //! remains the authority and the result stays deterministic and reviewable.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use aria_core::modern::{Statement, StatementKind, parse as parse_modern};
 use atomic_write_file::AtomicWriteFile;
-use clap::ValueEnum;
 use serde::Serialize;
 
 const BACKGROUND_TONES: [&str; 9] = [
@@ -29,26 +28,6 @@ const BACKGROUND_TONES: [&str; 9] = [
     "#6d6b57", // autumn
 ];
 
-/// The generated source can either be a neutral prose library or use the
-/// deliberately restrained presentation rules owned by the Umikaze sample.
-///
-/// `Umikaze` is intentionally opt-in: the generic importer must never add
-/// project-specific narration or presentation to another game's manuscript.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
-pub enum NovelPresentation {
-    Plain,
-    Umikaze,
-}
-
-/// The default output is one importable Aria library. Project-owned profiles
-/// can also preserve a manuscript's chapter file layout instead of flattening
-/// it into one generated source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
-pub enum NovelImportLayout {
-    Single,
-    Chapters,
-}
-
 /// Arguments shared by the programmatic and command-line import paths.
 /// Keeping them as data makes a generated scenario reproducible in tests and
 /// lets a project explicitly constrain the source files it accepts.
@@ -59,8 +38,9 @@ pub struct NovelImportOptions {
     /// Exact Markdown file names, in source-directory order. An empty list
     /// imports every Markdown chapter in the source directory.
     pub include: Vec<String>,
-    pub presentation: NovelPresentation,
-    pub layout: NovelImportLayout,
+    /// Labels that mark a line such as `名前「…」` as dialogue by that
+    /// speaker. Any other prefix stays part of the narration.
+    pub speakers: Vec<String>,
 }
 
 impl NovelImportOptions {
@@ -69,32 +49,15 @@ impl NovelImportOptions {
             chapter_select: chapter_select.into(),
             locale: locale.into(),
             include: Vec::new(),
-            presentation: NovelPresentation::Plain,
-            layout: NovelImportLayout::Single,
+            speakers: Vec::new(),
         }
     }
 }
-
-// An attribution is metadata only when the author used an explicit character
-// label. Keeping this finite list intentionally conservative prevents prose
-// such as '小さく「…」' or '俺は「…」' from losing its authored prefix.
-const EXPLICIT_SPEAKERS: [&str; 8] = [
-    "俺",
-    "ミオ",
-    "老婆",
-    "フロント",
-    "駅員",
-    "親父",
-    "管理人",
-    "店員",
-];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NovelImportReport {
     pub source_directory: String,
     pub output: String,
-    pub presentation: NovelPresentation,
-    pub layout: NovelImportLayout,
     pub chapters: Vec<NovelChapterReport>,
     /// Player-visible authored text, including authored scene headings.
     pub reading_beats: usize,
@@ -132,14 +95,13 @@ enum NovelBeat {
     /// timer; it is never duplicated as a subtitle.
     Statement {
         text: String,
-        field: StatementField,
+        field: String,
     },
     Heading {
         text: String,
     },
-    /// A blank Markdown paragraph is not discarded in the Umikaze profile.
-    /// It is a short, non-verbal breath after the player has released the
-    /// preceding sentence.  Keeping it as a semantic beat means prose stays
+    /// A blank Markdown paragraph is kept as a short, non-verbal breath after
+    /// the player has released the preceding sentence.  Keeping it as a semantic beat means prose stays
     /// canonical while its written spacing can still shape the reading pace.
     Breath {
         duration_ms: u32,
@@ -157,10 +119,9 @@ struct PlayerText {
     text: String,
 }
 
-/// Legacy authored Markdown occasionally contains a compact staging cue. It
-/// is not prose, so it must not appear in the reader as a literal command.
-/// The Umikaze presentation maps these cues to the equivalent quiet stage
-/// transition while the neutral importer preserves their timing only.
+/// A staging cue written in the Markdown. It is not prose, so it never
+/// appears in the reader as a literal command; the importer keeps only its
+/// timing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NovelDirection {
     FadeOut {
@@ -177,8 +138,6 @@ enum NovelDirection {
     /// field used when a landscape would over-explain a thought.
     AshPause {
         duration_ms: u32,
-        /// `#6d706f` for `pause ash`, `#05070b` for `pause black`.
-        field: &'static str,
     },
     /// A deliberate beat after a reader has released the preceding line.
     /// The source names it either `breath` or `drift`; runtime work is the
@@ -190,91 +149,22 @@ enum NovelDirection {
     /// A location or weather turn with no new prose.  The finite tone list
     /// prevents a manuscript from acquiring arbitrary visual asset paths.
     Backdrop {
-        tone: BackdropTone,
+        tone: String,
     },
 }
 
-/// The central-field colour for an authored statement.  This stays modest on
-/// purpose: a statement is a rare punctuation mark in the story, not a new
-/// title-card system.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StatementField {
-    Ash,
-    Sea,
-    Black,
-}
-
-impl StatementField {
-    fn asset(self) -> &'static str {
-        match self {
-            Self::Ash => "#6d706f",
-            Self::Sea => "#244e5a",
-            Self::Black => "#05070b",
-        }
-    }
-
-    fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "ash" => Some(Self::Ash),
-            "sea" => Some(Self::Sea),
-            "black" => Some(Self::Black),
-            _ => None,
-        }
-    }
-}
-
-/// Named passage backgrounds available to the Umikaze profile.  These are
-/// stable logical assets shared by the Native PAK and the Web presentation;
-/// the manuscript never needs to know a frontend-specific import name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BackdropTone {
-    Ward,
-    Platform,
-    Hotel,
-    Shore,
-    Rail,
-    Rain,
-    City,
-    /// The grey field, held as a place rather than a pause.
-    Ash,
-    Ferry,
-}
-
-impl BackdropTone {
-    fn asset(self) -> &'static str {
-        match self {
-            Self::Ward => "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
-            Self::Platform => "assets/bg/scenes/platform-sea-dawn-v1.webp",
-            Self::Hotel => "assets/bg/scenes/hotel-corridor-blue-v1.webp",
-            Self::Shore => "assets/bg/scenes/shore-storm-sunset-v1.webp",
-            Self::Rail => "assets/bg/scenes/rail-window-sunset-v1.webp",
-            Self::Rain => "assets/bg/scenes/rain-street-evening-v1.webp",
-            Self::City => "assets/bg/scenes/neon-alley-v1.webp",
-            Self::Ash => "#6d706f",
-            Self::Ferry => "assets/bg/scenes/ferry-fog-morning-v1.webp",
-        }
-    }
-
-    fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "ward" => Some(Self::Ward),
-            "platform" => Some(Self::Platform),
-            "hotel" => Some(Self::Hotel),
-            "shore" => Some(Self::Shore),
-            "rail" => Some(Self::Rail),
-            "rain" => Some(Self::Rain),
-            "city" => Some(Self::City),
-            "ash" => Some(Self::Ash),
-            "ferry" => Some(Self::Ferry),
-            _ => None,
-        }
-    }
+/// A directive name such as `rail` in `backdrop rail` or `sea` in
+/// `statement sea`. The importer only checks its spelling; what it looks like
+/// belongs to the project that reads the generated source.
+fn directive_name(value: &str) -> Option<String> {
+    let value = value.trim();
+    is_aria_identifier(value).then(|| value.to_owned())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NovelControl {
     ExplicitPacing,
-    Statement(StatementField),
+    Statement(String),
     Direction(NovelDirection),
 }
 
@@ -321,34 +211,12 @@ pub fn import_novel_with_options(
 ) -> Result<NovelImportReport> {
     let (source_directory, chapters) = load_novel_chapters(source, &options)?;
 
-    match options.layout {
-        NovelImportLayout::Single => {
-            let generated = render_module(
-                &chapters,
-                &options.chapter_select,
-                &options.locale,
-                options.presentation,
-            )?;
-            verify_generated_source(out, &generated)?;
-            write_atomic(out, generated.as_bytes())?;
-        }
-        NovelImportLayout::Chapters => {
-            if options.presentation != NovelPresentation::Umikaze {
-                bail!("the chapter-file layout is currently owned by --presentation umikaze");
-            }
-            let generated =
-                render_umikaze_chapter_layout(&chapters, &options.chapter_select, &options.locale)?;
-            write_chapter_layout(out, &generated)?;
-        }
-    }
+    let generated = render_plain_module(&chapters, &options.chapter_select, &options.locale);
+    verify_generated_source(out, &generated)?;
+    write_atomic(out, generated.as_bytes())?;
 
-    verify_existing_output(out, &chapters, &options)?;
-    Ok(novel_import_report(
-        &source_directory,
-        out,
-        &options,
-        &chapters,
-    ))
+    verify_existing_output(out, &chapters)?;
+    Ok(novel_import_report(&source_directory, out, &chapters))
 }
 
 /// Verifies a previously generated story without writing to it.
@@ -363,13 +231,8 @@ pub fn verify_novel_output(
     options: NovelImportOptions,
 ) -> Result<NovelImportReport> {
     let (source_directory, chapters) = load_novel_chapters(source, &options)?;
-    verify_existing_output(out, &chapters, &options)?;
-    Ok(novel_import_report(
-        &source_directory,
-        out,
-        &options,
-        &chapters,
-    ))
+    verify_existing_output(out, &chapters)?;
+    Ok(novel_import_report(&source_directory, out, &chapters))
 }
 
 fn load_novel_chapters(
@@ -399,7 +262,7 @@ fn load_novel_chapters(
         );
     }
 
-    let chapters = discover_chapters(&source_directory, &options.include)?;
+    let chapters = discover_chapters(&source_directory, &options.include, &options.speakers)?;
     if chapters.is_empty() {
         bail!(
             "no Markdown chapter files found in {}",
@@ -413,7 +276,6 @@ fn load_novel_chapters(
 fn novel_import_report(
     source_directory: &Path,
     out: &Path,
-    options: &NovelImportOptions,
     chapters: &[NovelChapter],
 ) -> NovelImportReport {
     let reading_beats = chapters
@@ -440,8 +302,6 @@ fn novel_import_report(
     NovelImportReport {
         source_directory: source_directory.display().to_string(),
         output: out.display().to_string(),
-        presentation: options.presentation,
-        layout: options.layout,
         chapters: chapters
             .iter()
             .map(|chapter| NovelChapterReport {
@@ -461,7 +321,11 @@ fn novel_import_report(
     }
 }
 
-fn discover_chapters(source_directory: &Path, include: &[String]) -> Result<Vec<NovelChapter>> {
+fn discover_chapters(
+    source_directory: &Path,
+    include: &[String],
+    speakers: &[String],
+) -> Result<Vec<NovelChapter>> {
     let requested = include
         .iter()
         .map(|name| name.trim())
@@ -511,11 +375,11 @@ fn discover_chapters(source_directory: &Path, include: &[String]) -> Result<Vec<
     paths
         .into_iter()
         .enumerate()
-        .map(|(index, source_path)| parse_chapter(index, source_path))
+        .map(|(index, source_path)| parse_chapter(index, source_path, speakers))
         .collect()
 }
 
-fn parse_chapter(index: usize, source_path: PathBuf) -> Result<NovelChapter> {
+fn parse_chapter(index: usize, source_path: PathBuf, speakers: &[String]) -> Result<NovelChapter> {
     let source = fs::read_to_string(&source_path)
         .with_context(|| format!("cannot read authored chapter {}", source_path.display()))?;
     let source_name = source_path
@@ -527,7 +391,7 @@ fn parse_chapter(index: usize, source_path: PathBuf) -> Result<NovelChapter> {
         .file_stem()
         .and_then(|name| name.to_str())
         .context("Markdown chapter stem must be valid UTF-8")?;
-    let beats = parse_beats(&source)?;
+    let beats = parse_beats(&source, speakers)?;
     if !beats.iter().any(is_player_text) {
         bail!(
             "authored chapter has no readable prose: {}",
@@ -544,7 +408,7 @@ fn parse_chapter(index: usize, source_path: PathBuf) -> Result<NovelChapter> {
     })
 }
 
-fn parse_beats(source: &str) -> Result<Vec<NovelBeat>> {
+fn parse_beats(source: &str, speakers: &[String]) -> Result<Vec<NovelBeat>> {
     let mut beats = Vec::new();
     let mut follows_paragraph_gap = false;
     let mut explicit_pacing = false;
@@ -606,7 +470,7 @@ fn parse_beats(source: &str) -> Result<Vec<NovelBeat>> {
         } else if let Some(text) = strip_scene_heading(line) {
             NovelBeat::Heading { text }
         } else {
-            let (speaker, text) = split_attributed_dialogue(line).map_or_else(
+            let (speaker, text) = split_attributed_dialogue(line, speakers).map_or_else(
                 || (None, line.to_owned()),
                 |(speaker, text)| (Some(speaker), text),
             );
@@ -682,12 +546,11 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
             duration_ms,
         })));
     }
-    for (prefix, field) in [("pause ash ", "#6d706f"), ("pause black ", "#05070b")] {
+    for prefix in ["pause ash ", "pause black "] {
         if let Some(milliseconds) = normalized.strip_prefix(prefix) {
             let duration_ms = parse_control_duration(prefix.trim_end(), milliseconds)?;
             return Ok(Some(NovelControl::Direction(NovelDirection::AshPause {
                 duration_ms,
-                field,
             })));
         }
     }
@@ -706,18 +569,16 @@ fn parse_control(line: &str) -> Result<Option<NovelControl>> {
         })));
     }
     if let Some(tone) = normalized.strip_prefix("backdrop ") {
-        let Some(tone) = BackdropTone::parse(tone) else {
-            bail!(
-                "unsupported backdrop directive '{command}'; use ward, platform, hotel, shore, rail, rain, city, ash, or ferry"
-            );
+        let Some(tone) = directive_name(tone) else {
+            bail!("backdrop directive '{command}' needs one lowercase name");
         };
         return Ok(Some(NovelControl::Direction(NovelDirection::Backdrop {
             tone,
         })));
     }
     if let Some(field) = normalized.strip_prefix("statement ") {
-        let Some(field) = StatementField::parse(field) else {
-            bail!("unsupported statement directive '{command}'; use ash, sea, or black");
+        let Some(field) = directive_name(field) else {
+            bail!("statement directive '{command}' needs one lowercase name");
         };
         return Ok(Some(NovelControl::Statement(field)));
     }
@@ -809,9 +670,12 @@ fn strip_scene_heading(line: &str) -> Option<String> {
 /// Lines starting directly with a quote intentionally stay unattributed
 /// because the canonical prose uses context-dependent speakers throughout
 /// most chapters.
-fn split_attributed_dialogue(line: &str) -> Option<(String, String)> {
+fn split_attributed_dialogue(line: &str, speakers: &[String]) -> Option<(String, String)> {
     let (speaker, spoken) = line.split_once('「')?;
-    if speaker.is_empty() || !EXPLICIT_SPEAKERS.contains(&speaker) || !spoken.ends_with('」') {
+    if speaker.is_empty()
+        || !speakers.iter().any(|known| known == speaker)
+        || !spoken.ends_with('」')
+    {
         return None;
     }
     Some((speaker.to_owned(), format!("「{spoken}")))
@@ -825,176 +689,6 @@ fn chapter_label(stem: &str) -> String {
             .split_once('_')
             .and_then(|(day, _)| day.parse::<u16>().ok())
             .map_or_else(|| stem.replace('_', " "), |day| format!("DAY {day}")),
-    }
-}
-
-struct UmikazeChapterStyle {
-    source_name: &'static str,
-    /// Catalogue label ("DAY 1"), numeral, and short title of the chapter.
-    day: &'static str,
-    numeral: &'static str,
-    title: &'static str,
-    date: &'static str,
-    synopsis: &'static str,
-    /// The `stage` cue authored on the day card. The presentation package
-    /// maps it to the card's weather; the importer never writes colours.
-    stage: &'static str,
-    /// A project-relative scene photograph.  The ID is the path itself so a
-    /// background change can be compared deterministically by every host.
-    background: &'static str,
-    /// The chapter catalogue's preview photograph.
-    image: &'static str,
-}
-
-// These are navigation metadata rather than new story text. Each line names
-// only a place, weather, or event already present in that chapter; the
-// actual prose always comes directly from the canonical Markdown below.
-const UMIKAZE_CHAPTER_STYLES: [UmikazeChapterStyle; 12] = [
-    UmikazeChapterStyle {
-        source_name: "00_init.md",
-        day: "PROLOGUE",
-        numeral: "P",
-        title: "病室の窓",
-        date: "春から秋",
-        synopsis: "病室の窓から季節を見送る日々に、一時帰宅の話が出る。",
-        stage: "ward",
-        background: "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
-        image: "assets/bg/scenes/hospital-corridor-overcast-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "01_start.md",
-        day: "DAY 1",
-        numeral: "I",
-        title: "西へ",
-        date: "9月21日・横浜駅",
-        synopsis: "西へ向かう最初の列車が、朝のホームを離れる。",
-        stage: "departure",
-        background: "assets/bg/scenes/platform-sea-dawn-v1.webp",
-        image: "assets/bg/scenes/station-night-pass-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "02_day2.md",
-        day: "DAY 2",
-        numeral: "II",
-        title: "雨上がり",
-        date: "9月22日・三ノ宮",
-        synopsis: "雨上がりの三ノ宮の街へ出る。",
-        stage: "rain",
-        background: "assets/bg/scenes/sannomiya-rain-platform-v1.webp",
-        image: "assets/bg/scenes/rain-window-dusk-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "03_day3.md",
-        day: "DAY 3",
-        numeral: "III",
-        title: "宍道湖まで",
-        date: "9月23日・岡山",
-        synopsis: "岡山を発ち、夕暮れの宍道湖へ歩いていく。",
-        stage: "rail",
-        background: "assets/bg/scenes/okayama-rail-window-v1.webp",
-        image: "assets/bg/scenes/rail-window-sunset-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "04_day4.md",
-        day: "DAY 4",
-        numeral: "IV",
-        title: "波の音",
-        date: "9月24日・松江",
-        synopsis: "ミオがMDを持って、日本海の波の音を録りに行く。",
-        stage: "shore",
-        background: "assets/bg/scenes/shore-storm-sunset-v1.webp",
-        image: "assets/bg/scenes/shore-storm-sunset-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "05_day5.md",
-        day: "DAY 5",
-        numeral: "V",
-        title: "雨の日",
-        date: "9月25日・益田",
-        synopsis: "朝から降る雨が、昼になっても弱まらない。",
-        stage: "rain",
-        background: "assets/bg/scenes/rain-street-evening-v1.webp",
-        image: "assets/bg/scenes/rain-street-evening-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "06_day6.md",
-        day: "DAY 6",
-        numeral: "VI",
-        title: "尾道へ",
-        date: "9月26日・益田",
-        synopsis: "晴れた朝、益田を出て尾道へ向かう。",
-        stage: "clear",
-        background: "assets/bg/scenes/coast-road-dawn-v1.webp",
-        image: "assets/bg/scenes/rail-platform-dawn-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "07_day7.md",
-        day: "DAY 7",
-        numeral: "VII",
-        title: "島へ",
-        date: "9月27日・尾道",
-        synopsis: "宇野港から連絡船に乗り、瀬戸内の島へ渡る。",
-        stage: "island",
-        background: "assets/bg/scenes/ferry-night-deck-v1.webp",
-        image: "assets/bg/scenes/mist-window-rail-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "08_day8.md",
-        day: "DAY 8",
-        numeral: "VIII",
-        title: "霧の海",
-        date: "9月28日・直島",
-        synopsis: "民宿で朝を迎え、霧の濃くなる海を本州行きの船で戻る。",
-        stage: "harbor",
-        background: "assets/bg/scenes/mountain-room-dawn-v1.webp",
-        image: "assets/bg/scenes/understructure-evening-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "09_day9.md",
-        day: "DAY 9",
-        numeral: "IX",
-        title: "北へ",
-        date: "9月29日・山陰",
-        synopsis: "いちばん安い切符で、北へ向かうローカル線を乗り継ぐ。",
-        stage: "north",
-        background: "assets/bg/scenes/train-rain-grey-v1.webp",
-        image: "assets/bg/scenes/night-window-motion-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "10_day10.md",
-        day: "DAY 10",
-        numeral: "X",
-        title: "灰色の海",
-        date: "9月30日・駅の待合室",
-        synopsis: "灰色の海のそばを、降りる理由のないまま進む。",
-        stage: "terminus",
-        background: "assets/bg/scenes/terminus-grey-sea-v1.webp",
-        image: "assets/bg/scenes/terminus-grey-sea-v1.webp",
-    },
-    UmikazeChapterStyle {
-        source_name: "11_day11.md",
-        day: "DAY 11",
-        numeral: "XI",
-        title: "小さな駅",
-        date: "10月1日・山陰本線",
-        synopsis: "山陰本線の小さな駅で降り、夜の商店で水を買う。",
-        stage: "north",
-        // Dusk over low buildings: the closest existing photograph to Day 11's
-        // small rural station; the station-night-pass frame shows a Shizuoka sign.
-        background: "assets/bg/scenes/blue-twilight-v1.webp",
-        image: "assets/bg/scenes/blue-twilight-v1.webp",
-    },
-];
-
-fn render_module(
-    chapters: &[NovelChapter],
-    chapter_select: &str,
-    locale: &str,
-    presentation: NovelPresentation,
-) -> Result<String> {
-    match presentation {
-        NovelPresentation::Plain => Ok(render_plain_module(chapters, chapter_select, locale)),
-        NovelPresentation::Umikaze => render_umikaze_module(chapters, chapter_select, locale),
     }
 }
 
@@ -1045,14 +739,11 @@ fn render_plain_module(chapters: &[NovelChapter], chapter_select: &str, locale: 
                     render_text_beat(&mut output, speaker.as_deref(), text);
                 }
                 NovelBeat::Statement { text, .. } => {
-                    // The neutral library preserves the authored automatic
-                    // hold without taking ownership of a project-specific
-                    // colour field. A host may render `statement` plainly.
+                    // A statement advances on its own timer. How it looks
+                    // (for example a dedicated screen) is up to the project.
                     output.push_str("  clear dialogue;\n");
-                    output.push_str("  screen statement;\n");
                     output.push_str(&format!("  narrate \"{}\";\n", escape_string(text)));
                     output.push_str("  wait 1600ms;\n");
-                    output.push_str("  screen dialogue;\n");
                     output.push_str("  clear dialogue;\n");
                 }
                 NovelBeat::Heading { text } => {
@@ -1081,507 +772,6 @@ fn render_plain_module(chapters: &[NovelChapter], chapter_select: &str, locale: 
     output
 }
 
-fn render_umikaze_module(
-    chapters: &[NovelChapter],
-    chapter_select: &str,
-    locale: &str,
-) -> Result<String> {
-    let styles = chapters
-        .iter()
-        .map(umikaze_style_for)
-        .collect::<Result<Vec<_>>>()?;
-    if styles.len() != UMIKAZE_CHAPTER_STYLES.len() {
-        bail!(
-            "the Umikaze presentation requires all {} canonical Day 0–11 sources; received {}",
-            UMIKAZE_CHAPTER_STYLES.len(),
-            styles.len()
-        );
-    }
-
-    let mut output = String::new();
-    output.push_str(
-        "// Generated by aria import-novel --presentation umikaze. Do not edit by hand.\n",
-    );
-    output.push_str("// Canonical prose is embedded from the selected Markdown source files.\n");
-    output.push_str(
-        "// Stage work is deliberately non-verbal: day cards, headings, fades, and held silence.\n",
-    );
-    output.push_str("aria;\n");
-    output.push_str("module umikaze.scenario.ja.canonical;\n\n");
-
-    output.push_str(&format!("scene {chapter_select} {{\n"));
-    output.push_str("  screen chapter_select;\n");
-    output.push_str("  background asset(\"#102b38\") with wipe(260ms);\n");
-    output.push_str("  choice {\n");
-    for chapter in chapters {
-        output.push_str(&format!("    chapter {};\n", chapter.chapter_id));
-    }
-    output.push_str("    cancel => title_screen;\n");
-    output.push_str("  }\n");
-    output.push_str("}\n\n");
-
-    for (chapter, style) in chapters.iter().zip(styles) {
-        let mut scored = String::new();
-        render_umikaze_chapter_content(&mut scored, chapter, style, chapter_select, locale);
-        output.push_str(&score_umikaze_chapter(&chapter.source_name, &scored)?);
-        output.push('\n');
-    }
-
-    Ok(proseify_story_scenes(&annotate_umikaze_stage_cues(&output)))
-}
-
-fn render_umikaze_chapter_content(
-    output: &mut String,
-    chapter: &NovelChapter,
-    style: &UmikazeChapterStyle,
-    chapter_select: &str,
-    locale: &str,
-) {
-    let story_scene = format!("{}_story", chapter.scene);
-    // Catalogue metadata lives here once; the chapter select and day card
-    // refer to it by id instead of packing it into choice labels.
-    output.push_str("// Catalogue metadata for the chapter select and the day card.\n");
-    output.push_str(&format!("chapter {} {{\n", chapter.chapter_id));
-    output.push_str(&format!("  label \"{}\";\n", escape_string(style.day)));
-    output.push_str(&format!(
-        "  numeral \"{}\";\n",
-        escape_string(style.numeral)
-    ));
-    output.push_str(&format!("  title \"{}\";\n", escape_string(style.title)));
-    output.push_str(&format!("  date \"{}\";\n", escape_string(style.date)));
-    output.push_str(&format!(
-        "  synopsis \"{}\";\n",
-        escape_string(style.synopsis)
-    ));
-    output.push_str(&format!("  image asset(\"{}\");\n", style.image));
-    output.push_str(&format!("  start {};\n", chapter.scene));
-    output.push_str("}\n\n");
-    output.push_str(&format!(
-        "// Source: {} — {} player-visible beats\n",
-        chapter.source_name,
-        chapter
-            .beats
-            .iter()
-            .filter(|beat| is_player_text(beat))
-            .count()
-    ));
-    output.push_str(&format!("scene {} {{\n", chapter.scene));
-    output.push_str(&format!("  locale \"{}\";\n", escape_string(locale)));
-    output.push_str(&format!(
-        "  persistent flag \"{}_seen\" = true;\n",
-        chapter.chapter_id
-    ));
-    output.push_str(&format!(
-        "  unlock chapter \"{}\" progress 1;\n",
-        chapter.chapter_id
-    ));
-    output.push_str(&format!(
-        "  background asset(\"{}\") with fade_through_black(640ms);\n",
-        style.background
-    ));
-    output.push_str(&format!("  stage {};\n", style.stage));
-    output.push_str("  screen day_card;\n");
-    output.push_str("  choice {\n");
-    output.push_str(&format!(
-        "    chapter {} => {story_scene};\n",
-        chapter.chapter_id
-    ));
-    output.push_str("  }\n");
-    output.push_str("}\n\n");
-
-    output.push_str(&format!("scene {story_scene} {{\n"));
-    output.push_str("  screen dialogue;\n");
-    output.push_str(&format!(
-        "  background asset(\"{}\") with fade(360ms);\n",
-        style.background
-    ));
-    output.push_str("  wait 180ms;\n");
-
-    let mut current_background = style.background.to_owned();
-    for beat in &chapter.beats {
-        render_umikaze_beat(output, chapter, style, beat, &mut current_background);
-    }
-
-    output.push_str(&format!(
-        "  chapter \"{}\" progress 100;\n",
-        chapter.chapter_id
-    ));
-    output.push_str("  clear dialogue;\n");
-    // A chapter exits after its final subtitle has had a complete frame to
-    // land.  The selector (or the demo endpoint) is therefore an arrival,
-    // never a UI cut that steals the sentence's last breath.
-    output.push_str("  background asset(\"#05070b\") with fade(480ms);\n");
-    output.push_str("  wait 480ms;\n");
-    output.push_str(&format!("  jump {chapter_select};\n"));
-    output.push_str("}\n\n");
-}
-
-#[derive(Debug)]
-struct GeneratedChapterLayout {
-    index: String,
-    chapters: Vec<GeneratedChapterFile>,
-}
-
-#[derive(Debug)]
-struct GeneratedChapterFile {
-    file_name: String,
-    source: String,
-}
-
-/// Solid fields have no photograph to speak for them, so each one is followed
-/// by the semantic cue the presentation uses to choose its treatment.
-fn umikaze_solid_stage_cue(colour: &str) -> Option<&'static str> {
-    Some(match colour {
-        "#05070b" => "blackout",
-        "#6d706f" => "stillness",
-        "#ded7c9" => "whiteout",
-        "#102b38" => "tide",
-        "#284b59" => "school",
-        "#244e5a" => "blue",
-        _ => return None,
-    })
-}
-
-fn annotate_umikaze_stage_cues(source: &str) -> String {
-    let mut output = String::with_capacity(source.len() + 256);
-    for line in source.split_inclusive('\n') {
-        output.push_str(line);
-        let trimmed = line.trim();
-        let Some(cue) = trimmed
-            .strip_prefix("background asset(\"")
-            .and_then(|rest| rest.split('"').next())
-            .and_then(umikaze_solid_stage_cue)
-        else {
-            continue;
-        };
-        let indent = &line[..line.len() - line.trim_start().len()];
-        output.push_str(&format!("{indent}stage {cue};\n"));
-    }
-    output
-}
-
-/// Rewrites each generated `*_story` scene as one `prose` block. The parser
-/// expands `prose` back into exactly these statements, so the bytecode and
-/// the verifier's view are unchanged; only the source becomes readable.
-/// The most common breath in the scene becomes the block default; a line
-/// with another breath gets `pause`, a line with no clear gets `+`, and a
-/// clear without a breath gets `pause 0ms`.
-fn proseify_story_scenes(source: &str) -> String {
-    fn narration(line: &str) -> Option<&str> {
-        line.strip_prefix("  narrate ")?.strip_suffix(';')
-    }
-    fn breath(line: &str) -> Option<u32> {
-        line.strip_prefix("  wait breath ")?
-            .strip_suffix("ms;")?
-            .parse()
-            .ok()
-    }
-    let lines: Vec<&str> = source.split('\n').collect();
-    let mut output: Vec<String> = Vec::with_capacity(lines.len());
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index];
-        let is_story = line.starts_with("scene ") && line.ends_with("_story {");
-        let Some(close) = is_story
-            .then(|| lines[index + 1..].iter().position(|line| *line == "}"))
-            .flatten()
-            .map(|offset| index + 1 + offset)
-        else {
-            output.push(line.to_owned());
-            index += 1;
-            continue;
-        };
-        let body = &lines[index + 1..close];
-        let mut counts = BTreeMap::<u32, usize>::new();
-        for duration in body.iter().filter_map(|line| breath(line)) {
-            *counts.entry(duration).or_default() += 1;
-        }
-        // Ties resolve to the shorter breath for a stable choice.
-        let default = counts
-            .iter()
-            .max_by(|left, right| left.1.cmp(right.1).then(right.0.cmp(left.0)))
-            .map(|(duration, _)| *duration);
-        output.push(line.to_owned());
-        output.push(match default {
-            Some(duration) => format!("  prose breath {duration}ms {{"),
-            None => "  prose {".to_owned(),
-        });
-        let mut at = 0;
-        while at < body.len() {
-            if let Some(text) = narration(body[at])
-                && body.get(at + 1) == Some(&"  await advance;")
-            {
-                at += 2;
-                if body.get(at) == Some(&"  clear dialogue;") {
-                    output.push(format!("    {text};"));
-                    match body.get(at + 1).and_then(|line| breath(line)) {
-                        Some(duration) if Some(duration) == default => at += 2,
-                        Some(duration) => {
-                            output.push(format!("    pause {duration}ms;"));
-                            at += 2;
-                        }
-                        None => {
-                            output.push("    pause 0ms;".to_owned());
-                            at += 1;
-                        }
-                    }
-                } else {
-                    output.push(format!("    {text} +;"));
-                }
-                continue;
-            }
-            output.push(if body[at].is_empty() {
-                String::new()
-            } else {
-                format!("  {}", body[at])
-            });
-            at += 1;
-        }
-        output.push("  }".to_owned());
-        output.push("}".to_owned());
-        index = close + 1;
-    }
-    output.join("\n")
-}
-
-/// Music is scored by hand: each cue plays or stops BGM after a line has been
-/// read and cleared, before the next breath. The importer re-applies the score
-/// on every regeneration, and a revised manuscript that loses an anchor line
-/// fails the import instead of silently dropping the music.
-struct ScoreCue {
-    source: &'static str,
-    after: &'static str,
-    cue: &'static str,
-}
-
-const UMIKAZE_SCORE: [ScoreCue; 18] = [
-    ScoreCue {
-        source: "00_init.md",
-        after: "私はいつものように、窓のむこうを見る。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.ward.first-light.ogg\") loop fade 700ms;",
-    },
-    ScoreCue {
-        source: "00_init.md",
-        after: "母親は、ハンカチで涙を拭いた...",
-        cue: "stop bgm fade 900ms;",
-    },
-    ScoreCue {
-        source: "01_start.md",
-        after: "ガクンと鈍い衝撃があり、列車がゆっくりと滑り出す。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.rail.departure.ogg\") loop fade 500ms;",
-    },
-    ScoreCue {
-        source: "01_start.md",
-        after: "聞いたところで、俺にできることなんて何もないしな。",
-        cue: "stop bgm fade 600ms;",
-    },
-    ScoreCue {
-        source: "04_day4.md",
-        after: "洗濯槽が回り始めると、ミオは鞄からMDウォーカーを出した。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.recording.trace.ogg\") fade 450ms;",
-    },
-    ScoreCue {
-        source: "04_day4.md",
-        after: "ミオは録音を止め、ディスクを取り出して、半透明のケースへ戻した。",
-        cue: "stop bgm fade 650ms;",
-    },
-    ScoreCue {
-        source: "05_day5.md",
-        after: "冷えた缶を口に当てると、雨の音が少し遠くなった。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.rain.room.ogg\") loop fade 800ms;",
-    },
-    ScoreCue {
-        source: "05_day5.md",
-        after: "ミオは布団の中で、少しだけ笑った。",
-        cue: "stop bgm fade 700ms;",
-    },
-    ScoreCue {
-        source: "06_day6.md",
-        after: "俺は水２本をカゴに入れ、おにぎりの鮭と昆布、そしてガリガリくんもカゴに入れた。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.everyday.table.ogg\") loop fade 450ms;",
-    },
-    ScoreCue {
-        source: "06_day6.md",
-        after: "「……俺の鮭はやらねえからな」",
-        cue: "stop bgm fade 550ms;",
-    },
-    ScoreCue {
-        source: "06_day6.md",
-        after: "俺は社交辞令を呟き、ロビーのドアを開ける。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.clear-between.ogg\") loop fade 600ms;",
-    },
-    ScoreCue {
-        source: "06_day6.md",
-        after: "エンジンは唸りを上げ、窓の外の寂れた街がゆっくりと後方へと流れていった。",
-        cue: "stop bgm fade 700ms;",
-    },
-    ScoreCue {
-        source: "07_day7.md",
-        after: "待合室の窓は白く曇っている。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.waiting.window.ogg\") loop fade 600ms;",
-    },
-    ScoreCue {
-        source: "07_day7.md",
-        after: "甘い匂いが、始発前の待合室に少しだけ残った。",
-        cue: "stop bgm fade 700ms;",
-    },
-    ScoreCue {
-        source: "07_day7.md",
-        after: "俺はペダルを踏み込み、潮風を切り裂いて走り出す。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.island.distance.ogg\") fade 650ms;",
-    },
-    ScoreCue {
-        source: "07_day7.md",
-        after: "俺はゆっくりとペダルを漕ぐ。",
-        cue: "stop bgm fade 800ms;",
-    },
-    ScoreCue {
-        source: "09_day9.md",
-        after: "俺は受け取って、黙って食った。",
-        cue: "play bgm asset(\"assets/audio/bgm/umk.north.grey.ogg\") fade 650ms;",
-    },
-    ScoreCue {
-        source: "09_day9.md",
-        after: "その白いコードを受け取り、右耳に差し込んだ。",
-        cue: "stop bgm fade 900ms;",
-    },
-];
-
-fn score_umikaze_chapter(source_name: &str, source: &str) -> Result<String> {
-    let mut lines: Vec<String> = source.lines().map(str::to_owned).collect();
-    let cues: Vec<&ScoreCue> = UMIKAZE_SCORE
-        .iter()
-        .filter(|cue| cue.source == source_name)
-        .collect();
-    // An anchor is the whole line, narrated or spoken (`say 俺: "…";`).
-    let quoted = |cue: &ScoreCue| format!("\"{}\";", escape_string(cue.after));
-    let is_anchor = |line: &str, cue: &ScoreCue| {
-        (line.starts_with("  narrate ") || line.starts_with("  say "))
-            && line.ends_with(&quoted(cue))
-    };
-    // A chapter with none of its anchors is a different manuscript (such as a
-    // test fixture): leave it unscored, but say so. A chapter that keeps some
-    // anchors and loses others is a revision that broke the score: fail.
-    if !cues.is_empty()
-        && !cues
-            .iter()
-            .any(|cue| lines.iter().any(|line| is_anchor(line, cue)))
-    {
-        eprintln!(
-            "warning: {source_name} has none of its music anchors; it is imported without BGM"
-        );
-        return Ok(source.to_owned());
-    }
-    for cue in cues {
-        let positions: Vec<usize> = lines
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| is_anchor(line, cue))
-            .map(|(index, _)| index)
-            .collect();
-        let [position] = positions[..] else {
-            bail!(
-                "music cue '{}' in {} needs exactly one line \"{}\", found {}; re-anchor it in UMIKAZE_SCORE",
-                cue.cue,
-                source_name,
-                cue.after,
-                positions.len()
-            );
-        };
-        let mut at = position + 1;
-        for expected in ["  await advance;", "  clear dialogue;"] {
-            if lines.get(at).map(String::as_str) == Some(expected) {
-                at += 1;
-            }
-        }
-        lines.insert(at, format!("  {}", cue.cue));
-    }
-    Ok(lines.join("\n") + "\n")
-}
-
-fn render_umikaze_chapter_layout(
-    chapters: &[NovelChapter],
-    chapter_select: &str,
-    locale: &str,
-) -> Result<GeneratedChapterLayout> {
-    let styles = chapters
-        .iter()
-        .map(umikaze_style_for)
-        .collect::<Result<Vec<_>>>()?;
-    if styles.len() != UMIKAZE_CHAPTER_STYLES.len() {
-        bail!(
-            "the Umikaze chapter-file layout requires all {} canonical Day 0–11 sources; received {}",
-            UMIKAZE_CHAPTER_STYLES.len(),
-            styles.len()
-        );
-    }
-
-    let mut index = String::new();
-    index.push_str("aria;\n");
-    index.push_str("module umikaze.scenario.ja;\n\n");
-    index.push_str("// Generated from the canonical Day 0–11 Markdown source.\n");
-    index.push_str("// Each chapter remains its own reviewable Aria module.\n");
-    for chapter in chapters {
-        index.push_str(&format!("use \"{}\";\n", chapter_file_name(chapter)));
-    }
-    index.push('\n');
-    index.push_str(&format!("scene {chapter_select} {{\n"));
-    index.push_str("  screen chapter_select;\n");
-    index.push_str("  background asset(\"#102b38\") with wipe(260ms);\n");
-    index.push_str("  choice {\n");
-    for chapter in chapters {
-        index.push_str(&format!("    chapter {};\n", chapter.chapter_id));
-    }
-    // Backing out of the catalogue returns to the title scene of main.aria.
-    index.push_str("    cancel => title_screen;\n");
-    index.push_str("  }\n");
-    index.push_str("}\n");
-    let index = annotate_umikaze_stage_cues(&index);
-
-    let mut rendered_chapters = Vec::with_capacity(chapters.len());
-    for (chapter, style) in chapters.iter().zip(styles) {
-        let mut source = String::new();
-        source.push_str(
-            "// Generated by aria import-novel --presentation umikaze --layout chapters.\n",
-        );
-        source.push_str("// Canonical prose is embedded from the selected Markdown source file.\n");
-        source.push_str("aria;\n");
-        source.push_str(&format!(
-            "module umikaze.scenario.ja.chapter_{};\n\n",
-            chapter_scene_suffix(chapter)
-        ));
-        render_umikaze_chapter_content(&mut source, chapter, style, chapter_select, locale);
-        // Chapter modules have no following sibling in their own file. Keep
-        // the visually useful blank line between scenes in the single-module
-        // renderer, but avoid writing a diff-noisy trailing empty line here.
-        source.truncate(source.trim_end().len());
-        source.push('\n');
-        rendered_chapters.push(GeneratedChapterFile {
-            file_name: chapter_file_name(chapter),
-            source: proseify_story_scenes(&score_umikaze_chapter(
-                &chapter.source_name,
-                &annotate_umikaze_stage_cues(&source),
-            )?),
-        });
-    }
-
-    Ok(GeneratedChapterLayout {
-        index,
-        chapters: rendered_chapters,
-    })
-}
-
-fn chapter_scene_suffix(chapter: &NovelChapter) -> &str {
-    chapter
-        .scene
-        .rsplit_once('_')
-        .map_or("chapter", |(_, suffix)| suffix)
-}
-
-fn chapter_file_name(chapter: &NovelChapter) -> String {
-    format!("chapter-{}.aria", chapter_scene_suffix(chapter))
-}
-
 fn verify_generated_source(path: &Path, generated: &str) -> Result<()> {
     let parsed = parse_modern(path.to_string_lossy(), generated);
     if parsed.has_errors() {
@@ -1596,141 +786,20 @@ fn verify_generated_source(path: &Path, generated: &str) -> Result<()> {
     Ok(())
 }
 
-fn write_chapter_layout(out: &Path, generated: &GeneratedChapterLayout) -> Result<()> {
-    if out.exists() && !out.is_dir() {
-        bail!(
-            "chapter-file output must be a directory, not a file: {}",
-            out.display()
-        );
-    }
-    fs::create_dir_all(out).with_context(|| format!("cannot create {}", out.display()))?;
-
-    let index_path = out.join("index.aria");
-    verify_generated_source(&index_path, &generated.index)?;
-    write_atomic(&index_path, generated.index.as_bytes())?;
-    for chapter in &generated.chapters {
-        let path = out.join(&chapter.file_name);
-        verify_generated_source(&path, &chapter.source)?;
-        write_atomic(&path, chapter.source.as_bytes())?;
+fn verify_existing_output(out: &Path, chapters: &[NovelChapter]) -> Result<()> {
+    for chapter in chapters {
+        verify_chapter_prose(out, chapter)?;
     }
     Ok(())
 }
 
-fn verify_existing_output(
-    out: &Path,
-    chapters: &[NovelChapter],
-    options: &NovelImportOptions,
-) -> Result<()> {
-    match options.layout {
-        NovelImportLayout::Single => {
-            for chapter in chapters {
-                verify_chapter_prose(out, chapter, options)?;
-            }
-        }
-        NovelImportLayout::Chapters => {
-            if options.presentation != NovelPresentation::Umikaze {
-                bail!("the chapter-file layout is currently owned by --presentation umikaze");
-            }
-            verify_chapter_index(out, chapters, options)?;
-            for chapter in chapters {
-                verify_chapter_prose(&out.join(chapter_file_name(chapter)), chapter, options)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn verify_chapter_index(
-    out: &Path,
-    chapters: &[NovelChapter],
-    options: &NovelImportOptions,
-) -> Result<()> {
-    if !out.is_dir() {
-        bail!("chapter-file output must be a directory: {}", out.display());
-    }
-    let index_path = out.join("index.aria");
-    let module = parse_generated_module(&index_path)?;
-    let actual_imports = module
-        .imports
-        .iter()
-        .map(|import| import.path.clone())
-        .collect::<Vec<_>>();
-    let expected_imports = chapters.iter().map(chapter_file_name).collect::<Vec<_>>();
-    if actual_imports != expected_imports {
-        bail!(
-            "chapter index import mismatch in {}: expected {:?}, found {:?}",
-            index_path.display(),
-            expected_imports,
-            actual_imports
-        );
-    }
-
-    let selector = module
-        .scenes
-        .iter()
-        .find(|scene| scene.name == options.chapter_select)
-        .with_context(|| {
-            format!(
-                "chapter index {} does not define scene '{}'",
-                index_path.display(),
-                options.chapter_select
-            )
-        })?;
-    let actual_targets = selector
-        .body
-        .iter()
-        .find_map(|statement| match &statement.kind {
-            // A `chapter id;` option takes its target from the declaration,
-            // which lives in the chapter file; resolve it by chapter id here.
-            // The unshown `cancel` option is not a chapter.
-            StatementKind::Choice { options } => Some(
-                options
-                    .iter()
-                    .filter(|option| !option.cancel)
-                    .map(|option| match (&option.chapter, option.scene.is_empty()) {
-                        (Some(id), true) => chapters
-                            .iter()
-                            .find(|chapter| &chapter.chapter_id == id)
-                            .map_or_else(
-                                || format!("<undeclared {id}>"),
-                                |chapter| chapter.scene.clone(),
-                            ),
-                        _ => option.scene.clone(),
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        })
-        .context("chapter selector has no choice statement")?;
-    let expected_targets = chapters
-        .iter()
-        .map(|chapter| chapter.scene.clone())
-        .collect::<Vec<_>>();
-    if actual_targets != expected_targets {
-        bail!(
-            "chapter selector target mismatch in {}: expected {:?}, found {:?}",
-            index_path.display(),
-            expected_targets,
-            actual_targets
-        );
-    }
-    Ok(())
-}
-
-fn verify_chapter_prose(
-    path: &Path,
-    chapter: &NovelChapter,
-    options: &NovelImportOptions,
-) -> Result<()> {
-    let scene_name = match options.presentation {
-        NovelPresentation::Plain => chapter.scene.clone(),
-        NovelPresentation::Umikaze => format!("{}_story", chapter.scene),
-    };
+fn verify_chapter_prose(path: &Path, chapter: &NovelChapter) -> Result<()> {
+    let scene_name = &chapter.scene;
     let module = parse_generated_module(path)?;
     let scene = module
         .scenes
         .iter()
-        .find(|scene| scene.name == scene_name)
+        .find(|scene| &scene.name == scene_name)
         .with_context(|| {
             format!(
                 "{} does not define story scene '{}'",
@@ -1757,7 +826,6 @@ fn verify_chapter_prose(
             actual.get(first_difference),
         );
     }
-    verify_umikaze_chapter_presentation(path, chapter, options, &module)?;
     Ok(())
 }
 
@@ -1837,587 +905,6 @@ fn collect_player_texts(statements: &[Statement], texts: &mut Vec<PlayerText>) {
     }
 }
 
-fn verify_umikaze_chapter_presentation(
-    path: &Path,
-    chapter: &NovelChapter,
-    options: &NovelImportOptions,
-    module: &aria_core::modern::ModernModule,
-) -> Result<()> {
-    if options.presentation != NovelPresentation::Umikaze {
-        return Ok(());
-    }
-    let entry_scene = module
-        .scenes
-        .iter()
-        .find(|scene| scene.name == chapter.scene)
-        .with_context(|| {
-            format!(
-                "{} does not define chapter-card scene '{}'",
-                path.display(),
-                chapter.scene
-            )
-        })?;
-    let has_day_card = entry_scene.body.iter().any(|statement| {
-        matches!(
-            &statement.kind,
-            StatementKind::OpenScreen { screen } if screen == "day_card"
-        )
-    });
-    if !has_day_card {
-        bail!(
-            "{} has no day-card hold for source {}",
-            path.display(),
-            chapter.source_name
-        );
-    }
-    let expected_story = format!("{}_story", chapter.scene);
-    let card_targets_story = entry_scene.body.iter().any(|statement| {
-        matches!(
-            &statement.kind,
-            StatementKind::Choice { options }
-                if options.len() == 1 && options[0].scene == expected_story
-        )
-    });
-    if !card_targets_story {
-        bail!(
-            "{} day-card does not enter '{}'",
-            path.display(),
-            expected_story
-        );
-    }
-
-    let story = module
-        .scenes
-        .iter()
-        .find(|scene| scene.name == expected_story)
-        .expect("story scene was verified before presentation");
-    // Stage cues annotate a backdrop; they are not timing beats, so the
-    // windowed pacing checks below read the story without them.
-    let story_body: Vec<Statement> = story
-        .body
-        .iter()
-        .filter(|statement| {
-            // Stage cues and hand-scored music (a play, or a stop with a fade;
-            // the manuscript's own `stopbgm` has none) are not timing beats.
-            !matches!(
-                statement.kind,
-                StatementKind::SetStage { .. }
-                    | StatementKind::Play { .. }
-                    | StatementKind::Stop {
-                        fade_ms: Some(_),
-                        ..
-                    }
-            )
-        })
-        .cloned()
-        .collect();
-    let expected_interludes = chapter
-        .beats
-        .iter()
-        .filter(|beat| matches!(beat, NovelBeat::Heading { .. }))
-        .count();
-    let actual_interludes = story_body
-        .iter()
-        .filter(|statement| {
-            matches!(
-                &statement.kind,
-                StatementKind::OpenScreen { screen } if screen == "interlude"
-            )
-        })
-        .count();
-    if expected_interludes != actual_interludes {
-        bail!(
-            "{} interlude mismatch for source {}: expected {}, found {}",
-            path.display(),
-            chapter.source_name,
-            expected_interludes,
-            actual_interludes
-        );
-    }
-    verify_silence_holds(path, chapter, &story_body)?;
-    verify_paragraph_breaths(path, chapter, &story_body)?;
-    verify_structural_turn(path, chapter, &story_body)?;
-    verify_automatic_statements(path, chapter, &story_body)?;
-    verify_stage_directions(path, chapter, &story_body)?;
-    Ok(())
-}
-
-fn verify_automatic_statements(
-    path: &Path,
-    chapter: &NovelChapter,
-    statements: &[Statement],
-) -> Result<()> {
-    let expected = chapter
-        .beats
-        .iter()
-        .filter_map(|beat| match beat {
-            NovelBeat::Statement { text, field } => Some((text.as_str(), *field)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let actual_starts = statements
-        .iter()
-        .enumerate()
-        .filter_map(|(index, statement)| {
-            matches!(
-                &statement.kind,
-                StatementKind::OpenScreen { screen } if screen == "statement"
-            )
-            .then_some(index)
-        })
-        .collect::<Vec<_>>();
-    if actual_starts.len() != expected.len() {
-        bail!(
-            "{} automatic-statement mismatch for source {}: expected {}, found {}",
-            path.display(),
-            chapter.source_name,
-            expected.len(),
-            actual_starts.len()
-        );
-    }
-
-    for ((text, field), start) in expected.into_iter().zip(actual_starts) {
-        let following = &statements[start..];
-        let correct = matches!(
-            following.get(1).map(|statement| &statement.kind),
-            Some(StatementKind::Background {
-                asset,
-                transition: Some(transition),
-            }) if asset.path == field.asset()
-                && matches!(transition.kind, aria_core::modern::TransitionKind::Fade)
-                && transition.duration_ms == Some(260)
-        ) && matches!(
-            following.get(2).map(|statement| &statement.kind),
-            Some(StatementKind::Narrate { text: actual }) if actual == text
-        ) && matches!(
-            following.get(3).map(|statement| &statement.kind),
-            Some(StatementKind::Wait { duration_ms, .. }) if *duration_ms == 1600
-        ) && following
-            .get(4)
-            .is_some_and(|statement| is_any_background_fade(statement, 360))
-            && matches!(
-                following.get(5).map(|statement| &statement.kind),
-                Some(StatementKind::OpenScreen { screen }) if screen == "dialogue"
-            )
-            && matches!(
-                following.get(6).map(|statement| &statement.kind),
-                Some(StatementKind::ClearDialogue)
-            )
-            && matches!(
-                following.get(7).map(|statement| &statement.kind),
-                Some(StatementKind::Wait { duration_ms, .. }) if *duration_ms == 180
-            );
-        if !correct {
-            bail!(
-                "{} does not preserve automatic statement {:?} from source {}",
-                path.display(),
-                text,
-                chapter.source_name
-            );
-        }
-    }
-    Ok(())
-}
-
-fn verify_silence_holds(
-    path: &Path,
-    chapter: &NovelChapter,
-    statements: &[Statement],
-) -> Result<()> {
-    let expected_markers = chapter
-        .beats
-        .iter()
-        .filter(|beat| matches!(beat, NovelBeat::Reading { text, .. } if is_explicit_silence(text)))
-        .count();
-    let mut actual_markers = 0;
-    for (index, statement) in statements.iter().enumerate() {
-        let text = match &statement.kind {
-            StatementKind::Narrate { text } | StatementKind::Say { text, .. } => text,
-            _ => continue,
-        };
-        if !is_explicit_silence(text) {
-            continue;
-        }
-        actual_markers += 1;
-        let following = &statements[index.saturating_add(1)..];
-        if !matches!(
-            following.first().map(|statement| &statement.kind),
-            Some(StatementKind::AwaitAdvance)
-        ) || !matches!(
-            following.get(1).map(|statement| &statement.kind),
-            Some(StatementKind::ClearDialogue)
-        ) {
-            bail!(
-                "{} does not hold explicit silence '{}' after source {}",
-                path.display(),
-                text,
-                chapter.source_name
-            );
-        }
-        if chapter.source_name == "10_day10.md" && text == "……" {
-            let has_final_tint = matches!(
-                following.get(2).map(|statement| &statement.kind),
-                Some(StatementKind::Effect {
-                    kind,
-                    color,
-                    amount,
-                    duration_ms,
-                    ..
-                }) if kind == "tint" && color == "#05070b" && (*amount - 64.0).abs() < f64::EPSILON && *duration_ms == 520
-            );
-            let has_final_wait = matches!(
-                following.get(3).map(|statement| &statement.kind),
-                Some(StatementKind::Wait { duration_ms, .. }) if *duration_ms == 620
-            );
-            if !has_final_tint || !has_final_wait {
-                bail!(
-                    "{} does not preserve Day 10's final dark hold",
-                    path.display()
-                );
-            }
-        } else if !matches!(
-            following.get(2).map(|statement| &statement.kind),
-            Some(StatementKind::Wait { duration_ms, .. }) if *duration_ms == 620
-        ) {
-            bail!(
-                "{} does not preserve the 620ms silence after '{}'",
-                path.display(),
-                text
-            );
-        }
-    }
-    if actual_markers != expected_markers {
-        bail!(
-            "{} explicit-silence marker mismatch for source {}: expected {}, found {}",
-            path.display(),
-            chapter.source_name,
-            expected_markers,
-            actual_markers
-        );
-    }
-    Ok(())
-}
-
-fn verify_paragraph_breaths(
-    path: &Path,
-    chapter: &NovelChapter,
-    statements: &[Statement],
-) -> Result<()> {
-    let expected = chapter
-        .beats
-        .iter()
-        .filter_map(|beat| match beat {
-            NovelBeat::Breath { duration_ms } => Some(*duration_ms),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let actual = statements
-        .windows(3)
-        .filter_map(|window| {
-            if !matches!(&window[0].kind, StatementKind::AwaitAdvance)
-                || !matches!(&window[1].kind, StatementKind::ClearDialogue)
-            {
-                return None;
-            }
-            match &window[2].kind {
-                StatementKind::Wait {
-                    duration_ms,
-                    release_after_ms: Some(160),
-                } => Some(*duration_ms),
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    if actual != expected {
-        bail!(
-            "{} paragraph-breath mismatch for source {}: expected {:?}, found {:?}",
-            path.display(),
-            chapter.source_name,
-            expected,
-            actual
-        );
-    }
-    Ok(())
-}
-
-fn verify_structural_turn(
-    path: &Path,
-    chapter: &NovelChapter,
-    statements: &[Statement],
-) -> Result<()> {
-    let expected_breaks = chapter
-        .beats
-        .iter()
-        .filter(|beat| matches!(beat, NovelBeat::StructuralBreak))
-        .count();
-    if expected_breaks == 0 {
-        return Ok(());
-    }
-    if chapter.source_name != "00_init.md" || expected_breaks != 1 {
-        bail!(
-            "no Umikaze structural-turn mapping is defined for {}",
-            chapter.source_name
-        );
-    }
-    let has_pov_turn = statements.windows(3).any(|window| {
-        matches!(&window[0].kind, StatementKind::ClearDialogue)
-            && is_background_fade(&window[1], "#284b59", 360)
-            && matches!(
-                &window[2].kind,
-                StatementKind::Wait {
-                    duration_ms: 360,
-                    ..
-                }
-            )
-    });
-    if !has_pov_turn {
-        bail!(
-            "{} does not preserve Day 0's quiet POV transition",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn verify_stage_directions(
-    path: &Path,
-    chapter: &NovelChapter,
-    statements: &[Statement],
-) -> Result<()> {
-    let directions = chapter
-        .beats
-        .iter()
-        .filter_map(|beat| match beat {
-            NovelBeat::Direction(direction) => Some(direction),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if directions.is_empty() {
-        return Ok(());
-    }
-
-    let expected_ash_holds = directions
-        .iter()
-        .filter_map(|direction| match direction {
-            NovelDirection::AshPause { duration_ms, field } => Some((*field, *duration_ms)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let actual_ash_holds = statements
-        .windows(5)
-        .filter_map(|window| {
-            let field = ["#6d706f", "#05070b"]
-                .into_iter()
-                .find(|field| is_background_fade(&window[1], field, 260))?;
-            if !matches!(&window[0].kind, StatementKind::ClearDialogue)
-                || !is_any_background_fade(&window[3], 360)
-                || !matches!(
-                    &window[4].kind,
-                    StatementKind::Wait {
-                        duration_ms: 180,
-                        ..
-                    }
-                )
-            {
-                return None;
-            }
-            match &window[2].kind {
-                StatementKind::Wait { duration_ms, .. } => Some((field, *duration_ms)),
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    if actual_ash_holds != expected_ash_holds {
-        bail!(
-            "{} ash-pause mismatch for source {}: expected {:?}, found {:?}",
-            path.display(),
-            chapter.source_name,
-            expected_ash_holds,
-            actual_ash_holds
-        );
-    }
-
-    let expected_quiet_holds = directions
-        .iter()
-        .filter_map(|direction| match direction {
-            NovelDirection::QuietPause { duration_ms } => Some(*duration_ms),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let actual_quiet_holds = statements
-        .windows(2)
-        .enumerate()
-        .filter_map(|(index, window)| {
-            if !matches!(&window[0].kind, StatementKind::ClearDialogue) {
-                return None;
-            }
-
-            // Explicit `...`/`……` beats also clear the dialogue before their
-            // fixed 620ms hold.  They are a different authorial primitive
-            // from `pause breath/drift`; do not let a shared duration make
-            // the stage-direction verifier count them as quiet pauses.
-            let follows_explicit_silence = index >= 2
-                && matches!(
-                    &statements[index - 2].kind,
-                    StatementKind::Narrate { text } | StatementKind::Say { text, .. }
-                        if is_explicit_silence(text)
-                );
-            if follows_explicit_silence {
-                return None;
-            }
-
-            match &window[1].kind {
-                StatementKind::Wait { duration_ms, .. }
-                    if expected_quiet_holds.contains(duration_ms) =>
-                {
-                    Some(*duration_ms)
-                }
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    if actual_quiet_holds != expected_quiet_holds {
-        bail!(
-            "{} quiet-pause mismatch for source {}: expected {:?}, found {:?}",
-            path.display(),
-            chapter.source_name,
-            expected_quiet_holds,
-            actual_quiet_holds
-        );
-    }
-
-    let expected_backdrops = directions
-        .iter()
-        .filter_map(|direction| match direction {
-            NovelDirection::Backdrop { tone } => Some(tone.asset()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let actual_backdrops = statements
-        .windows(3)
-        .filter_map(|window| {
-            if !matches!(&window[0].kind, StatementKind::ClearDialogue)
-                || !matches!(&window[2].kind, StatementKind::Wait { duration_ms, .. } if *duration_ms == 640)
-            {
-                return None;
-            }
-            match &window[1].kind {
-                StatementKind::Background { asset, transition: Some(transition) }
-                    if matches!(transition.kind, aria_core::modern::TransitionKind::FadeThroughBlack)
-                        && transition.duration_ms == Some(640) =>
-                {
-                    Some(asset.path.as_str())
-                }
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    if actual_backdrops != expected_backdrops {
-        bail!(
-            "{} backdrop mismatch for source {}: expected {:?}, found {:?}",
-            path.display(),
-            chapter.source_name,
-            expected_backdrops,
-            actual_backdrops
-        );
-    }
-
-    let has_legacy_hospital_turn = directions.iter().any(|direction| {
-        matches!(
-            direction,
-            NovelDirection::FadeOut { duration_ms: 2_000 }
-                | NovelDirection::StopBgm
-                | NovelDirection::Wait { duration_ms: 2_000 }
-                | NovelDirection::FadeIn
-        )
-    });
-    if !has_legacy_hospital_turn {
-        return Ok(());
-    }
-    let expected_hospital_directions = directions
-        .iter()
-        .filter(|direction| {
-            matches!(
-                direction,
-                NovelDirection::FadeOut { .. }
-                    | NovelDirection::StopBgm
-                    | NovelDirection::Wait { .. }
-                    | NovelDirection::FadeIn
-            )
-        })
-        .count();
-    if chapter.source_name != "05_day5.md" || expected_hospital_directions != 4 {
-        bail!(
-            "no Umikaze stage-direction mapping is defined for {}",
-            chapter.source_name
-        );
-    }
-    let has_hospital_turn = statements.windows(5).any(|window| {
-        is_background_fade(&window[0], "#05070b", 2_000)
-            && matches!(
-                &window[1].kind,
-                StatementKind::Stop { bus, .. } if matches!(bus, aria_core::modern::AudioBus::Bgm)
-            )
-            && matches!(
-                &window[2].kind,
-                StatementKind::Wait {
-                    duration_ms: 2_000,
-                    ..
-                }
-            )
-            && is_background_fade(&window[3], "#ded7c9", 420)
-            && matches!(
-                &window[4].kind,
-                StatementKind::Wait {
-                    duration_ms: 180,
-                    ..
-                }
-            )
-    });
-    if !has_hospital_turn {
-        bail!(
-            "{} does not preserve Day 5's authored fade/wait/fade transition",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn is_background_fade(statement: &Statement, path: &str, duration_ms: u32) -> bool {
-    matches!(
-        &statement.kind,
-        StatementKind::Background {
-            asset,
-            transition: Some(transition),
-        } if asset.path == path
-            && matches!(transition.kind, aria_core::modern::TransitionKind::Fade)
-            && transition.duration_ms == Some(duration_ms)
-    )
-}
-
-fn is_any_background_fade(statement: &Statement, duration_ms: u32) -> bool {
-    matches!(
-        &statement.kind,
-        StatementKind::Background {
-            transition: Some(transition),
-            ..
-        } if matches!(transition.kind, aria_core::modern::TransitionKind::Fade)
-            && transition.duration_ms == Some(duration_ms)
-    )
-}
-
-fn umikaze_style_for(chapter: &NovelChapter) -> Result<&'static UmikazeChapterStyle> {
-    UMIKAZE_CHAPTER_STYLES
-        .iter()
-        .find(|style| style.source_name == chapter.source_name)
-        .with_context(|| {
-            format!(
-                "'{}' is not a canonical Umikaze Day 0–10 source",
-                chapter.source_name
-            )
-        })
-}
-
 fn render_text_beat(output: &mut String, speaker: Option<&str>, text: &str) {
     if let Some(speaker) = speaker {
         output.push_str(&format!("  say {speaker}: \"{}\";\n", escape_string(text)));
@@ -2453,139 +940,8 @@ fn render_plain_direction(output: &mut String, direction: &NovelDirection) {
     }
 }
 
-fn render_umikaze_beat(
-    output: &mut String,
-    chapter: &NovelChapter,
-    style: &UmikazeChapterStyle,
-    beat: &NovelBeat,
-    current_background: &mut String,
-) {
-    match beat {
-        NovelBeat::Reading { speaker, text } => {
-            render_text_beat(output, speaker.as_deref(), text);
-            if is_explicit_silence(text) {
-                output.push_str("  clear dialogue;\n");
-                if chapter.source_name == "10_day10.md" && text == "……" {
-                    output.push_str("  effect tint \"#05070b\" amount 64 over 520ms;\n");
-                    output.push_str("  wait 620ms;\n");
-                } else {
-                    output.push_str("  wait 620ms;\n");
-                }
-            }
-        }
-        NovelBeat::Statement { text, field } => {
-            output.push_str("  clear dialogue;\n");
-            output.push_str("  screen statement;\n");
-            output.push_str(&format!(
-                "  background asset(\"{}\") with fade(260ms);\n",
-                field.asset()
-            ));
-            output.push_str(&format!("  narrate \"{}\";\n", escape_string(text)));
-            output.push_str("  wait 1600ms;\n");
-            output.push_str(&format!(
-                "  background asset(\"{}\") with fade(360ms);\n",
-                current_background
-            ));
-            output.push_str("  screen dialogue;\n");
-            output.push_str("  clear dialogue;\n");
-            output.push_str("  wait 180ms;\n");
-        }
-        NovelBeat::Heading { text } => {
-            output.push_str("  clear dialogue;\n");
-            output.push_str("  screen interlude;\n");
-            output.push_str(&format!("  narrate \"{}\";\n", escape_string(text)));
-            output.push_str("  wait 1000ms;\n");
-            output.push_str("  screen dialogue;\n");
-            output.push_str("  clear dialogue;\n");
-            output.push_str("  wait 220ms;\n");
-        }
-        NovelBeat::Breath { duration_ms } => {
-            output.push_str("  clear dialogue;\n");
-            output.push_str(&format!("  wait breath {duration_ms}ms;\n"));
-        }
-        NovelBeat::StructuralBreak => {
-            output.push_str("  clear dialogue;\n");
-            let target = if chapter.source_name == "00_init.md" {
-                "#284b59"
-            } else {
-                style.background
-            };
-            let changed = current_background != target;
-            if changed {
-                let through_black = is_scene_asset(current_background) && is_scene_asset(target);
-                let transition = if through_black {
-                    "fade_through_black(640ms)"
-                } else {
-                    "fade(360ms)"
-                };
-                output.push_str(&format!(
-                    "  background asset(\"{target}\") with {transition};\n"
-                ));
-                *current_background = target.to_owned();
-            }
-            output.push_str(if changed && is_scene_asset(target) {
-                "  wait 640ms;\n"
-            } else if changed {
-                "  wait 360ms;\n"
-            } else {
-                "  wait 700ms;\n"
-            });
-        }
-        NovelBeat::Direction(direction) => match direction {
-            NovelDirection::FadeOut { duration_ms } => {
-                output.push_str("  clear dialogue;\n");
-                output.push_str(&format!(
-                    "  background asset(\"#05070b\") with fade({duration_ms}ms);\n"
-                ));
-                *current_background = "#05070b".to_owned();
-            }
-            // A project may not have a BGM playing at this exact beat, but
-            // the authored cue still matters: stopping the BGM bus makes the
-            // following hold semantically silent instead of merely dark.
-            NovelDirection::StopBgm => output.push_str("  stop bgm;\n"),
-            NovelDirection::Wait { duration_ms } => {
-                output.push_str(&format!("  wait {duration_ms}ms;\n"));
-            }
-            NovelDirection::FadeIn => {
-                output.push_str("  background asset(\"#ded7c9\") with fade(420ms);\n");
-                output.push_str("  wait 180ms;\n");
-                *current_background = "#ded7c9".to_owned();
-            }
-            NovelDirection::AshPause { duration_ms, field } => {
-                output.push_str("  clear dialogue;\n");
-                output.push_str(&format!(
-                    "  background asset(\"{field}\") with fade(260ms);\n"
-                ));
-                output.push_str(&format!("  wait {duration_ms}ms;\n"));
-                output.push_str(&format!(
-                    "  background asset(\"{}\") with fade(360ms);\n",
-                    current_background
-                ));
-                output.push_str("  wait 180ms;\n");
-            }
-            NovelDirection::QuietPause { duration_ms } => {
-                output.push_str("  clear dialogue;\n");
-                output.push_str(&format!("  wait {duration_ms}ms;\n"));
-            }
-            NovelDirection::Backdrop { tone } => {
-                output.push_str("  clear dialogue;\n");
-                output.push_str(&format!(
-                    "  background asset(\"{}\") with fade_through_black(640ms);\n",
-                    tone.asset()
-                ));
-                output.push_str("  wait 640ms;\n");
-                *current_background = tone.asset().to_owned();
-            }
-        },
-    }
-}
-
 fn is_explicit_silence(text: &str) -> bool {
     matches!(text.trim(), "..." | "……")
-}
-
-fn is_scene_asset(asset: &str) -> bool {
-    asset.starts_with("assets/bg/scenes/")
 }
 
 fn escape_string(value: &str) -> String {
@@ -2648,7 +1004,15 @@ mod tests {
         .unwrap();
         let output = temp.path().join("generated/ja-JP.aria");
 
-        let report = import_novel(&source, &output, "chapter_select_ja", "ja-JP").unwrap();
+        let report = import_novel_with_options(
+            &source,
+            &output,
+            NovelImportOptions {
+                speakers: vec!["俺".to_owned(), "ミオ".to_owned()],
+                ..NovelImportOptions::plain("chapter_select_ja", "ja-JP")
+            },
+        )
+        .unwrap();
         assert_eq!(report.chapters.len(), 2);
         assert_eq!(report.reading_beats, 6);
         assert_eq!(report.structural_breaks, 1);
@@ -2685,8 +1049,11 @@ mod tests {
 
     #[test]
     fn blank_paragraphs_and_ash_cues_are_distinct_timed_beats() {
-        let beats =
-            parse_beats("最初の文。\n\n余韻……\n\n次の文。\n\npause ash 720\n\nその後。\n").unwrap();
+        let beats = parse_beats(
+            "最初の文。\n\n余韻……\n\n次の文。\n\npause ash 720\n\nその後。\n",
+            &[],
+        )
+        .unwrap();
 
         assert_eq!(
             beats,
@@ -2705,10 +1072,7 @@ mod tests {
                     speaker: None,
                     text: "次の文。".to_owned(),
                 },
-                NovelBeat::Direction(NovelDirection::AshPause {
-                    duration_ms: 720,
-                    field: "#6d706f"
-                }),
+                NovelBeat::Direction(NovelDirection::AshPause { duration_ms: 720 }),
                 NovelBeat::Reading {
                     speaker: None,
                     text: "その後。".to_owned(),
@@ -2721,6 +1085,7 @@ mod tests {
     fn explicit_pacing_keeps_blank_markdown_inert_and_assigns_each_stage_cue() {
         let beats = parse_beats(
             "pacing explicit\n\n前の文。\n\npause breath 240\n\nbackdrop rail\n\nstatement sea\n\nマイクの先で、風が鳴った。\n\n次の文。\n",
+            &[],
         )
         .unwrap();
 
@@ -2733,11 +1098,11 @@ mod tests {
                 },
                 NovelBeat::Direction(NovelDirection::QuietPause { duration_ms: 240 }),
                 NovelBeat::Direction(NovelDirection::Backdrop {
-                    tone: BackdropTone::Rail,
+                    tone: "rail".to_owned(),
                 }),
                 NovelBeat::Statement {
                     text: "マイクの先で、風が鳴った。".to_owned(),
-                    field: StatementField::Sea,
+                    field: "sea".to_owned(),
                 },
                 NovelBeat::Reading {
                     speaker: None,
@@ -2748,252 +1113,26 @@ mod tests {
     }
 
     #[test]
-    fn umikaze_statement_is_an_automatic_atomic_story_surface() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("src");
-        fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(
-            source.join("00_init.md"),
-            "pacing explicit\n\n前の文。\n\nstatement ash\n\n白い。\n\n次の文。\n",
-        )
-        .unwrap();
-        let output = temp.path().join("scenario/ja-JP");
-        let include = UMIKAZE_CHAPTER_STYLES
-            .iter()
-            .map(|style| style.source_name.to_owned())
-            .collect();
-
-        import_novel_with_options(
-            &source,
-            &output,
-            NovelImportOptions {
-                chapter_select: "chapter_select_ja".to_owned(),
-                locale: "ja-JP".to_owned(),
-                include,
-                presentation: NovelPresentation::Umikaze,
-                layout: NovelImportLayout::Chapters,
-            },
-        )
-        .unwrap();
-
-        let generated = fs::read_to_string(output.join("chapter-00.aria")).unwrap();
-        // Inside `prose`, `pause 0ms` is the clear before the statement field.
-        assert!(generated.contains(
-            "\"前の文。\";\n    pause 0ms;\n    screen statement;\n    background asset(\"#6d706f\") with fade(260ms);\n    stage stillness;\n    narrate \"白い。\";\n    wait 1600ms;\n    background asset(\"assets/bg/scenes/hospital-corridor-overcast-v1.webp\") with fade(360ms);\n    screen dialogue;\n    clear dialogue;\n    wait 180ms;"
-        ));
-        // The statement is never a reading line the player advances.
-        assert!(!generated.contains("\n    \"白い。\";"));
-    }
-
-    #[test]
-    fn umikaze_profile_embeds_day_zero_to_ten_and_translates_stage_cues() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("src");
-        fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(
-            source.join("00_init.md"),
-            "**9月18日　保健室**\n\n本文。\n\n余白。\n\npause ash 720\n\n# side2\n\n...\n",
-        )
-        .unwrap();
-        fs::write(
-            source.join("05_day5.md"),
-            "雨の夜。\n; 暗転・雨の音フェードアウト\nfadeout 2\nstopbgm\nwait 2000\n; 病院回想\nfadein\n白い天井。\n",
-        )
-        .unwrap();
-        fs::write(source.join("10_day10.md"), "終わり。\n……\n").unwrap();
-        let output_path = temp.path().join("generated/umikaze.aria");
-        let include = UMIKAZE_CHAPTER_STYLES
-            .iter()
-            .map(|style| style.source_name.to_owned())
-            .collect();
-
-        let report = import_novel_with_options(
-            &source,
-            &output_path,
-            NovelImportOptions {
-                chapter_select: "chapter_select_ja".to_owned(),
-                locale: "ja-JP".to_owned(),
-                include,
-                presentation: NovelPresentation::Umikaze,
-                layout: NovelImportLayout::Single,
-            },
-        )
-        .unwrap();
-        assert_eq!(report.chapters.len(), 12);
-        assert_eq!(report.structural_breaks, 1);
-        assert_eq!(report.stage_directions, 5);
-
-        let generated = fs::read_to_string(&output_path).unwrap();
-        assert!(generated.contains("module umikaze.scenario.ja.canonical;"));
-        assert!(generated.contains("screen day_card;"));
-        assert!(generated.contains("screen interlude;"));
-        assert!(generated.contains("narrate \"9月18日　保健室\";"));
-        assert!(generated.contains("background asset(\"#05070b\") with fade(2000ms);"));
-        assert!(generated.contains("background asset(\"#ded7c9\") with fade(420ms);"));
-        assert!(generated.contains("prose breath 300ms {"));
-        assert!(generated.contains("\"本文。\";\n    \"余白。\";"));
-        assert!(generated.contains(
-            "background asset(\"#6d706f\") with fade(260ms);\n    stage stillness;\n    wait 720ms;\n    background asset(\"assets/bg/scenes/hospital-corridor-overcast-v1.webp\") with fade(360ms);\n    wait 180ms;"
-        ));
-        assert!(generated.contains("effect tint \"#05070b\" amount 64 over 520ms;"));
-        assert!(!generated.contains("fadeout 2"));
-        assert!(!generated.contains("病院回想"));
-
-        let compiled = aria_core::compile_with_routes(CompileInput {
-            game_id: "jp.example.umikaze-import".to_owned(),
-            entry: "scripts/main.aria".to_owned(),
-            sources: vec![
-                SourceUnit {
-                    logical_path: "scripts/main.aria".to_owned(),
-                    source: "aria;\nuse \"scenario/umikaze.aria\";\nentry start;\nscene start { jump chapter_select_ja; }\nscene title_screen { end; }\n".to_owned(),
-                },
-                SourceUnit {
-                    logical_path: "scripts/scenario/umikaze.aria".to_owned(),
-                    source: generated,
-                },
-            ],
-        }, &["day_card", "interlude", "statement"].into_iter().map(str::to_owned).collect());
-        assert!(!compiled.has_errors(), "{:#?}", compiled.diagnostics);
-    }
-
-    #[test]
-    fn umikaze_chapter_layout_keeps_each_day_in_its_own_aria_file() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("src");
-        fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        let output = temp.path().join("scenario/ja-JP");
-        let include = UMIKAZE_CHAPTER_STYLES
-            .iter()
-            .map(|style| style.source_name.to_owned())
-            .collect();
-
-        let report = import_novel_with_options(
-            &source,
-            &output,
-            NovelImportOptions {
-                chapter_select: "chapter_select_ja".to_owned(),
-                locale: "ja-JP".to_owned(),
-                include,
-                presentation: NovelPresentation::Umikaze,
-                layout: NovelImportLayout::Chapters,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(report.layout, NovelImportLayout::Chapters);
-        let index = fs::read_to_string(output.join("index.aria")).unwrap();
-        assert!(index.contains("use \"chapter-00.aria\";"));
-        assert!(index.contains("use \"chapter-10.aria\";"));
-        for chapter in 0..=10 {
-            let source = fs::read_to_string(output.join(format!("chapter-{chapter:02}.aria")))
-                .unwrap_or_else(|_| panic!("missing chapter-{chapter:02}.aria"));
-            assert!(source.contains(&format!("module umikaze.scenario.ja.chapter_{chapter:02};")));
-            assert!(source.contains(&format!("scene novel_chapter_{chapter:02} {{")));
-            assert!(source.contains("screen day_card;"));
-        }
-    }
-
-    #[test]
-    fn the_music_score_follows_its_lines_and_fails_loudly_when_one_is_lost() {
-        let chapter = "  narrate \"冷えた缶を口に当てると、雨の音が少し遠くなった。\";\n  await advance;\n  clear dialogue;\n  wait breath 220ms;\n  narrate \"ミオは布団の中で、少しだけ笑った。\";\n  await advance;\n";
-        let scored = score_umikaze_chapter("05_day5.md", chapter).unwrap();
-        assert!(scored.contains(
-            "  clear dialogue;\n  play bgm asset(\"assets/audio/bgm/umk.rain.room.ogg\") loop fade 800ms;\n  wait breath 220ms;"
-        ));
-        assert!(scored.contains("少しだけ笑った。\";\n  await advance;\n  stop bgm fade 700ms;"));
-
-        // One anchor kept, one revised away: the import must stop.
-        let revised = chapter.replace("ミオは布団の中で、少しだけ笑った。", "ミオは黙った。");
-        assert!(score_umikaze_chapter("05_day5.md", &revised).is_err());
-
-        // A chapter with none of its anchors is another manuscript.
-        assert_eq!(
-            score_umikaze_chapter("05_day5.md", "  narrate \"本文。\";\n").unwrap(),
-            "  narrate \"本文。\";\n"
-        );
-    }
-
-    #[test]
     fn verifier_rejects_a_manual_visible_text_change_without_rewriting_it() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("src");
         fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        let output = temp.path().join("scenario/ja-JP");
-        let options = NovelImportOptions {
-            chapter_select: "chapter_select_ja".to_owned(),
-            locale: "ja-JP".to_owned(),
-            include: UMIKAZE_CHAPTER_STYLES
-                .iter()
-                .map(|style| style.source_name.to_owned())
-                .collect(),
-            presentation: NovelPresentation::Umikaze,
-            layout: NovelImportLayout::Chapters,
-        };
+        fs::write(source.join("00_init.md"), "本文。\n").unwrap();
+        let output = temp.path().join("story.aria");
+        let options = NovelImportOptions::plain("chapter_select_ja", "ja-JP");
         import_novel_with_options(&source, &output, options.clone()).unwrap();
 
-        let day_ten = output.join("chapter-10.aria");
-        // Generated stories are `prose` blocks, where a reading line is the
-        // bare string.
-        let original = fs::read_to_string(&day_ten).unwrap();
+        let original = fs::read_to_string(&output).unwrap();
         let modified = original.replacen("\"本文。\"", "\"改ざん。\"", 1);
         assert_ne!(
             original, modified,
             "the fixture line must be present to tamper with"
         );
-        fs::write(&day_ten, &modified).unwrap();
+        fs::write(&output, &modified).unwrap();
 
         let error = verify_novel_output(&source, &output, options).unwrap_err();
         assert!(error.to_string().contains("player-text mismatch"));
-        assert!(fs::read_to_string(day_ten).unwrap().contains("改ざん。"));
-    }
-
-    #[test]
-    fn verifier_rejects_a_changed_authored_silence_hold() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("src");
-        fs::create_dir_all(&source).unwrap();
-        for style in &UMIKAZE_CHAPTER_STYLES {
-            fs::write(source.join(style.source_name), "本文。\n").unwrap();
-        }
-        fs::write(source.join("00_init.md"), "...\n").unwrap();
-        let output = temp.path().join("scenario/ja-JP");
-        let options = NovelImportOptions {
-            chapter_select: "chapter_select_ja".to_owned(),
-            locale: "ja-JP".to_owned(),
-            include: UMIKAZE_CHAPTER_STYLES
-                .iter()
-                .map(|style| style.source_name.to_owned())
-                .collect(),
-            presentation: NovelPresentation::Umikaze,
-            layout: NovelImportLayout::Chapters,
-        };
-        import_novel_with_options(&source, &output, options.clone()).unwrap();
-
-        let day_zero = output.join("chapter-00.aria");
-        let modified =
-            fs::read_to_string(&day_zero)
-                .unwrap()
-                .replacen("wait 620ms;", "wait 1ms;", 1);
-        fs::write(&day_zero, modified).unwrap();
-
-        let error = verify_novel_output(&source, &output, options).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("does not preserve the 620ms silence")
-        );
+        assert!(fs::read_to_string(output).unwrap().contains("改ざん。"));
     }
 
     #[test]
@@ -3013,8 +1152,7 @@ mod tests {
                 chapter_select: "chapter_select_ja".to_owned(),
                 locale: "ja-JP".to_owned(),
                 include: vec!["00_init.md".to_owned(), "01_start.md".to_owned()],
-                presentation: NovelPresentation::Plain,
-                layout: NovelImportLayout::Single,
+                speakers: Vec::new(),
             },
         )
         .unwrap();
