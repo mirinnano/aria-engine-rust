@@ -263,6 +263,12 @@ pub enum StatementKind {
     Narrate {
         text: String,
     },
+    /// A `prose` line after a `+`: it appends to the text already shown
+    /// instead of replacing it. Only `prose` produces it.
+    ContinueText {
+        speaker: Option<String>,
+        text: String,
+    },
     ClearDialogue,
     AwaitAdvance,
     Wait {
@@ -1550,13 +1556,42 @@ impl Parser {
         let mut output = Vec::new();
         let mut items = items.into_iter().peekable();
         let mut after_line = false;
+        // The speaker of the open `+` line, when the next line continues it.
+        let mut continuing: Option<(Option<String>, SourceSpan)> = None;
         while let Some(item) = items.next() {
             match item {
                 Item::Line { kind, joined, span } => {
+                    let (speaker, text) = match kind {
+                        StatementKind::Say { speaker, text } => (speaker, text),
+                        StatementKind::Narrate { text } => (None, text),
+                        _ => unreachable!("prose lines are Say or Narrate"),
+                    };
+                    let kind = match continuing.take() {
+                        Some((open_speaker, _)) => {
+                            if open_speaker != speaker {
+                                self.error_span(
+                                    &span,
+                                    "a line continued with '+' must keep the same speaker",
+                                );
+                            }
+                            StatementKind::ContinueText {
+                                speaker: speaker.clone(),
+                                text,
+                            }
+                        }
+                        None => match speaker.clone() {
+                            Some(speaker) => StatementKind::Say {
+                                speaker: Some(speaker),
+                                text,
+                            },
+                            None => StatementKind::Narrate { text },
+                        },
+                    };
                     output.push(statement(kind, &span));
                     output.push(statement(StatementKind::AwaitAdvance, &span));
                     after_line = false;
                     if joined {
+                        continuing = Some((speaker, span));
                         continue;
                     }
                     output.push(statement(StatementKind::ClearDialogue, &span));
@@ -1570,6 +1605,9 @@ impl Parser {
                     }
                 }
                 Item::Pause { duration_ms, span } => {
+                    if continuing.is_some() {
+                        self.error_span(&span, "'pause' cannot follow a line ending in '+'");
+                    }
                     if !after_line {
                         output.push(statement(StatementKind::ClearDialogue, &span));
                     }
@@ -1585,6 +1623,8 @@ impl Parser {
                 }
             }
         }
+        // A `+` on the last line leaves its text shown, without a clear or a
+        // breath, for the statements after `prose` to handle.
         Some(output)
     }
 

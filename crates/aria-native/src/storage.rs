@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use aria_core::{SaveEnvelopeError, SaveEnvelopeV3};
+use aria_core::{SaveEnvelopeError, SaveEnvelopeV3, SystemData};
 use atomic_write_file::AtomicWriteFile;
 use thiserror::Error;
 
@@ -111,6 +111,24 @@ impl AtomicSaveStore {
         }
     }
 
+    /// Writes the reader's system data, kept once per game beside the slots.
+    pub fn save_system(&self, data: &SystemData) -> Result<(), SaveStoreError> {
+        fs::create_dir_all(self.directory())?;
+        let encoded = serde_json::to_vec(data).map_err(SaveStoreError::System)?;
+        write_atomic(&self.system_path(), &encoded)
+    }
+
+    /// The stored system data, or `None` before the first write.
+    pub fn load_system(&self) -> Result<Option<SystemData>, SaveStoreError> {
+        match fs::read(self.system_path()) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(SaveStoreError::System),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(SaveStoreError::Io(error)),
+        }
+    }
+
     #[must_use]
     pub fn directory(&self) -> PathBuf {
         self.root.join(&self.namespace)
@@ -118,6 +136,10 @@ impl AtomicSaveStore {
 
     fn current_path(&self, slot: u32) -> PathBuf {
         self.directory().join(format!("slot_{slot:04}.ariasave"))
+    }
+
+    fn system_path(&self) -> PathBuf {
+        self.directory().join("system.json")
     }
 
     fn previous_path(&self, slot: u32) -> PathBuf {
@@ -157,6 +179,8 @@ pub enum SaveStoreError {
     InvalidCurrent(SaveEnvelopeError),
     #[error("both save generations are invalid (current: {current}; previous: {previous})")]
     BothGenerationsInvalid { current: String, previous: String },
+    #[error("invalid system data: {0}")]
+    System(serde_json::Error),
 }
 
 #[cfg(test)]
@@ -217,6 +241,25 @@ mod tests {
                 .unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn system_data_round_trips_beside_the_slots() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AtomicSaveStore::new(temp.path(), "game").unwrap();
+        assert_eq!(store.load_system().unwrap(), None);
+        let mut data = aria_core::Vm::new(
+            aria_core::CompiledProgram::empty("jp.example.game"),
+            aria_core::LogicalSize {
+                width: 1280,
+                height: 720,
+            },
+        )
+        .unwrap()
+        .system_data();
+        data.persistent_flags.insert("seen".to_owned(), true);
+        store.save_system(&data).unwrap();
+        assert_eq!(store.load_system().unwrap(), Some(data));
     }
 
     #[test]

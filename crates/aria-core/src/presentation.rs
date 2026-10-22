@@ -275,6 +275,10 @@ pub struct UiViewModel {
     pub choices: Vec<ChoiceView>,
     pub actions: Vec<ActionView>,
     pub settings: SettingsState,
+    /// Increases whenever the system data (persistent flags, read lines,
+    /// unlocks, settings) changes; hosts write it out when this moves.
+    #[serde(default)]
+    pub system_revision: u64,
     /// Only a virtual window is populated while the backlog route is open.
     /// A normal reading update therefore never clones or serializes the full
     /// history merely because another grapheme appeared.

@@ -256,6 +256,10 @@ pub struct BacklogTargetState {
     pub page_index: usize,
     pub page_columns: usize,
     pub trace_position: usize,
+    /// The last line shown on the page. Lines continued with `+` share a
+    /// text id, so replay also waits for this line before stopping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,6 +276,37 @@ pub struct ChapterState {
     pub script: Option<String>,
     pub unlocked: bool,
     pub progress: u8,
+}
+
+/// Data that belongs to the reader rather than to one save slot: it is kept
+/// once per game, and loading a slot never takes it back to the slot's copy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SystemData {
+    pub schema_version: u32,
+    pub game_id: String,
+    #[serde(default)]
+    pub persistent_flags: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_texts: BTreeSet<String>,
+    #[serde(default)]
+    pub chapters: BTreeMap<String, ChapterState>,
+    #[serde(default)]
+    pub unlocked_cgs: BTreeSet<String>,
+    #[serde(default)]
+    pub settings: SettingsState,
+}
+
+pub const SYSTEM_DATA_SCHEMA: u32 = 1;
+
+/// Cheap change detector for [`SystemData`]. Read lines and CGs are only
+/// ever added, so their counts are enough; the rest is small.
+#[derive(Debug, Clone, PartialEq)]
+struct SystemFingerprint {
+    persistent_flags: BTreeMap<String, bool>,
+    chapters: BTreeMap<String, ChapterState>,
+    settings: SettingsState,
+    read_texts: usize,
+    unlocked_cgs: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,6 +371,11 @@ pub struct SettingsState {
     /// transient on/off state of the Skip command itself.
     #[serde(default)]
     pub skip_unread: bool,
+    /// The reader picked a text speed on the settings screen. From then on
+    /// the script's `text_speed`, which sets the game's default, no longer
+    /// overrides it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text_speed_chosen: bool,
 }
 
 const fn default_text_scale() -> f32 {
@@ -369,6 +409,7 @@ impl Default for SettingsState {
             reduced_motion: false,
             stage_effects: true,
             skip_unread: false,
+            text_speed_chosen: false,
         }
     }
 }
@@ -583,6 +624,11 @@ pub struct Vm {
     /// Runs plugin commands and migrations. Hosts install it with the
     /// plugins; the Core never holds a Wasm instance itself.
     executor: Option<std::sync::Arc<dyn crate::plugins::PluginExecutor>>,
+    /// Bumped whenever [`SystemData`] changes, so hosts know when to write
+    /// it. Not saved: it only orders changes within one running VM.
+    system_revision: u64,
+    /// Whether the host has handed over stored system data.
+    system_installed: bool,
 }
 
 impl Vm {
@@ -670,6 +716,8 @@ impl Vm {
             collections,
             cgs,
             executor: None,
+            system_revision: 0,
+            system_installed: false,
         })
     }
 
@@ -802,6 +850,109 @@ impl Vm {
         Ok(())
     }
 
+    /// The reader's data that outlives any one save slot.
+    #[must_use]
+    pub fn system_data(&self) -> SystemData {
+        SystemData {
+            schema_version: SYSTEM_DATA_SCHEMA,
+            game_id: self.program.game_id.clone(),
+            persistent_flags: self.state.persistent_flags.clone(),
+            read_texts: self.state.read_texts.clone(),
+            chapters: self.state.chapters.clone(),
+            unlocked_cgs: self.state.unlocked_cgs.clone(),
+            settings: self.state.settings.clone(),
+        }
+    }
+
+    /// Installs stored system data, normally once at start-up before the
+    /// first step. Stored flags and settings replace the VM's; read lines,
+    /// unlocks, and chapters are merged.
+    pub fn install_system_data(&mut self, data: SystemData) -> Result<(), VmError> {
+        if data.schema_version != SYSTEM_DATA_SCHEMA {
+            return Err(VmError::UnsupportedSystemData(data.schema_version));
+        }
+        if data.game_id != self.program.game_id {
+            return Err(VmError::WrongGame {
+                expected: self.program.game_id.clone(),
+                actual: data.game_id,
+            });
+        }
+        self.merge_system_data(data);
+        self.system_installed = true;
+        Ok(())
+    }
+
+    /// Increases whenever [`Self::system_data`] changes.
+    #[must_use]
+    pub fn system_revision(&self) -> u64 {
+        self.system_revision
+    }
+
+    fn system_fingerprint(&self) -> SystemFingerprint {
+        SystemFingerprint {
+            persistent_flags: self.state.persistent_flags.clone(),
+            chapters: self.state.chapters.clone(),
+            settings: self.state.settings.clone(),
+            read_texts: self.state.read_texts.len(),
+            unlocked_cgs: self.state.unlocked_cgs.len(),
+        }
+    }
+
+    /// Combines `other` with the system data in `self.state`; see
+    /// "保存枠とシステムデータ" in the language spec. `other` is the newer
+    /// record: the stored data at start-up, or the reader's data when a slot
+    /// is restored over it. Its flags and settings win; sets are merged.
+    fn merge_system_data(&mut self, other: SystemData) {
+        let state = &mut self.state;
+        state.persistent_flags.extend(other.persistent_flags);
+        // A slot keeps its own copy of persistent flags among the run's
+        // flags; the reader's value overrides that stale copy.
+        for (name, value) in &state.persistent_flags {
+            state.flags.insert(name.clone(), *value);
+        }
+        state.read_texts.extend(other.read_texts);
+        state.unlocked_cgs.extend(other.unlocked_cgs);
+        for (id, chapter) in other.chapters {
+            match state.chapters.get_mut(&id) {
+                Some(existing) => {
+                    existing.unlocked |= chapter.unlocked;
+                    existing.progress = existing.progress.max(chapter.progress);
+                }
+                None => {
+                    state.chapters.insert(id, chapter);
+                }
+            }
+        }
+        state.settings = other.settings;
+        self.apply_settings();
+        self.system_revision = self.system_revision.saturating_add(1);
+    }
+
+    /// Brings the running state in line with `settings` after it was
+    /// replaced wholesale.
+    fn apply_settings(&mut self) {
+        let state = &mut self.state;
+        state.settings.text_scale = state.settings.text_scale.clamp(0.85, 1.35);
+        state.settings.text_opacity = state.settings.text_opacity.clamp(0.72, 1.0);
+        state.text.speed_ms = state.settings.text_speed_ms;
+        state.auto_delay_ms = state.settings.auto_delay_ms;
+        for (bus, volume) in [
+            (AudioBus::Bgm, state.settings.bgm_volume),
+            (AudioBus::SoundEffect, state.settings.sound_effect_volume),
+            (AudioBus::Voice, state.settings.voice_volume),
+            (AudioBus::Ambient, state.settings.ambient_volume),
+        ] {
+            if state.bus_volumes.get(&bus) != Some(&volume) {
+                state.bus_volumes.insert(bus, volume);
+                self.pending_audio.push(AudioCommand::SetBusVolume {
+                    bus,
+                    volume,
+                    fade_ms: 0,
+                });
+            }
+        }
+    }
+
     pub fn restore(&mut self, mut snapshot: VmSnapshot) -> Result<(), VmError> {
         // Schema 10 differs only in how it named the plugins it was made
         // with (by binary hash, a field that no longer deserializes). It
@@ -924,8 +1075,17 @@ impl Vm {
             )
             .collect();
         self.registration_closed = true;
+        let current = self.system_data();
+        let slot_settings = snapshot.settings.clone();
         self.state = snapshot;
         self.pending_audio = restored_audio;
+        self.merge_system_data(current);
+        // A host that never installed system data has nowhere else to keep
+        // settings, so the slot's settings still apply there.
+        if !self.system_installed {
+            self.state.settings = slot_settings;
+            self.apply_settings();
+        }
         self.pending_runtime.clear();
         Ok(())
     }
@@ -993,6 +1153,7 @@ impl Vm {
 
     pub fn step(&mut self, input: &InputSnapshot) -> Result<StepOutput, VmError> {
         self.registration_closed = true;
+        let system_before = self.system_fingerprint();
         if let Some(previous) = self.state.last_input_sequence
             && input.sequence <= previous
         {
@@ -1074,6 +1235,9 @@ impl Vm {
         } else if !route_changed {
             self.handle_waiting_input(input)?;
             self.run_running_instructions()?;
+        }
+        if self.system_fingerprint() != system_before {
+            self.system_revision = self.system_revision.saturating_add(1);
         }
         let scene = self.scene_frame();
         let view = self.build_view_model();
@@ -1766,6 +1930,10 @@ impl Vm {
         let mut reached_target = false;
         for _ in 0..MAX_REPLAY_TURNS {
             if replay.state.text.text_id.as_deref() == Some(target.text_id.as_str())
+                && target
+                    .line_key
+                    .as_ref()
+                    .is_none_or(|key| replay.state.text.line_key.as_ref() == Some(key))
                 && (matches!(
                     replay.state.execution,
                     ExecutionState::WaitingForAdvance { .. }
@@ -2065,9 +2233,6 @@ impl Vm {
         let Some(page_id) = self.current_page_id() else {
             return;
         };
-        if self.state.backlog.iter().any(|entry| entry.id == page_id) {
-            return;
-        }
         let pages = self.subtitle_pages();
         let page_index = self
             .state
@@ -2080,6 +2245,22 @@ impl Vm {
         let Some(text_id) = self.state.text.text_id.clone() else {
             return;
         };
+        if let Some(entry) = self
+            .state
+            .backlog
+            .iter_mut()
+            .find(|entry| entry.id == page_id)
+        {
+            // A line continued with `+` grows a page that is already in
+            // history; the entry follows it rather than keeping the prefix.
+            if entry.text != text {
+                entry.text = text;
+                if let Some(target) = self.state.backlog_targets.get_mut(&page_id) {
+                    target.line_key = self.state.text.line_key.clone();
+                }
+            }
+            return;
+        }
         self.state.backlog.push(BacklogEntryState {
             id: page_id.clone(),
             speaker: self.state.text.speaker.clone(),
@@ -2094,6 +2275,7 @@ impl Vm {
                 page_index,
                 page_columns: self.state.text.page_columns,
                 trace_position: self.state.narrative_trace.len(),
+                line_key: self.state.text.line_key.clone(),
             },
         );
         self.state.backlog_focused = self.state.backlog.len().saturating_sub(1);
@@ -2131,6 +2313,7 @@ impl Vm {
         match name {
             "text_speed_ms" => {
                 self.state.settings.text_speed_ms = value.clamp(0.0, 200.0) as u32;
+                self.state.settings.text_speed_chosen = true;
                 self.state.text.speed_ms = self.state.settings.text_speed_ms;
             }
             "auto_delay_ms" => {
@@ -2677,6 +2860,11 @@ impl Vm {
                     Some(Operand::None) | None => None,
                     Some(value) => Some(self.string(value)?),
                 };
+                let append = matches!(instruction.operands.get(4), Some(Operand::Boolean(true)));
+                if append && self.state.text.text_id.is_some() {
+                    self.append_text(text, markup, line_key);
+                    return Ok(());
+                }
                 let text_id = format!("text-{}", self.state.next_text_sequence);
                 self.state.next_text_sequence = self.state.next_text_sequence.saturating_add(1);
                 self.state.text = TextState {
@@ -2862,8 +3050,12 @@ impl Vm {
             }
             ByteOp::SetTextSpeed => {
                 let speed = self.integer(self.operand(instruction, 0)?)?.max(0) as u32;
-                self.state.text.speed_ms = speed;
-                self.state.settings.text_speed_ms = speed;
+                // The script sets the game's default; a speed the reader chose
+                // is system data and wins over it.
+                if !self.state.settings.text_speed_chosen {
+                    self.state.text.speed_ms = speed;
+                    self.state.settings.text_speed_ms = speed;
+                }
             }
             ByteOp::SetAutoMode => {
                 self.set_auto_mode(self.boolean(self.operand(instruction, 0)?)?);
@@ -3353,6 +3545,62 @@ impl Vm {
             .ok_or_else(|| self.error_at_pc(VmErrorKind::MissingConstant(index)))
     }
 
+    /// Continues the shown text with a `prose` line after `+`. The text keeps
+    /// its id and its revealed prefix, so the typewriter resumes where the
+    /// previous line ended and history keeps one entry per page.
+    fn append_text(
+        &mut self,
+        text: String,
+        markup: Option<crate::markup::ParsedText>,
+        line_key: Option<String>,
+    ) {
+        let offset = grapheme_count(&self.state.text.full_text);
+        let previous = self.state.text.markup.take();
+        let joined =
+            match (previous, markup) {
+                (None, None) => None,
+                (previous, next) => {
+                    let mut joined = previous.unwrap_or_else(|| crate::markup::ParsedText {
+                        plain: self.state.text.full_text.clone(),
+                        ..Default::default()
+                    });
+                    let next = next.unwrap_or_else(|| crate::markup::ParsedText {
+                        plain: text.clone(),
+                        ..Default::default()
+                    });
+                    joined.plain.push_str(&next.plain);
+                    joined.spans.extend(next.spans.into_iter().map(|span| {
+                        crate::markup::MarkupSpan {
+                            start: span.start + offset,
+                            end: span.end + offset,
+                            kind: span.kind,
+                        }
+                    }));
+                    joined.waits.extend(next.waits.into_iter().map(|wait| {
+                        crate::markup::TextWait {
+                            at: wait.at + offset,
+                            ms: wait.ms,
+                        }
+                    }));
+                    Some(joined)
+                }
+            };
+        self.state.text.full_text.push_str(&text);
+        self.state.text.markup = joined;
+        self.state.text.line_key = line_key;
+        self.state.text.reveal_elapsed_ms = 0;
+        // A page that was already full moves on to the page the new line
+        // starts, instead of asking for an advance that shows nothing new.
+        if self.state.text.visible_graphemes >= self.current_page_grapheme_count() {
+            self.advance_to_next_subtitle_page();
+        }
+        if self.is_atomic_story_route(&self.state.ui.route) {
+            self.state.text.visible_graphemes = self.current_page_grapheme_count();
+            self.record_current_page_if_needed();
+            self.mark_current_text_read();
+        }
+    }
+
     fn clear_text(&mut self) {
         let speed_ms = self.state.text.speed_ms;
         self.state.text = TextState {
@@ -3751,6 +3999,7 @@ impl Vm {
             actions: self.presentation_actions(&route),
             settings: self.state.settings.clone(),
             backlog,
+            system_revision: self.system_revision,
             backlog_total,
             backlog_start: u32::try_from(backlog_start).unwrap_or(u32::MAX),
             chapters,
@@ -4199,6 +4448,8 @@ pub enum VmError {
     PluginCall(String),
     #[error("unsupported VM snapshot schema {0}")]
     UnsupportedSnapshot(u32),
+    #[error("unsupported system data schema {0}")]
+    UnsupportedSystemData(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
     WrongGame { expected: String, actual: String },
     #[error("invalid snapshot program counter {0}")]
@@ -5185,6 +5436,42 @@ mod tests {
         assert_eq!(resumed.snapshot().narrative_trace.len(), 1);
         assert!(resumed.snapshot().chapters.contains_key("sea"));
         assert!(resumed.snapshot().unlocked_cgs.contains("sea-cg"));
+    }
+
+    #[test]
+    fn backlog_resume_returns_to_the_whole_of_a_continued_page() {
+        let mut runtime = vm("aria;\n\
+             entry start;\n\
+             scene start { screen dialogue; text_speed 0; prose { \"前半、\" +; \"後半。\"; \"次の行。\"; } end; }\n");
+        let advance = |runtime: &mut Vm, sequence: u64| {
+            let mut input = InputSnapshot::idle(sequence, 16);
+            input.intents.push(UiIntent::Activate {
+                id: "dialogue.advance".to_owned(),
+            });
+            runtime.step(&input).unwrap()
+        };
+        runtime.step(&InputSnapshot::idle(1, 16)).unwrap();
+        advance(&mut runtime, 2);
+        runtime.step(&InputSnapshot::idle(3, 16)).unwrap();
+        advance(&mut runtime, 4);
+        runtime.step(&InputSnapshot::idle(5, 16)).unwrap();
+        assert_eq!(runtime.backlog()[0].text, "前半、後半。");
+        let joined_id = runtime.backlog()[0].id.clone();
+
+        let mut choose = InputSnapshot::idle(6, 16);
+        choose.intents.push(UiIntent::Activate {
+            id: format!("backlog:{joined_id}"),
+        });
+        runtime.step(&choose).unwrap();
+        let mut accept = InputSnapshot::idle(7, 16);
+        accept.intents.push(UiIntent::Activate {
+            id: "confirm.accept".to_owned(),
+        });
+        let output = runtime.step(&accept).unwrap();
+        let dialogue = output.view.dialogue.expect("resumed subtitle");
+        // Replay stops after the continued line, not after the first half.
+        assert_eq!(dialogue.full_text, "前半、後半。");
+        assert_eq!(dialogue.text, dialogue.full_page_text);
     }
 
     #[test]
