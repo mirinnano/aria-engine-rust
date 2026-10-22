@@ -1618,6 +1618,11 @@ impl Parser {
                     after_line = false;
                 }
                 Item::Other(other) => {
+                    // Clearing the text ends the continuation: the next line
+                    // starts a new text rather than appending to nothing.
+                    if matches!(other.kind, StatementKind::ClearDialogue) {
+                        continuing = None;
+                    }
                     output.push(other);
                     after_line = false;
                 }

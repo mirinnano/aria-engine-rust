@@ -309,3 +309,29 @@ scene start {
     assert_eq!(shown(&mut vm, 4, 0), "あい");
     assert_eq!(shown(&mut vm, 5, 10), "あいう");
 }
+
+#[test]
+fn clear_dialogue_after_plus_starts_the_next_line_afresh() {
+    let prose = program(
+        r#"aria;
+entry start;
+scene start {
+  prose {
+    "眠りについた。" +;
+    clear dialogue;
+    wait 300ms;
+    "目を覚ます。";
+  }
+  end;
+}
+"#,
+    );
+    let texts: Vec<usize> = prose
+        .instructions
+        .iter()
+        .filter(|instruction| instruction.op == ByteOp::Text)
+        .map(|instruction| instruction.operands.len())
+        .collect();
+    // Neither line carries the append marker.
+    assert_eq!(texts, vec![3, 3]);
+}
