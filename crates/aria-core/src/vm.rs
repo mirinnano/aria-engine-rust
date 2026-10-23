@@ -496,6 +496,10 @@ const fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+/// Reading time auto adds per shown grapheme, on top of the reader's delay.
+/// About eight characters a second once the typewriter has finished.
+const AUTO_READING_MS_PER_GRAPHEME: u32 = 70;
+
 const fn default_subtitle_columns() -> usize {
     80
 }
@@ -1244,7 +1248,7 @@ impl Vm {
                     || self.skip_current_line()
                     || (self.state.auto_mode == AutoMode::On
                         && page_complete
-                        && self.state.auto_elapsed_ms >= self.state.auto_delay_ms);
+                        && self.state.auto_elapsed_ms >= self.auto_wait_ms());
                 if activated {
                     self.advance_dialogue();
                 }
@@ -2223,6 +2227,16 @@ impl Vm {
         if let Some(id) = self.current_read_key().cloned() {
             self.state.read_texts.insert(id);
         }
+    }
+
+    /// How long auto waits after a page is fully shown: the reader's chosen
+    /// delay plus time to read the page itself. A flat delay rushed long
+    /// lines off the band and held short ones too long.
+    fn auto_wait_ms(&self) -> u32 {
+        let graphemes = u32::try_from(self.current_page_grapheme_count()).unwrap_or(u32::MAX);
+        self.state
+            .auto_delay_ms
+            .saturating_add(graphemes.saturating_mul(AUTO_READING_MS_PER_GRAPHEME))
     }
 
     fn skip_current_line(&self) -> bool {
