@@ -26,7 +26,7 @@ pub use storage::{GenerationStore, RecoveredGeneration};
 mod wasm_api {
     use aria_core::pak::PakArchive;
     use aria_core::protocol::LogicalSize;
-    use aria_core::{CompiledProgram, InputSnapshot, VmSnapshot};
+    use aria_core::{CompiledProgram, InputSnapshot, SystemData, VmSnapshot};
     use aria_protection::{PakPackage, StaticPakKeyProvider};
     use wasm_bindgen::prelude::*;
 
@@ -186,6 +186,19 @@ mod wasm_api {
                 .map_err(|error| JsValue::from_str(&error.to_string()))?;
             self.inner
                 .restore(snapshot)
+                .map_err(|error| JsValue::from_str(&error.to_string()))
+        }
+
+        pub fn system_data_json(&self) -> Result<String, JsValue> {
+            serde_json::to_string(&self.inner.system_data())
+                .map_err(|error| JsValue::from_str(&error.to_string()))
+        }
+
+        pub fn install_system_data_json(&mut self, system_json: &str) -> Result<(), JsValue> {
+            let data: SystemData = serde_json::from_str(system_json)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            self.inner
+                .install_system_data(data)
                 .map_err(|error| JsValue::from_str(&error.to_string()))
         }
 

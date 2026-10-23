@@ -216,9 +216,10 @@ impl ByteOp {
 
     fn validates_arity(self, operand_count: usize) -> bool {
         match self {
-            // Nop may carry one resume-anchor name; Text may carry a line key.
+            // Nop may carry one resume-anchor name.
             Self::Nop => operand_count <= 1,
-            Self::Text => (2..=4).contains(&operand_count),
+            // speaker, text, line key, speaker id, append.
+            Self::Text => (2..=5).contains(&operand_count),
             Self::TextClear | Self::Return | Self::End => operand_count == 0,
             Self::SetInt
             | Self::SetString

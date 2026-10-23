@@ -10,11 +10,12 @@ const INPUTS: &str = include_str!("../../../compatibility/v3/vertical-slice-inpu
 // paging, replay targets, and semantic gallery state are part of the current
 // single-language surface, even when their collections are empty.
 // Snapshots also carry a relocatable resume point (anchors and line keys) so
-// saves survive script patches.
+// saves survive script patches, and each replay target names the last line on
+// its page so `prose` lines continued with `+` replay to the whole page.
 // This baseline is updated only after Native/Web parity and bytecode
 // encode/decode equality are asserted above.
 const ARIA_SINGLE_LANGUAGE_VERTICAL_SLICE_SNAPSHOT_HASH: &str =
-    "94d456b22794273e58d5d0b0a7c371dffed2fe40f1de0e41c2bce00909eedf58";
+    "17428f31c42b1535d806263f784ee89b8eb621e03d185deb6e68be811ec64641";
 
 #[test]
 fn native_and_web_replay_hashes_match_the_single_language_golden_corpus() {
