@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use aria_core::project::PluginsManifest;
 use aria_core::protocol::{LogicalSize, StepOutput};
 use aria_core::{
-    CompiledProgram, InputSnapshot, SaveEnvelopeError, SaveEnvelopeV3, Vm, VmError, VmSnapshot,
+    CompiledProgram, InputSnapshot, SaveEnvelopeError, SaveEnvelopeV3, SystemData, Vm, VmError,
+    VmSnapshot,
 };
 use aria_plugin_host::package::{PluginPackage, open_package};
 use aria_plugin_host::select::{Candidate, select};
@@ -125,6 +126,18 @@ impl PortableWebRuntime {
 
     pub fn restore(&mut self, snapshot: VmSnapshot) -> Result<(), VmError> {
         self.vm.restore(snapshot)
+    }
+
+    /// The reader's data kept apart from save slots; the page stores it
+    /// whenever the view model's `system_revision` changes.
+    #[must_use]
+    pub fn system_data(&self) -> SystemData {
+        self.vm.system_data()
+    }
+
+    /// Installs stored system data, before the first step.
+    pub fn install_system_data(&mut self, data: SystemData) -> Result<(), VmError> {
+        self.vm.install_system_data(data)
     }
 
     pub fn save_envelope(

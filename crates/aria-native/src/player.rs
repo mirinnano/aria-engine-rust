@@ -189,6 +189,8 @@ struct WindowState {
     access_adapter: AccessKitAdapter,
     sequence: u64,
     last_tick: Instant,
+    /// The `system_revision` last written to the save store.
+    system_revision: u64,
     warned: BTreeSet<String>,
 }
 
@@ -280,16 +282,20 @@ impl NativeApplication {
             WgpuRenderer::new_with_fonts(device, queue, surface_config.format, bundled_fonts)
                 .map_err(|error| NativePlayerError::Renderer(error.to_string()))?;
 
-        let mut vm = Vm::with_plugin_set(program, logical_size, &plugins)?;
-        let output = vm.step(&InputSnapshot::idle(1, 0))?;
-        let viewport = renderer.viewport_transform(
-            &output.scene,
-            RenderSurfaceSize::new(size.width.max(1), size.height.max(1), window.scale_factor()),
-        );
         for namespace in &legacy_save_namespaces {
             AtomicSaveStore::purge_namespace(&save_root, namespace)?;
         }
         let save_store = AtomicSaveStore::new(save_root, save_namespace)?;
+        let mut vm = Vm::with_plugin_set(program, logical_size, &plugins)?;
+        if let Some(system) = save_store.load_system()? {
+            vm.install_system_data(system)?;
+        }
+        let output = vm.step(&InputSnapshot::idle(1, 0))?;
+        let system_revision = output.view.system_revision;
+        let viewport = renderer.viewport_transform(
+            &output.scene,
+            RenderSurfaceSize::new(size.width.max(1), size.height.max(1), window.scale_factor()),
+        );
         let audio = match KiraAudioAdapter::new(".") {
             Ok(audio) => Some(audio),
             Err(error) => {
@@ -333,6 +339,7 @@ impl NativeApplication {
             access_adapter,
             sequence: 1,
             last_tick: Instant::now(),
+            system_revision,
             warned: BTreeSet::new(),
         };
         state.apply_audio_commands()?;
@@ -529,6 +536,10 @@ impl WindowState {
         self.poll_controller();
         let input = self.input.snapshot(self.sequence, delta_ms);
         self.output = self.vm.step(&input)?;
+        if self.output.view.system_revision != self.system_revision {
+            self.save_store.save_system(&self.vm.system_data())?;
+            self.system_revision = self.output.view.system_revision;
+        }
         self.input.set_viewport(
             self.renderer
                 .viewport_transform(&self.output.scene, self.render_surface_size()),

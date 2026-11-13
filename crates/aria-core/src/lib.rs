@@ -47,8 +47,8 @@ pub use protocol::{
 };
 pub use save::{SaveEnvelopeError, SaveEnvelopeV3};
 pub use vm::{
-    AutoMode, BacklogEntryState, ChapterState, SettingsState, SkipMode, VM_SNAPSHOT_SCHEMA, Vm,
-    VmError, VmSnapshot,
+    AutoMode, BacklogEntryState, ChapterState, SYSTEM_DATA_SCHEMA, SettingsState, SkipMode,
+    SystemData, VM_SNAPSHOT_SCHEMA, Vm, VmError, VmSnapshot,
 };
 
 /// Current file formats use this engine version in newly-created envelopes.

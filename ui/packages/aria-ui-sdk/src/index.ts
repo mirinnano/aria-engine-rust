@@ -49,6 +49,8 @@ export interface SettingsView {
   reduced_motion: boolean;
   stage_effects: boolean;
   skip_unread: boolean;
+  /** Present once the reader has picked a text speed; the script's `text_speed` then no longer applies. */
+  text_speed_chosen?: boolean;
 }
 
 /** Ruby or emphasis over `full_page_text`, as a grapheme range `[start, end)`. */
@@ -169,6 +171,8 @@ export interface UiViewModel {
   choices: ChoiceView[];
   actions: ActionView[];
   settings: SettingsView;
+  /** Increases whenever system data changes; hosts write it out when this moves. */
+  system_revision: number;
   backlog: BacklogEntryView[];
   backlog_total: number;
   backlog_start: number;

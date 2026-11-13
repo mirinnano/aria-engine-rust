@@ -92,6 +92,15 @@ struct ResourceBinding {
     ownership: ResourceOwnership,
 }
 
+/// The three forms a line of text compiles from.
+#[derive(Debug, Clone, Copy)]
+enum TextLine<'a> {
+    Say(Option<&'a str>),
+    Narrate,
+    /// A `prose` line after `+`: appended to the text already shown.
+    Continue(Option<&'a str>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResourceOwnership {
     /// The lexical binding owns the resource and must release it exactly once.
@@ -793,48 +802,15 @@ impl ModernCompiler {
     ) {
         match &statement.kind {
             StatementKind::Say { speaker, text } => {
-                let key = self.line_key(scene, speaker.as_deref().unwrap_or(""), text);
-                let text = &self.interpolate(text, scopes, &statement.span);
-                // A declared character shows its declared name and carries its
-                // id; any other identifier is shown as written.
-                let (shown, id) = match speaker {
-                    Some(id) => match self.characters.get(id) {
-                        Some(character) => (Some(character.name.clone()), Some(id.clone())),
-                        None => {
-                            if !self.characters.is_empty() {
-                                self.diagnostics.push(Diagnostic::warning(
-                                    DiagnosticCode::UnknownLabel,
-                                    format!("speaker '{id}' is not a declared character"),
-                                    Some(statement.span.clone()),
-                                ));
-                            }
-                            (Some(id.clone()), None)
-                        }
-                    },
-                    None => (None, None),
-                };
-                let speaker = shown
-                    .map(|name| Operand::Constant(self.intern_string(&name)))
-                    .unwrap_or(Operand::None);
-                let speaker_id = id
-                    .map(|id| Operand::Constant(self.intern_string(&id)))
-                    .unwrap_or(Operand::None);
-                let text = Operand::Constant(self.intern_string(text));
-                self.emit(
-                    ByteOp::Text,
-                    vec![speaker, text, key, speaker_id],
-                    &statement.span,
-                );
+                let line = TextLine::Say(speaker.as_deref());
+                self.lower_text(line, text, statement, scopes, scene);
             }
             StatementKind::Narrate { text } => {
-                let key = self.line_key(scene, "", text);
-                let text = &self.interpolate(text, scopes, &statement.span);
-                let text = Operand::Constant(self.intern_string(text));
-                self.emit(
-                    ByteOp::Text,
-                    vec![Operand::None, text, key],
-                    &statement.span,
-                );
+                self.lower_text(TextLine::Narrate, text, statement, scopes, scene);
+            }
+            StatementKind::ContinueText { speaker, text } => {
+                let line = TextLine::Continue(speaker.as_deref());
+                self.lower_text(line, text, statement, scopes, scene);
             }
             StatementKind::ClearDialogue => {
                 self.emit(ByteOp::TextClear, Vec::new(), &statement.span)
@@ -2556,6 +2532,58 @@ impl ModernCompiler {
     /// A stable key for read-state: scene, a digest of speaker and text, and
     /// the occurrence of that exact line within the scene. It survives edits
     /// elsewhere in the script, unlike the instruction address.
+    /// Emits one line of text.
+    fn lower_text(
+        &mut self,
+        line: TextLine<'_>,
+        text: &str,
+        statement: &Statement,
+        scopes: &[BTreeMap<String, Binding>],
+        scene: &str,
+    ) {
+        let speaker = match line {
+            TextLine::Say(speaker) | TextLine::Continue(speaker) => speaker,
+            TextLine::Narrate => None,
+        };
+        let key = self.line_key(scene, speaker.unwrap_or(""), text);
+        let text = &self.interpolate(text, scopes, &statement.span);
+        // A declared character shows its declared name and carries its
+        // id; any other identifier is shown as written.
+        let (shown, id) = match speaker {
+            Some(id) => match self.characters.get(id) {
+                Some(character) => (Some(character.name.clone()), Some(id.to_owned())),
+                None => {
+                    if !self.characters.is_empty() {
+                        self.diagnostics.push(Diagnostic::warning(
+                            DiagnosticCode::UnknownLabel,
+                            format!("speaker '{id}' is not a declared character"),
+                            Some(statement.span.clone()),
+                        ));
+                    }
+                    (Some(id.to_owned()), None)
+                }
+            },
+            None => (None, None),
+        };
+        let speaker = shown
+            .map(|name| Operand::Constant(self.intern_string(&name)))
+            .unwrap_or(Operand::None);
+        let speaker_id = id
+            .map(|id| Operand::Constant(self.intern_string(&id)))
+            .unwrap_or(Operand::None);
+        let text = Operand::Constant(self.intern_string(text));
+        // `say` carries a speaker id slot and `narrate` does not; a
+        // continued line also carries the append marker after it.
+        let operands = match line {
+            TextLine::Narrate => vec![speaker, text, key],
+            TextLine::Say(_) => vec![speaker, text, key, speaker_id],
+            TextLine::Continue(_) => {
+                vec![speaker, text, key, speaker_id, Operand::Boolean(true)]
+            }
+        };
+        self.emit(ByteOp::Text, operands, &statement.span);
+    }
+
     fn line_key(&mut self, scene: &str, speaker: &str, text: &str) -> Operand {
         let mut hasher = blake3::Hasher::new();
         hasher.update(speaker.as_bytes());
@@ -2843,6 +2871,7 @@ fn collect_scene_sites(
             }
             StatementKind::Say { .. }
             | StatementKind::Narrate { .. }
+            | StatementKind::ContinueText { .. }
             | StatementKind::ClearDialogue
             | StatementKind::AwaitAdvance
             | StatementKind::Wait { .. }
@@ -2921,6 +2950,7 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         StatementKind::Borrow { body, .. } => block_definitely_exits(body),
         StatementKind::Say { .. }
         | StatementKind::Narrate { .. }
+        | StatementKind::ContinueText { .. }
         | StatementKind::ClearDialogue
         | StatementKind::AwaitAdvance
         | StatementKind::Wait { .. }
