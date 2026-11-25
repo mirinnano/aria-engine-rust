@@ -277,9 +277,19 @@ impl LoadedProject {
             output
                 .diagnostics
                 .extend(validate_program_asset_references(program, &assets));
-            output.diagnostics.extend(validate_stage_cues(
+            output.diagnostics.extend(validate_named_cues(
                 program,
+                ByteOp::SetStage,
+                "stage",
+                "stages",
                 &self.manifest.presentation.stages,
+            ));
+            output.diagnostics.extend(validate_named_cues(
+                program,
+                ByteOp::SetTime,
+                "time",
+                "times",
+                &self.manifest.presentation.times,
             ));
         }
         Ok(output)
@@ -383,9 +393,16 @@ fn validate_program_asset_references(
     diagnostics
 }
 
-/// When `[presentation] stages` lists the cue names the frontend knows, a
-/// `stage` outside it is a typo the presentation would silently ignore.
-fn validate_stage_cues(program: &CompiledProgram, known: &[String]) -> Vec<Diagnostic> {
+/// When `[presentation] stages` (or `times`) lists the names the frontend
+/// knows, a `stage` (or `time`) outside it is a typo the presentation would
+/// silently ignore.
+fn validate_named_cues(
+    program: &CompiledProgram,
+    op: ByteOp,
+    statement: &str,
+    list: &str,
+    known: &[String],
+) -> Vec<Diagnostic> {
     if known.is_empty() {
         return Vec::new();
     }
@@ -393,7 +410,7 @@ fn validate_stage_cues(program: &CompiledProgram, known: &[String]) -> Vec<Diagn
         .instructions
         .iter()
         .enumerate()
-        .filter(|(_, instruction)| instruction.op == ByteOp::SetStage)
+        .filter(|(_, instruction)| instruction.op == op)
         .filter_map(|(index, instruction)| {
             let cue = constant_string(program, instruction.operands.first()?)?;
             (!known.iter().any(|name| name == cue)).then(|| {
@@ -401,7 +418,7 @@ fn validate_stage_cues(program: &CompiledProgram, known: &[String]) -> Vec<Diagn
                     program,
                     index,
                     format!(
-                        "stage '{cue}' is not in [presentation] stages; known: {}",
+                        "{statement} '{cue}' is not in [presentation] {list}; known: {}",
                         known.join(", ")
                     ),
                 )
@@ -493,12 +510,33 @@ mod tests {
             "aria;\nentry start;\nscene start {\n  stage ward;\n  stage wrad;\n  end;\n}\n",
         );
         let known = vec!["ward".to_owned(), "tide".to_owned()];
-        let diagnostics = validate_stage_cues(&program, &known);
+        let diagnostics =
+            validate_named_cues(&program, ByteOp::SetStage, "stage", "stages", &known);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("'wrad'"));
         assert_eq!(diagnostics[0].span.as_ref().map(|span| span.line), Some(5));
         // Without a declared vocabulary there is nothing to compare against.
-        assert!(validate_stage_cues(&program, &[]).is_empty());
+        assert!(validate_named_cues(&program, ByteOp::SetStage, "stage", "stages", &[]).is_empty());
+    }
+
+    #[test]
+    fn times_of_day_outside_the_declared_vocabulary_are_errors() {
+        let program = program(
+            "aria;\nentry start;\nscene start {\n  time evening;\n  time evning over 2000ms;\n  time none;\n  end;\n}\n",
+        );
+        let known = vec!["evening".to_owned(), "night".to_owned()];
+        let diagnostics = validate_named_cues(&program, ByteOp::SetTime, "time", "times", &known);
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "`time none` is never a vocabulary error"
+        );
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("time 'evning' is not in [presentation] times")
+        );
+        assert_eq!(diagnostics[0].span.as_ref().map(|span| span.line), Some(5));
     }
 
     #[test]

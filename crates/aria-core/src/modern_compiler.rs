@@ -1324,6 +1324,30 @@ impl ModernCompiler {
                 };
                 self.emit(ByteOp::SetStage, vec![operand], &statement.span);
             }
+            StatementKind::SetTime { time, over_ms } => {
+                let operand = match time {
+                    // Times of day follow the stage alphabet: names, never colours.
+                    Some(time) if is_stage_cue_name(time) => {
+                        Operand::Constant(self.intern_string(time))
+                    }
+                    Some(time) => {
+                        self.error(
+                            DiagnosticCode::InvalidUiBinding,
+                            format!(
+                                "time of day '{time}' must be 1-48 lowercase ASCII letters, digits, '-' or '_'; its grade belongs to the presentation package"
+                            ),
+                            Some(statement.span.clone()),
+                        );
+                        return;
+                    }
+                    None => Operand::None,
+                };
+                self.emit(
+                    ByteOp::SetTime,
+                    vec![operand, Operand::Integer(i64::from(*over_ms))],
+                    &statement.span,
+                );
+            }
             StatementKind::Camera {
                 zoom,
                 pan_x,
@@ -2899,6 +2923,7 @@ fn collect_scene_sites(
             | StatementKind::SetLocale { .. }
             | StatementKind::SetTheme { .. }
             | StatementKind::SetStage { .. }
+            | StatementKind::SetTime { .. }
             | StatementKind::Camera { .. }
             | StatementKind::SetTextBox { .. }
             | StatementKind::Tween { .. }
@@ -2979,6 +3004,7 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         | StatementKind::SetLocale { .. }
         | StatementKind::SetTheme { .. }
         | StatementKind::SetStage { .. }
+        | StatementKind::SetTime { .. }
         | StatementKind::Camera { .. }
         | StatementKind::SetTextBox { .. }
         | StatementKind::Tween { .. }

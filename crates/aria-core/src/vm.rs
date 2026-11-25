@@ -8,7 +8,7 @@ use crate::input::{InputAction, InputSnapshot};
 use crate::plugins::{PluginRegistration, PluginRegistry};
 use crate::presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,
-    GalleryItemView, GameView, StorySurfaceView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
+    GalleryItemView, GameView, StorySurfaceView, TimeView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
     UiViewModel,
 };
 use crate::presentation_state::{PendingConfirmation, UiRuntimeState, UiViewport};
@@ -195,6 +195,11 @@ pub struct VmSnapshot {
     /// An unset cue is omitted so cue-free saves serialize exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
+    /// The time of day set by `time`; it survives `background`. Older
+    /// snapshots omit it and resume with no time set, and a script that never
+    /// sets one serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<TimeOfDayState>,
     /// Backdrop framing set by `camera`; reset by `background`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<crate::presentation::CameraView>,
@@ -588,6 +593,18 @@ pub struct ChoiceState {
     pub route: Option<String>,
 }
 
+/// The time of day and, while `time ... over` runs, the time being left.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimeOfDayState {
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub elapsed_ms: u32,
+    #[serde(default)]
+    pub duration_ms: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransitionState {
     pub kind: TransitionKind,
@@ -685,6 +702,7 @@ impl Vm {
                 unlocked_cgs: BTreeSet::new(),
                 locale: "ja-JP".to_owned(),
                 stage: None,
+                time: None,
                 camera: None,
                 read_texts: BTreeSet::new(),
                 backlog: Vec::new(),
@@ -1182,6 +1200,7 @@ impl Vm {
             .logical_time_ms
             .saturating_add(u64::from(input.delta_ms));
         self.update_transition(input.delta_ms);
+        self.update_time_of_day(input.delta_ms);
         self.update_effects(input.delta_ms);
         self.update_tweens(input.delta_ms);
         self.update_typewriter(
@@ -1273,6 +1292,24 @@ impl Vm {
             executed += 1;
         }
         Ok(())
+    }
+
+    fn update_time_of_day(&mut self, delta_ms: u32) {
+        let Some(time) = &mut self.state.time else {
+            return;
+        };
+        if time.duration_ms == 0 {
+            return;
+        }
+        time.elapsed_ms = time.elapsed_ms.saturating_add(delta_ms);
+        if time.elapsed_ms >= time.duration_ms {
+            time.from = None;
+            time.elapsed_ms = 0;
+            time.duration_ms = 0;
+            if time.name.is_none() {
+                self.state.time = None;
+            }
+        }
     }
 
     fn update_transition(&mut self, delta_ms: u32) {
@@ -3102,6 +3139,36 @@ impl Vm {
                     value => Some(self.string(value)?),
                 };
             }
+            ByteOp::SetTime => {
+                let name = match self.operand(instruction, 0)? {
+                    Operand::None => None,
+                    value => Some(self.string(value)?),
+                };
+                let duration_ms = self.integer(self.operand(instruction, 1)?)?.max(0) as u32;
+                let from = self.state.time.as_ref().and_then(|time| time.name.clone());
+                self.state.time = if from == name {
+                    // Setting the time it already is changes nothing, and must
+                    // not restart a fade into it.
+                    self.state.time.take()
+                } else if duration_ms == 0
+                    || self.state.settings.reduced_motion
+                    || from.is_none() && name.is_none()
+                {
+                    name.map(|name| TimeOfDayState {
+                        name: Some(name),
+                        from: None,
+                        elapsed_ms: 0,
+                        duration_ms: 0,
+                    })
+                } else {
+                    Some(TimeOfDayState {
+                        name,
+                        from,
+                        elapsed_ms: 0,
+                        duration_ms,
+                    })
+                };
+            }
             ByteOp::TweenSprite => self.execute_tween(instruction)?,
             ByteOp::ScreenEffect => self.execute_screen_effect(instruction)?,
             ByteOp::UnlockChapter => {
@@ -4000,6 +4067,15 @@ impl Vm {
                 locale: self.state.locale.clone(),
             },
             stage: self.state.stage.clone(),
+            time: self.state.time.as_ref().map(|time| TimeView {
+                name: time.name.clone(),
+                from: time.from.clone(),
+                progress: if time.duration_ms == 0 {
+                    1.0
+                } else {
+                    (time.elapsed_ms as f32 / time.duration_ms as f32).clamp(0.0, 1.0)
+                },
+            }),
             camera: self.state.camera.clone(),
             dialogue,
             timed_hold_remaining_ms,

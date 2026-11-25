@@ -401,6 +401,14 @@ pub enum StatementKind {
     SetStage {
         stage: Option<String>,
     },
+    /// The time of day the story is in, such as `evening`. Unlike `stage`
+    /// it holds across backgrounds until the next `time`; `time none;`
+    /// clears it. `over 4000ms` moves from the previous time gradually. The
+    /// name carries no colour; the presentation package maps it to a grade.
+    SetTime {
+        time: Option<String>,
+        over_ms: u32,
+    },
     /// Moves the view over the current backdrop: zoom and pan are integer
     /// percentages of the frame (100 = unchanged, pan (0, 0) = centred).
     Camera {
@@ -1481,12 +1489,13 @@ impl Parser {
         }
         // Keywords that may themselves be followed by a string, so they are
         // statements rather than a speaker name.
-        const STRING_STATEMENTS: [&str; 8] = [
+        const STRING_STATEMENTS: [&str; 9] = [
             "narrate",
             "say",
             "locale",
             "theme",
             "stage",
+            "time",
             "flag",
             "chapter",
             "chapter_progress",
@@ -1755,6 +1764,22 @@ impl Parser {
             self.expect_statement_end("expected ';' after stage statement")?;
             StatementKind::SetStage {
                 stage: (stage != "none").then_some(stage),
+            }
+        } else if self.consume_keyword("time") {
+            let time = if self.at_kind(ModernTokenKind::String) {
+                self.parse_string("expected time of day name")?
+            } else {
+                self.parse_word("expected time of day name or 'none'")?
+            };
+            let over_ms = if self.consume_keyword("over") {
+                self.parse_duration_ms()?
+            } else {
+                0
+            };
+            self.expect_statement_end("expected ';' after time statement")?;
+            StatementKind::SetTime {
+                time: (time != "none").then_some(time),
+                over_ms,
             }
         } else if self.consume_keyword("textbox") {
             self.parse_textbox()?

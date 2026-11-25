@@ -133,6 +133,10 @@ pub struct PresentationManifest {
     /// check` rejects any other name instead of letting it fall through.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<String>,
+    /// The `time` names (times of day) this frontend grades. When present,
+    /// `aria check` rejects any other name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub times: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -416,6 +420,7 @@ mod tests {
             presentation: PresentationManifest {
                 frontend: "ui".to_owned(),
                 stages: Vec::new(),
+                times: Vec::new(),
             },
             plugins: PluginsManifest::default(),
         }

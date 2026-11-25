@@ -239,6 +239,23 @@ stage stillness;
 `stage` の値は次の `background` で消えるので、前の場面の意味が新しい背景に残らない。
 `aria.toml` の `[presentation] stages = [...]` に表示パッケージが扱う名前を並べると、`aria check` はそれ以外の名前をエラーにする。
 
+### 時間帯（time）
+
+```aria
+time evening;
+time night over 4000ms;
+time none;
+```
+
+`time` は、物語がいまどの時間帯にあるかを名前で示す。
+名前の決まりは `stage` と同じで、見た目（色調の曲線）は表示パッケージが名前から決める。
+同じ背景の素材を、時間帯ごとに描き分けずに使い回せる。
+`stage` と違い、`time` は次の `background` では消えない。場所が変わっても時間は続くので、次の `time` まで残る。
+`over` を付けると、前の時間帯からその長さをかけて移る。進み具合は VM の時計で数えるので、Native と Web で同じになる。
+動きを抑える設定のときは、`over` を付けてもすぐに切り替わる。
+`time none;` で時間帯の指定を外す。
+`aria.toml` の `[presentation] times = [...]` に表示パッケージが扱う名前を並べると、`aria check` はそれ以外の名前をエラーにする。
+
 ### カメラ
 
 ```aria

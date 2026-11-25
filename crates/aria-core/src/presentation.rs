@@ -117,6 +117,18 @@ pub struct CameraView {
     pub easing: String,
 }
 
+/// The time of day authored with `time evening;`. `name` is `None` after
+/// `time none;` while the previous time is still fading out. During
+/// `time ... over N ms`, `from` is the time being left and `progress` runs
+/// from 0 to 1; once settled, `from` is absent and `progress` is 1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimeView {
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    pub progress: f32,
+}
+
 /// Stable game identity and locale consumed by the presentation package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameView {
@@ -251,6 +263,11 @@ pub struct UiViewModel {
     /// It resets on every `background`; the presentation owns its look.
     #[serde(default)]
     pub stage: Option<String>,
+    /// The time of day. It holds across backgrounds; the presentation maps
+    /// the name to a grade. Absent when the script never set one, so views of
+    /// scripts without `time` serialize exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<TimeView>,
     /// Target framing of the backdrop; the presentation eases toward it over
     /// `duration_ms`. Absent means the unmoved full frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]

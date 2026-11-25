@@ -151,6 +151,12 @@ export interface ConfirmationView {
   resume_id: string | null;
 }
 
+export interface TimeView {
+  name: string | null;
+  from?: string;
+  progress: number;
+}
+
 export interface UiViewModel {
   schema_version: number;
   route: UiRoute;
@@ -158,6 +164,12 @@ export interface UiViewModel {
   game: { id: string; locale: string };
   /** Semantic stage cue authored with `stage <name>;`, or null when unset. */
   stage: string | null;
+  /**
+   * Time of day authored with `time <name>;`. Absent when the script never
+   * set one. During `time <name> over N ms`, `from` is the time being left
+   * and `progress` runs 0..1; `name` is null while fading out to no time.
+   */
+  time?: TimeView;
   camera?: CameraView;
   dialogue: DialogueView | null;
   /** Remaining VM-owned story hold, or null when the surface may sleep. */

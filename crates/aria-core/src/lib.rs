@@ -35,7 +35,7 @@ pub use plugins::{
 };
 pub use presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,
-    GalleryItemView, GameView, StorySurfaceView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
+    GalleryItemView, GameView, StorySurfaceView, TimeView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
     UiViewModel,
 };
 pub use presentation_state::{PendingConfirmation, UiInsets, UiRuntimeState, UiViewport};
