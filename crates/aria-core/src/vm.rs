@@ -31,6 +31,10 @@ const PLUGIN_HASH_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
+/// How many pages history keeps. Every save carries the backlog, so it is
+/// bounded; the oldest pages fall away first. Replay to a kept page still
+/// works, because it rebuilds from the choice trace, which is not trimmed.
+pub const BACKLOG_LIMIT: usize = 1000;
 /// Reads every `DeclareChapter` (id, label, numeral, title, date, synopsis,
 /// image) into catalogue entries that start locked.
 /// Reads every `DeclareItem` into collections, in source order.
@@ -2401,6 +2405,12 @@ impl Vm {
                 line_key: self.state.text.line_key.clone(),
             },
         );
+        if self.state.backlog.len() > BACKLOG_LIMIT {
+            let excess = self.state.backlog.len() - BACKLOG_LIMIT;
+            for entry in self.state.backlog.drain(..excess) {
+                self.state.backlog_targets.remove(&entry.id);
+            }
+        }
         self.state.backlog_focused = self.state.backlog.len().saturating_sub(1);
     }
 
