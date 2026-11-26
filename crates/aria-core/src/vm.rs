@@ -22,6 +22,10 @@ use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
 /// Schema 11 records each plugin's id, version, and state version, so a save
 /// survives a plugin update that keeps its state version.
 pub const VM_SNAPSHOT_SCHEMA: u32 = 11;
+
+/// How long auto lets a day card (a single way on) be read before taking it:
+/// the presentation brings its lines in over about two seconds.
+const SINGLE_WAY_ON_AUTO_HOLD_MS: u32 = 2_600;
 /// The previous schema, which `restore` still opens.
 const PLUGIN_HASH_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
@@ -1319,7 +1323,7 @@ impl Vm {
             && (self.state.execution == ExecutionState::WaitingForChoice
                 || (self.state.ui.route != DEFAULT_ROUTE && !self.is_reading_surface()))
         {
-            if input.intents.is_empty() {
+            if input.intents.is_empty() && !self.pass_single_way_on(input)? {
                 self.handle_direct_presentation_input(input)?;
             }
             self.run_running_instructions()?;
@@ -1518,8 +1522,13 @@ impl Vm {
                     self.advance_dialogue();
                 }
             }
-            // A frontend dispatches choice IDs through `UiIntent`; this arm
-            // only documents the outer routing guard for direct terminals.
+            // A frontend dispatches choice IDs through `UiIntent`. One case is
+            // the engine's own: a reading surface that offers a single way on
+            // (a day card) is a pause in a linear story, not a decision, so
+            // skip passes it and auto takes it once the card has been seen.
+            // A real choice of two or more options always waits for the reader.
+            // A frontend dispatches choice IDs through `UiIntent`; a single way
+            // on is passed by `pass_single_way_on` before this arm is reached.
             ExecutionState::WaitingForChoice => {}
         }
         Ok(())
@@ -2516,6 +2525,41 @@ impl Vm {
     /// How long auto waits after a page is fully shown: the reader's chosen
     /// delay plus time to read the page itself. A flat delay rushed long
     /// lines off the band and held short ones too long.
+    /// A reading surface that offers a single way on (a day card) is a pause
+    /// in a linear story, not a decision: skip passes it and auto takes it
+    /// once the card has been seen. A real choice of two or more options
+    /// always waits for the reader. Returns whether the way on was taken.
+    fn pass_single_way_on(&mut self, input: &InputSnapshot) -> Result<bool, VmError> {
+        let single_way_on = self.state.execution == ExecutionState::WaitingForChoice
+            && self.is_reading_surface()
+            && self
+                .state
+                .choice
+                .as_ref()
+                .is_some_and(|choice| choice.options.len() == 1);
+        if !single_way_on {
+            return Ok(false);
+        }
+        let skipping = input.is_held(InputAction::Skip) || self.state.skip_mode != SkipMode::Off;
+        self.state.auto_elapsed_ms = if self.state.auto_mode == AutoMode::On {
+            self.state.auto_elapsed_ms.saturating_add(input.delta_ms)
+        } else {
+            0
+        };
+        let auto_due = self.state.auto_mode == AutoMode::On
+            && self.state.auto_elapsed_ms
+                >= self
+                    .state
+                    .auto_delay_ms
+                    .saturating_add(SINGLE_WAY_ON_AUTO_HOLD_MS);
+        if !skipping && !auto_due {
+            return Ok(false);
+        }
+        self.state.auto_elapsed_ms = 0;
+        self.select_choice(0)?;
+        Ok(true)
+    }
+
     fn auto_wait_ms(&self) -> u32 {
         let graphemes = u32::try_from(self.current_page_grapheme_count()).unwrap_or(u32::MAX);
         self.state
@@ -4631,6 +4675,51 @@ mod tests {
     use crate::compiler::{CompileInput, SourceUnit, compile_with_routes};
 
     use super::*;
+
+    const DAY_CARD: &str = "aria;\nentry start;\nscene start {\n  text_speed 0;\n  screen day_card;\n  choice {\n    \"次へ\" => story;\n  }\n}\nscene story {\n  screen dialogue;\n  narrate \"本文。\";\n  await advance;\n  end;\n}\n";
+
+    fn on_day_card(vm: &mut Vm) -> bool {
+        vm.step(&InputSnapshot::idle(1, 16)).unwrap().view.route == UiRoute::parse("day_card")
+    }
+
+    #[test]
+    fn skip_passes_a_day_card_but_never_a_real_choice() {
+        let mut card = vm(DAY_CARD);
+        assert!(on_day_card(&mut card));
+        let output = card
+            .step(&InputSnapshot {
+                held: [InputAction::Skip].into(),
+                ..InputSnapshot::idle(2, 16)
+            })
+            .unwrap();
+        assert_eq!(output.view.route, UiRoute::parse(DEFAULT_ROUTE));
+
+        let mut real = vm(&DAY_CARD.replace(
+            "    \"次へ\" => story;\n",
+            "    \"次へ\" => story;\n    \"別の道\" => story;\n",
+        ));
+        assert!(on_day_card(&mut real));
+        let output = real
+            .step(&InputSnapshot {
+                held: [InputAction::Skip].into(),
+                ..InputSnapshot::idle(2, 16)
+            })
+            .unwrap();
+        assert_eq!(output.view.route, UiRoute::parse("day_card"));
+    }
+
+    #[test]
+    fn auto_takes_a_day_card_after_it_has_been_seen() {
+        let mut vm = vm(DAY_CARD);
+        assert!(on_day_card(&mut vm));
+        vm.step(&InputSnapshot::pressed(2, 16, InputAction::ToggleAuto))
+            .unwrap();
+        let wait = vm.state.auto_delay_ms + SINGLE_WAY_ON_AUTO_HOLD_MS;
+        let output = vm.step(&InputSnapshot::idle(3, wait - 100)).unwrap();
+        assert_eq!(output.view.route, UiRoute::parse("day_card"), "too early");
+        let output = vm.step(&InputSnapshot::idle(4, 200)).unwrap();
+        assert_eq!(output.view.route, UiRoute::parse(DEFAULT_ROUTE));
+    }
 
     const SIZE: LogicalSize = LogicalSize {
         width: 1280,
