@@ -164,3 +164,94 @@ fn the_scripts_text_speed_is_a_default_the_reader_can_override() {
     next.step(&InputSnapshot::idle(1, 16)).unwrap();
     assert_eq!(next.snapshot().settings.text_speed_ms, 40);
 }
+
+const SECOND_RUN: &str = r#"aria;
+entry start;
+scene start {
+  text_speed 0;
+  choice {
+    "普通" => plain;
+    "秘密" if flag("seen") => secret;
+  }
+}
+scene plain {
+  persistent flag "seen" = on;
+  narrate "一周目。";
+  await advance;
+  end;
+}
+scene secret {
+  narrate "一。";
+  await advance;
+  narrate "二。";
+  await advance;
+  narrate "三。";
+  await advance;
+  end;
+}
+"#;
+
+fn second_run_vm() -> Vm {
+    let output = compile(CompileInput {
+        game_id: "jp.example.system".to_owned(),
+        entry: "main.aria".to_owned(),
+        sources: vec![SourceUnit {
+            logical_path: "main.aria".to_owned(),
+            source: SECOND_RUN.to_owned(),
+        }],
+    });
+    assert!(!output.has_errors(), "{:?}", output.diagnostics);
+    Vm::new(output.program.unwrap(), SIZE).unwrap()
+}
+
+fn activate(vm: &mut Vm, sequence: u64, id: &str) -> aria_core::StepOutput {
+    let mut input = InputSnapshot::idle(sequence, 16);
+    input.intents.push(UiIntent::Activate { id: id.to_owned() });
+    vm.step(&input).unwrap()
+}
+
+#[test]
+fn returning_to_a_line_behind_a_choice_that_a_persistent_flag_revealed() {
+    // First run: the plain way sets the persistent flag.
+    let mut first = second_run_vm();
+    let output = first.step(&InputSnapshot::idle(1, 16)).unwrap();
+    assert_eq!(output.view.choices.len(), 1);
+    let plain = output.view.choices[0].id.clone();
+    activate(&mut first, 2, &plain);
+    let system = first.system_data();
+
+    // Second run: the flag reveals the secret way; read into it.
+    let mut second = second_run_vm();
+    second.install_system_data(system).unwrap();
+    let output = second.step(&InputSnapshot::idle(1, 16)).unwrap();
+    assert_eq!(
+        output.view.choices.len(),
+        2,
+        "the flag reveals the second way"
+    );
+    let secret = output.view.choices[1].id.clone();
+    activate(&mut second, 2, &secret);
+    for sequence in 3..6 {
+        second
+            .step(&InputSnapshot::pressed(sequence, 16, InputAction::Advance))
+            .unwrap();
+    }
+    // Back to the first line of the secret way through the log.
+    let output = second
+        .step(&InputSnapshot::pressed(10, 16, InputAction::OpenBacklog))
+        .unwrap();
+    let entry = output
+        .view
+        .backlog
+        .iter()
+        .find(|entry| entry.text == "一。")
+        .expect("the secret way's first line is in the log")
+        .id
+        .clone();
+    activate(&mut second, 11, &format!("backlog:{entry}"));
+    let output = activate(&mut second, 12, "confirm.accept");
+    assert_eq!(
+        output.view.dialogue.as_ref().map(|d| d.full_text.as_str()),
+        Some("一。")
+    );
+}

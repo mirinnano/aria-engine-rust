@@ -2037,6 +2037,15 @@ impl Vm {
         replay.state.text.speed_ms = settings.text_speed_ms;
         replay.state.auto_delay_ms = settings.auto_delay_ms;
         replay.state.bus_volumes = bus_volumes.clone();
+        // The replay must see the persistent flags the reader's choices were
+        // made under: a choice revealed by a flag from an earlier run has a
+        // second option, and the trace's indices only line up if the replay
+        // offers it too. As when system data is installed, the persistent
+        // value also stands for the run's own copy of the flag.
+        replay.state.persistent_flags = persistent_flags.clone();
+        for (name, value) in &persistent_flags {
+            replay.state.flags.insert(name.clone(), *value);
+        }
         replay.run_running_instructions()?;
 
         let mut trace_index = 0_usize;
