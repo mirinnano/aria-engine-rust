@@ -35,7 +35,7 @@ pub use plugins::{
 };
 pub use presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,
-    GalleryItemView, GameView, StorySurfaceView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
+    GalleryItemView, GameView, StorySurfaceView, TimeView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
     UiViewModel,
 };
 pub use presentation_state::{PendingConfirmation, UiInsets, UiRuntimeState, UiViewport};
@@ -47,8 +47,8 @@ pub use protocol::{
 };
 pub use save::{SaveEnvelopeError, SaveEnvelopeV3};
 pub use vm::{
-    AutoMode, BacklogEntryState, ChapterState, SettingsState, SkipMode, VM_SNAPSHOT_SCHEMA, Vm,
-    VmError, VmSnapshot,
+    AutoMode, BACKLOG_LIMIT, BacklogEntryState, ChapterState, SYSTEM_DATA_SCHEMA, SettingsState,
+    SkipMode, SystemData, VM_SNAPSHOT_SCHEMA, Vm, VmError, VmSnapshot,
 };
 
 /// Current file formats use this engine version in newly-created envelopes.

@@ -60,7 +60,19 @@ export class WebAudioAdapter {
       clearTimeout(this.idleSuspendTimer);
       this.idleSuspendTimer = null;
     }
-    if (this.context.state !== "running") await this.context.resume();
+    if (this.context.state !== "running") {
+      // Before the page's first gesture, browsers keep resume() pending until
+      // one arrives. Waiting for it here would hold the frame these commands
+      // ride on, so a title whose first output carries a volume command never
+      // appeared. Without a gesture the commands are applied to the suspended
+      // context, and the unlock listener resumes it at the first gesture. The
+      // wait is also capped for engines without navigator.userActivation.
+      const resumed = this.context.resume().catch(() => {});
+      const activation = globalThis.navigator?.userActivation;
+      if (!activation || activation.hasBeenActive) {
+        await Promise.race([resumed, new Promise((resolve) => setTimeout(resolve, 1000))]);
+      }
+    }
     for (const command of commands) {
       if (command.kind === "play") await this.play(command);
       else if (command.kind === "stop") this.stop(command);

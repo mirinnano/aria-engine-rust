@@ -91,6 +91,8 @@ pub enum ByteOp {
     OpenScreen,
     GetFlag,
     SetStage,
+    SetTime,
+    SetGrade,
     /// Program data read at load: id, label, numeral, title, date, synopsis, image.
     DeclareChapter,
     /// (label, target, chapter, condition); a `None` label is the cancel
@@ -157,6 +159,8 @@ impl ByteOp {
             Self::CallPlugin => 48,
             Self::DeclareItem => 49,
             Self::DeclareCg => 50,
+            Self::SetTime => 51,
+            Self::SetGrade => 52,
         }
     }
 
@@ -210,15 +214,18 @@ impl ByteOp {
             48 => Ok(Self::CallPlugin),
             49 => Ok(Self::DeclareItem),
             50 => Ok(Self::DeclareCg),
+            51 => Ok(Self::SetTime),
+            52 => Ok(Self::SetGrade),
             value => Err(AriacError::InvalidOpcode(value)),
         }
     }
 
     fn validates_arity(self, operand_count: usize) -> bool {
         match self {
-            // Nop may carry one resume-anchor name; Text may carry a line key.
+            // Nop may carry one resume-anchor name.
             Self::Nop => operand_count <= 1,
-            Self::Text => (2..=4).contains(&operand_count),
+            // speaker, text, line key, speaker id, append.
+            Self::Text => (2..=5).contains(&operand_count),
             Self::TextClear | Self::Return | Self::End => operand_count == 0,
             Self::SetInt
             | Self::SetString
@@ -248,7 +255,9 @@ impl ByteOp {
             Self::SetFlag
             | Self::SetPersistentFlag
             | Self::UnlockChapter
-            | Self::SetChapterProgress => operand_count == 2,
+            | Self::SetChapterProgress
+            | Self::SetTime
+            | Self::SetGrade => operand_count == 2,
             Self::SetTextSpeed
             | Self::SetAutoMode
             | Self::SetSkipMode

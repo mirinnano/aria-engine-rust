@@ -263,6 +263,12 @@ pub enum StatementKind {
     Narrate {
         text: String,
     },
+    /// A `prose` line after a `+`: it appends to the text already shown
+    /// instead of replacing it. Only `prose` produces it.
+    ContinueText {
+        speaker: Option<String>,
+        text: String,
+    },
     ClearDialogue,
     AwaitAdvance,
     Wait {
@@ -394,6 +400,20 @@ pub enum StatementKind {
     /// The name carries no colour or layout; the presentation package maps it.
     SetStage {
         stage: Option<String>,
+    },
+    /// The time of day the story is in, such as `evening`. Unlike `stage`
+    /// it holds across backgrounds until the next `time`; `time none;`
+    /// clears it. `over 4000ms` moves from the previous time gradually. The
+    /// name carries no colour; the presentation package maps it to a grade.
+    SetTime {
+        time: Option<String>,
+        over_ms: u32,
+    },
+    /// A grade for a stretch of the story (`grade late_summer;`), such as
+    /// one day of a journey. Same rules and lifetime as `time`.
+    SetGrade {
+        grade: Option<String>,
+        over_ms: u32,
     },
     /// Moves the view over the current backdrop: zoom and pan are integer
     /// percentages of the frame (100 = unchanged, pan (0, 0) = centred).
@@ -1475,12 +1495,14 @@ impl Parser {
         }
         // Keywords that may themselves be followed by a string, so they are
         // statements rather than a speaker name.
-        const STRING_STATEMENTS: [&str; 8] = [
+        const STRING_STATEMENTS: [&str; 10] = [
             "narrate",
             "say",
             "locale",
             "theme",
             "stage",
+            "time",
+            "grade",
             "flag",
             "chapter",
             "chapter_progress",
@@ -1550,13 +1572,42 @@ impl Parser {
         let mut output = Vec::new();
         let mut items = items.into_iter().peekable();
         let mut after_line = false;
+        // The speaker of the open `+` line, when the next line continues it.
+        let mut continuing: Option<(Option<String>, SourceSpan)> = None;
         while let Some(item) = items.next() {
             match item {
                 Item::Line { kind, joined, span } => {
+                    let (speaker, text) = match kind {
+                        StatementKind::Say { speaker, text } => (speaker, text),
+                        StatementKind::Narrate { text } => (None, text),
+                        _ => unreachable!("prose lines are Say or Narrate"),
+                    };
+                    let kind = match continuing.take() {
+                        Some((open_speaker, _)) => {
+                            if open_speaker != speaker {
+                                self.error_span(
+                                    &span,
+                                    "a line continued with '+' must keep the same speaker",
+                                );
+                            }
+                            StatementKind::ContinueText {
+                                speaker: speaker.clone(),
+                                text,
+                            }
+                        }
+                        None => match speaker.clone() {
+                            Some(speaker) => StatementKind::Say {
+                                speaker: Some(speaker),
+                                text,
+                            },
+                            None => StatementKind::Narrate { text },
+                        },
+                    };
                     output.push(statement(kind, &span));
                     output.push(statement(StatementKind::AwaitAdvance, &span));
                     after_line = false;
                     if joined {
+                        continuing = Some((speaker, span));
                         continue;
                     }
                     output.push(statement(StatementKind::ClearDialogue, &span));
@@ -1570,6 +1621,9 @@ impl Parser {
                     }
                 }
                 Item::Pause { duration_ms, span } => {
+                    if continuing.is_some() {
+                        self.error_span(&span, "'pause' cannot follow a line ending in '+'");
+                    }
                     if !after_line {
                         output.push(statement(StatementKind::ClearDialogue, &span));
                     }
@@ -1580,11 +1634,18 @@ impl Parser {
                     after_line = false;
                 }
                 Item::Other(other) => {
+                    // Clearing the text ends the continuation: the next line
+                    // starts a new text rather than appending to nothing.
+                    if matches!(other.kind, StatementKind::ClearDialogue) {
+                        continuing = None;
+                    }
                     output.push(other);
                     after_line = false;
                 }
             }
         }
+        // A `+` on the last line leaves its text shown, without a clear or a
+        // breath, for the statements after `prose` to handle.
         Some(output)
     }
 
@@ -1711,6 +1772,12 @@ impl Parser {
             StatementKind::SetStage {
                 stage: (stage != "none").then_some(stage),
             }
+        } else if self.consume_keyword("time") {
+            let (time, over_ms) = self.parse_named_fade("time", "time of day")?;
+            StatementKind::SetTime { time, over_ms }
+        } else if self.consume_keyword("grade") {
+            let (grade, over_ms) = self.parse_named_fade("grade", "grade")?;
+            StatementKind::SetGrade { grade, over_ms }
         } else if self.consume_keyword("textbox") {
             self.parse_textbox()?
         } else if self.consume_keyword("tween") {
@@ -2613,6 +2680,22 @@ impl Parser {
                 None
             }
         }
+    }
+
+    /// `<name|"name"|none> [over <n>ms];` shared by `time` and `grade`.
+    fn parse_named_fade(&mut self, keyword: &str, what: &str) -> Option<(Option<String>, u32)> {
+        let name = if self.at_kind(ModernTokenKind::String) {
+            self.parse_string(&format!("expected {what} name"))?
+        } else {
+            self.parse_word(&format!("expected {what} name or 'none'"))?
+        };
+        let over_ms = if self.consume_keyword("over") {
+            self.parse_duration_ms()?
+        } else {
+            0
+        };
+        self.expect_statement_end(&format!("expected ';' after {keyword} statement"))?;
+        Some(((name != "none").then_some(name), over_ms))
     }
 
     fn parse_duration_ms(&mut self) -> Option<u32> {

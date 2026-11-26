@@ -49,6 +49,8 @@ export interface SettingsView {
   reduced_motion: boolean;
   stage_effects: boolean;
   skip_unread: boolean;
+  /** Present once the reader has picked a text speed; the script's `text_speed` then no longer applies. */
+  text_speed_chosen?: boolean;
 }
 
 /** Ruby or emphasis over `full_page_text`, as a grapheme range `[start, end)`. */
@@ -68,6 +70,8 @@ export interface DialogueView {
   page_count: number;
   page_id: string;
   columns: number;
+  /** Grapheme offsets where a self-laid-out surface (a statement) may break a line. */
+  break_opportunities?: number[];
   text: string;
   complete: boolean;
   awaiting_advance: boolean;
@@ -149,6 +153,12 @@ export interface ConfirmationView {
   resume_id: string | null;
 }
 
+export interface TimeView {
+  name: string | null;
+  from?: string;
+  progress: number;
+}
+
 export interface UiViewModel {
   schema_version: number;
   route: UiRoute;
@@ -156,6 +166,18 @@ export interface UiViewModel {
   game: { id: string; locale: string };
   /** Semantic stage cue authored with `stage <name>;`, or null when unset. */
   stage: string | null;
+  /**
+   * Time of day authored with `time <name>;`. Absent when the script never
+   * set one. During `time <name> over N ms`, `from` is the time being left
+   * and `progress` runs 0..1; `name` is null while fading out to no time.
+   */
+  time?: TimeView;
+  /**
+   * Grade authored with `grade <name>;`: a look for a stretch of the story
+   * (such as one day of a journey), applied under the time of day. Same shape
+   * and lifetime as `time`.
+   */
+  grade?: TimeView;
   camera?: CameraView;
   dialogue: DialogueView | null;
   /** Remaining VM-owned story hold, or null when the surface may sleep. */
@@ -169,6 +191,8 @@ export interface UiViewModel {
   choices: ChoiceView[];
   actions: ActionView[];
   settings: SettingsView;
+  /** Increases whenever system data changes; hosts write it out when this moves. */
+  system_revision: number;
   backlog: BacklogEntryView[];
   backlog_total: number;
   backlog_start: number;

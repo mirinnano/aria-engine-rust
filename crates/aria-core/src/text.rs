@@ -66,6 +66,40 @@ pub fn paginate_subtitles(text: &str, max_cells: usize, lines_per_page: usize) -
         .collect()
 }
 
+/// Grapheme offsets where a line may break by this module's rules: after a
+/// phrase-ending mark, or where kana meets kanji or katakana, and never where
+/// kinsoku forbids it. A host that lays text out itself (a large centred
+/// statement) offers only these breaks to the browser, so a word is never
+/// split and WebKit and Chromium choose among the same places.
+#[must_use]
+pub fn phrase_break_opportunities(text: &str) -> Vec<u32> {
+    let graphemes = UnicodeSegmentation::graphemes(text, true).collect::<Vec<_>>();
+    (1..graphemes.len())
+        .filter(|&index| {
+            let before = graphemes[index - 1];
+            let after = graphemes[index];
+            !starts_with_forbidden(after, FORBIDDEN_LINE_START)
+                && !starts_with_forbidden(before, FORBIDDEN_LINE_END)
+                && !before.contains('\n')
+                && (preferred_break_after(before) || script_boundary(before, after))
+        })
+        .filter_map(|index| u32::try_from(index).ok())
+        .collect()
+}
+
+/// Extra hold after a revealed grapheme, in multiples of one grapheme's
+/// reveal time: a reader's voice rests a little at a comma and longer at the
+/// end of a sentence. Returns 0 for any other grapheme.
+#[must_use]
+pub fn reveal_rest_after(grapheme: &str) -> u32 {
+    match grapheme.chars().last() {
+        Some('、' | '，' | ',') => 3,
+        Some('。' | '．' | '！' | '？' | '!' | '?') => 6,
+        Some('…' | '‥' | '—' | '―') => 2,
+        _ => 0,
+    }
+}
+
 #[must_use]
 pub fn grapheme_count(text: &str) -> usize {
     UnicodeSegmentation::graphemes(text, true).count()
@@ -107,19 +141,86 @@ fn choose_line_break(graphemes: &[&str], start: usize, fitted_end: usize) -> usi
         maximum -= 1;
     }
 
+    let allowed = |candidate: usize| {
+        candidate == graphemes.len()
+            || (!starts_with_forbidden(graphemes[candidate], FORBIDDEN_LINE_START)
+                && !starts_with_forbidden(graphemes[candidate - 1], FORBIDDEN_LINE_END))
+    };
+
+    // When the rest of the sentence is only a scrap (「…になってし」/「まった。」),
+    // a full first line leaves an orphan that reads as a broken word. Balance
+    // the two lines instead: break at the phrase edge nearest the middle, or
+    // failing that at a change of script nearest the middle.
+    let rest = graphemes.len() - maximum;
+    let fitted = maximum - start;
+    if rest > 0 && rest * 3 <= fitted && rest <= fitted {
+        let middle = start + (graphemes.len() - start) / 2;
+        let lower = (start + (graphemes.len() - start) / 3).max(minimum);
+        let nearest = |accept: &dyn Fn(usize) -> bool| {
+            (lower..=maximum)
+                .filter(|&candidate| allowed(candidate) && accept(candidate))
+                .min_by_key(|&candidate| candidate.abs_diff(middle))
+        };
+        if let Some(candidate) = nearest(&|c| preferred_break_after(graphemes[c - 1])) {
+            return candidate;
+        }
+        if let Some(candidate) = nearest(&|c| script_boundary(graphemes[c - 1], graphemes[c])) {
+            return candidate;
+        }
+    }
+
     // Prefer a natural sentence/phrase edge near the available width.  The
     // short search window prevents every comma in a long line from producing
     // a ragged, unnecessarily narrow subtitle.
     let preferred_start = maximum.saturating_sub(8).max(minimum);
     for candidate in (preferred_start..=maximum).rev() {
-        if preferred_break_after(graphemes[candidate - 1])
-            && (candidate == graphemes.len()
-                || !starts_with_forbidden(graphemes[candidate], FORBIDDEN_LINE_START))
+        if preferred_break_after(graphemes[candidate - 1]) && allowed(candidate) {
+            return candidate;
+        }
+    }
+    // With no phrase edge in reach, a change from kana to kanji or katakana is
+    // the likeliest word boundary; it is better than splitting a word.
+    for candidate in (preferred_start..=maximum).rev() {
+        if candidate < graphemes.len()
+            && script_boundary(graphemes[candidate - 1], graphemes[candidate])
+            && allowed(candidate)
         {
             return candidate;
         }
     }
     maximum
+}
+
+/// A likely word boundary between two graphemes: kana followed by kanji,
+/// katakana, or an opening bracket, where a new phrase usually begins.
+fn script_boundary(before: &str, after: &str) -> bool {
+    let kind = |grapheme: &str| grapheme.chars().next().map(script_of);
+    matches!(
+        (kind(before), kind(after)),
+        (
+            Some(Script::Hiragana),
+            Some(Script::Kanji | Script::Katakana | Script::Opening)
+        )
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Script {
+    Hiragana,
+    Katakana,
+    Kanji,
+    Opening,
+    Other,
+}
+
+fn script_of(character: char) -> Script {
+    match character {
+        '\u{3041}'..='\u{309F}' => Script::Hiragana,
+        '\u{30A0}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' => Script::Katakana,
+        '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '々' => Script::Kanji,
+        character if FORBIDDEN_LINE_END.contains(character) => Script::Opening,
+        _ => Script::Other,
+    }
 }
 
 fn preferred_break_after(grapheme: &str) -> bool {
@@ -149,6 +250,67 @@ fn preferred_break_after(grapheme: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn statement_breaks_fall_only_at_phrase_edges() {
+        let text = "「だって、人が死ぬところなんて……わざわざ見たい人なんて、いないもんね」";
+        let graphemes = UnicodeSegmentation::graphemes(text, true).collect::<Vec<_>>();
+        let breaks = phrase_break_opportunities(text);
+        let at = |index: u32| graphemes[..index as usize].concat();
+        // After the comma and between 「人が」 and 「死ぬ」 ...
+        assert!(
+            breaks.iter().any(|&b| at(b).ends_with("だって、")),
+            "{breaks:?}"
+        );
+        assert!(
+            breaks.iter().any(|&b| at(b).ends_with("人が")),
+            "{breaks:?}"
+        );
+        // ... but never inside 「なんて」, and never before a closing mark.
+        assert!(
+            !breaks.iter().any(|&b| at(b).ends_with("人な")),
+            "{breaks:?}"
+        );
+        assert!(
+            !breaks
+                .iter()
+                .any(|&b| graphemes[b as usize].starts_with('」')),
+            "{breaks:?}"
+        );
+        assert!(
+            !breaks.iter().any(|&b| graphemes[b as usize] == "…"),
+            "{breaks:?}"
+        );
+    }
+
+    #[test]
+    fn a_reader_rests_at_commas_and_sentence_ends() {
+        assert_eq!(reveal_rest_after("、"), 3);
+        assert_eq!(reveal_rest_after("。"), 6);
+        assert_eq!(reveal_rest_after("？"), 6);
+        assert_eq!(reveal_rest_after("あ"), 0);
+        assert_eq!(reveal_rest_after("」"), 0);
+    }
+
+    #[test]
+    fn a_scrap_of_a_sentence_is_balanced_instead_of_orphaned() {
+        // 53 graphemes in a 48-wide band: a full first line would leave
+        // 「まった。」 alone and split 「しまった」 across the break.
+        let lines = wrap_japanese(
+            "小学校の時に初めて倒れて入院して以来、私の世界は、この一部屋に収まるほどのちんけなものになってしまった。",
+            96,
+        );
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].ends_with('、'), "{lines:?}");
+        assert!(lines[1].chars().count() >= 20, "{lines:?}");
+    }
+
+    #[test]
+    fn without_punctuation_a_line_breaks_where_kana_meets_kanji() {
+        let lines = wrap_japanese("ああああああああああああああ電車がくる", 30);
+        assert!(lines[0].ends_with('あ'), "{lines:?}");
+        assert!(lines[1].starts_with('電'), "{lines:?}");
+    }
 
     #[test]
     fn kinsoku_keeps_closing_punctuation_off_line_start() {

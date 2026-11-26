@@ -117,6 +117,18 @@ pub struct CameraView {
     pub easing: String,
 }
 
+/// The time of day authored with `time evening;`. `name` is `None` after
+/// `time none;` while the previous time is still fading out. During
+/// `time ... over N ms`, `from` is the time being left and `progress` runs
+/// from 0 to 1; once settled, `from` is absent and `progress` is 1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimeView {
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    pub progress: f32,
+}
+
 /// Stable game identity and locale consumed by the presentation package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameView {
@@ -146,6 +158,11 @@ pub struct DialogueView {
     pub page_id: String,
     /// Width of the deterministic subtitle grid in display cells.
     pub columns: u16,
+    /// Grapheme offsets into `full_page_text` where a line may break, sent
+    /// only for surfaces that lay their text out themselves (statements):
+    /// the host offers the browser these breaks and no others.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub break_opportunities: Vec<u32>,
     pub text: String,
     pub complete: bool,
     pub awaiting_advance: bool,
@@ -251,6 +268,16 @@ pub struct UiViewModel {
     /// It resets on every `background`; the presentation owns its look.
     #[serde(default)]
     pub stage: Option<String>,
+    /// The time of day. It holds across backgrounds; the presentation maps
+    /// the name to a grade. Absent when the script never set one, so views of
+    /// scripts without `time` serialize exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<TimeView>,
+    /// The grade (`grade late_summer;`): a look for a stretch of the story,
+    /// such as one day of a journey. Same shape and lifetime as `time`; the
+    /// presentation applies it under the time of day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<TimeView>,
     /// Target framing of the backdrop; the presentation eases toward it over
     /// `duration_ms`. Absent means the unmoved full frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -275,6 +302,10 @@ pub struct UiViewModel {
     pub choices: Vec<ChoiceView>,
     pub actions: Vec<ActionView>,
     pub settings: SettingsState,
+    /// Increases whenever the system data (persistent flags, read lines,
+    /// unlocks, settings) changes; hosts write it out when this moves.
+    #[serde(default)]
+    pub system_revision: u64,
     /// Only a virtual window is populated while the backlog route is open.
     /// A normal reading update therefore never clones or serializes the full
     /// history merely because another grapheme appeared.

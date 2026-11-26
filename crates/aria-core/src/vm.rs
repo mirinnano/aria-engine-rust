@@ -8,7 +8,7 @@ use crate::input::{InputAction, InputSnapshot};
 use crate::plugins::{PluginRegistration, PluginRegistry};
 use crate::presentation::{
     ActionView, BacklogEntryView, ChapterView, ChoiceView, ConfirmationView, DialogueView,
-    GalleryItemView, GameView, StorySurfaceView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
+    GalleryItemView, GameView, StorySurfaceView, TimeView, UI_VIEW_MODEL_SCHEMA, UiIntent, UiRoute,
     UiViewModel,
 };
 use crate::presentation_state::{PendingConfirmation, UiRuntimeState, UiViewport};
@@ -22,11 +22,19 @@ use crate::text::{grapheme_count, grapheme_prefix, paginate_subtitles};
 /// Schema 11 records each plugin's id, version, and state version, so a save
 /// survives a plugin update that keeps its state version.
 pub const VM_SNAPSHOT_SCHEMA: u32 = 11;
+
+/// How long auto lets a day card (a single way on) be read before taking it:
+/// the presentation brings its lines in over about two seconds.
+const SINGLE_WAY_ON_AUTO_HOLD_MS: u32 = 2_600;
 /// The previous schema, which `restore` still opens.
 const PLUGIN_HASH_SNAPSHOT_SCHEMA: u32 = 10;
 const DEFAULT_ROUTE: &str = "dialogue";
 const MAX_INSTRUCTIONS_PER_TICK: usize = 100_000;
 const BACKLOG_WINDOW_SIZE: usize = 48;
+/// How many pages history keeps. Every save carries the backlog, so it is
+/// bounded; the oldest pages fall away first. Replay to a kept page still
+/// works, because it rebuilds from the choice trace, which is not trimmed.
+pub const BACKLOG_LIMIT: usize = 1000;
 /// Reads every `DeclareChapter` (id, label, numeral, title, date, synopsis,
 /// image) into catalogue entries that start locked.
 /// Reads every `DeclareItem` into collections, in source order.
@@ -186,6 +194,10 @@ pub struct VmSnapshot {
     pub persistent_flags: BTreeMap<String, bool>,
     #[serde(default)]
     pub chapters: BTreeMap<String, ChapterState>,
+    /// The chapter the story is in: the last one its script unlocked. Save
+    /// rows name it; omitted until a chapter starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_chapter: Option<String>,
     #[serde(default)]
     pub unlocked_cgs: BTreeSet<String>,
     #[serde(default)]
@@ -195,6 +207,15 @@ pub struct VmSnapshot {
     /// An unset cue is omitted so cue-free saves serialize exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
+    /// The time of day set by `time`; it survives `background`. Older
+    /// snapshots omit it and resume with no time set, and a script that never
+    /// sets one serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<TimeOfDayState>,
+    /// The grade set by `grade` (a chapter's or a stretch's look). Like
+    /// `time` it survives `background`, and is omitted while unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<TimeOfDayState>,
     /// Backdrop framing set by `camera`; reset by `background`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<crate::presentation::CameraView>,
@@ -256,6 +277,10 @@ pub struct BacklogTargetState {
     pub page_index: usize,
     pub page_columns: usize,
     pub trace_position: usize,
+    /// The last line shown on the page. Lines continued with `+` share a
+    /// text id, so replay also waits for this line before stopping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,6 +297,37 @@ pub struct ChapterState {
     pub script: Option<String>,
     pub unlocked: bool,
     pub progress: u8,
+}
+
+/// Data that belongs to the reader rather than to one save slot: it is kept
+/// once per game, and loading a slot never takes it back to the slot's copy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SystemData {
+    pub schema_version: u32,
+    pub game_id: String,
+    #[serde(default)]
+    pub persistent_flags: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub read_texts: BTreeSet<String>,
+    #[serde(default)]
+    pub chapters: BTreeMap<String, ChapterState>,
+    #[serde(default)]
+    pub unlocked_cgs: BTreeSet<String>,
+    #[serde(default)]
+    pub settings: SettingsState,
+}
+
+pub const SYSTEM_DATA_SCHEMA: u32 = 1;
+
+/// Cheap change detector for [`SystemData`]. Read lines and CGs are only
+/// ever added, so their counts are enough; the rest is small.
+#[derive(Debug, Clone, PartialEq)]
+struct SystemFingerprint {
+    persistent_flags: BTreeMap<String, bool>,
+    chapters: BTreeMap<String, ChapterState>,
+    settings: SettingsState,
+    read_texts: usize,
+    unlocked_cgs: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,6 +392,11 @@ pub struct SettingsState {
     /// transient on/off state of the Skip command itself.
     #[serde(default)]
     pub skip_unread: bool,
+    /// The reader picked a text speed on the settings screen. From then on
+    /// the script's `text_speed`, which sets the game's default, no longer
+    /// overrides it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text_speed_chosen: bool,
 }
 
 const fn default_text_scale() -> f32 {
@@ -369,6 +430,7 @@ impl Default for SettingsState {
             reduced_motion: false,
             stage_effects: true,
             skip_unread: false,
+            text_speed_chosen: false,
         }
     }
 }
@@ -496,6 +558,10 @@ const fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+/// Reading time auto adds per shown grapheme, on top of the reader's delay.
+/// About eight characters a second once the typewriter has finished.
+const AUTO_READING_MS_PER_GRAPHEME: u32 = 70;
+
 const fn default_subtitle_columns() -> usize {
     80
 }
@@ -543,6 +609,80 @@ pub struct ChoiceState {
     pub route: Option<String>,
 }
 
+/// Moves a `time`/`grade` slot to `name`, fading over `duration_ms` unless
+/// the duration is zero or the reader asked for less motion.
+fn set_named_fade(
+    slot: &mut Option<TimeOfDayState>,
+    name: Option<String>,
+    duration_ms: u32,
+    reduced_motion: bool,
+) {
+    let from = slot.as_ref().and_then(|state| state.name.clone());
+    if from == name {
+        // Setting the name it already has changes nothing, and must not
+        // restart a fade into it.
+        return;
+    }
+    *slot = if duration_ms == 0 || reduced_motion || from.is_none() && name.is_none() {
+        name.map(|name| TimeOfDayState {
+            name: Some(name),
+            from: None,
+            elapsed_ms: 0,
+            duration_ms: 0,
+        })
+    } else {
+        Some(TimeOfDayState {
+            name,
+            from,
+            elapsed_ms: 0,
+            duration_ms,
+        })
+    };
+}
+
+/// Advances a `time`/`grade` fade on the VM clock and settles it.
+fn advance_named_fade(slot: &mut Option<TimeOfDayState>, delta_ms: u32) {
+    let Some(state) = slot else {
+        return;
+    };
+    if state.duration_ms == 0 {
+        return;
+    }
+    state.elapsed_ms = state.elapsed_ms.saturating_add(delta_ms);
+    if state.elapsed_ms >= state.duration_ms {
+        state.from = None;
+        state.elapsed_ms = 0;
+        state.duration_ms = 0;
+        if state.name.is_none() {
+            *slot = None;
+        }
+    }
+}
+
+fn named_fade_view(state: &TimeOfDayState) -> TimeView {
+    TimeView {
+        name: state.name.clone(),
+        from: state.from.clone(),
+        progress: if state.duration_ms == 0 {
+            1.0
+        } else {
+            (state.elapsed_ms as f32 / state.duration_ms as f32).clamp(0.0, 1.0)
+        },
+    }
+}
+
+/// The time of day (or grade) and, while `... over` runs, the one being left.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimeOfDayState {
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub elapsed_ms: u32,
+    #[serde(default)]
+    pub duration_ms: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransitionState {
     pub kind: TransitionKind,
@@ -583,6 +723,11 @@ pub struct Vm {
     /// Runs plugin commands and migrations. Hosts install it with the
     /// plugins; the Core never holds a Wasm instance itself.
     executor: Option<std::sync::Arc<dyn crate::plugins::PluginExecutor>>,
+    /// Bumped whenever [`SystemData`] changes, so hosts know when to write
+    /// it. Not saved: it only orders changes within one running VM.
+    system_revision: u64,
+    /// Whether the host has handed over stored system data.
+    system_installed: bool,
 }
 
 impl Vm {
@@ -632,9 +777,12 @@ impl Vm {
                 flags: BTreeMap::new(),
                 persistent_flags: BTreeMap::new(),
                 chapters: BTreeMap::new(),
+                current_chapter: None,
                 unlocked_cgs: BTreeSet::new(),
                 locale: "ja-JP".to_owned(),
                 stage: None,
+                time: None,
+                grade: None,
                 camera: None,
                 read_texts: BTreeSet::new(),
                 backlog: Vec::new(),
@@ -670,6 +818,8 @@ impl Vm {
             collections,
             cgs,
             executor: None,
+            system_revision: 0,
+            system_installed: false,
         })
     }
 
@@ -802,6 +952,109 @@ impl Vm {
         Ok(())
     }
 
+    /// The reader's data that outlives any one save slot.
+    #[must_use]
+    pub fn system_data(&self) -> SystemData {
+        SystemData {
+            schema_version: SYSTEM_DATA_SCHEMA,
+            game_id: self.program.game_id.clone(),
+            persistent_flags: self.state.persistent_flags.clone(),
+            read_texts: self.state.read_texts.clone(),
+            chapters: self.state.chapters.clone(),
+            unlocked_cgs: self.state.unlocked_cgs.clone(),
+            settings: self.state.settings.clone(),
+        }
+    }
+
+    /// Installs stored system data, normally once at start-up before the
+    /// first step. Stored flags and settings replace the VM's; read lines,
+    /// unlocks, and chapters are merged.
+    pub fn install_system_data(&mut self, data: SystemData) -> Result<(), VmError> {
+        if data.schema_version != SYSTEM_DATA_SCHEMA {
+            return Err(VmError::UnsupportedSystemData(data.schema_version));
+        }
+        if data.game_id != self.program.game_id {
+            return Err(VmError::WrongGame {
+                expected: self.program.game_id.clone(),
+                actual: data.game_id,
+            });
+        }
+        self.merge_system_data(data);
+        self.system_installed = true;
+        Ok(())
+    }
+
+    /// Increases whenever [`Self::system_data`] changes.
+    #[must_use]
+    pub fn system_revision(&self) -> u64 {
+        self.system_revision
+    }
+
+    fn system_fingerprint(&self) -> SystemFingerprint {
+        SystemFingerprint {
+            persistent_flags: self.state.persistent_flags.clone(),
+            chapters: self.state.chapters.clone(),
+            settings: self.state.settings.clone(),
+            read_texts: self.state.read_texts.len(),
+            unlocked_cgs: self.state.unlocked_cgs.len(),
+        }
+    }
+
+    /// Combines `other` with the system data in `self.state`; see
+    /// "保存枠とシステムデータ" in the language spec. `other` is the newer
+    /// record: the stored data at start-up, or the reader's data when a slot
+    /// is restored over it. Its flags and settings win; sets are merged.
+    fn merge_system_data(&mut self, other: SystemData) {
+        let state = &mut self.state;
+        state.persistent_flags.extend(other.persistent_flags);
+        // A slot keeps its own copy of persistent flags among the run's
+        // flags; the reader's value overrides that stale copy.
+        for (name, value) in &state.persistent_flags {
+            state.flags.insert(name.clone(), *value);
+        }
+        state.read_texts.extend(other.read_texts);
+        state.unlocked_cgs.extend(other.unlocked_cgs);
+        for (id, chapter) in other.chapters {
+            match state.chapters.get_mut(&id) {
+                Some(existing) => {
+                    existing.unlocked |= chapter.unlocked;
+                    existing.progress = existing.progress.max(chapter.progress);
+                }
+                None => {
+                    state.chapters.insert(id, chapter);
+                }
+            }
+        }
+        state.settings = other.settings;
+        self.apply_settings();
+        self.system_revision = self.system_revision.saturating_add(1);
+    }
+
+    /// Brings the running state in line with `settings` after it was
+    /// replaced wholesale.
+    fn apply_settings(&mut self) {
+        let state = &mut self.state;
+        state.settings.text_scale = state.settings.text_scale.clamp(0.85, 1.35);
+        state.settings.text_opacity = state.settings.text_opacity.clamp(0.72, 1.0);
+        state.text.speed_ms = state.settings.text_speed_ms;
+        state.auto_delay_ms = state.settings.auto_delay_ms;
+        for (bus, volume) in [
+            (AudioBus::Bgm, state.settings.bgm_volume),
+            (AudioBus::SoundEffect, state.settings.sound_effect_volume),
+            (AudioBus::Voice, state.settings.voice_volume),
+            (AudioBus::Ambient, state.settings.ambient_volume),
+        ] {
+            if state.bus_volumes.get(&bus) != Some(&volume) {
+                state.bus_volumes.insert(bus, volume);
+                self.pending_audio.push(AudioCommand::SetBusVolume {
+                    bus,
+                    volume,
+                    fade_ms: 0,
+                });
+            }
+        }
+    }
+
     pub fn restore(&mut self, mut snapshot: VmSnapshot) -> Result<(), VmError> {
         // Schema 10 differs only in how it named the plugins it was made
         // with (by binary hash, a field that no longer deserializes). It
@@ -924,8 +1177,17 @@ impl Vm {
             )
             .collect();
         self.registration_closed = true;
+        let current = self.system_data();
+        let slot_settings = snapshot.settings.clone();
         self.state = snapshot;
         self.pending_audio = restored_audio;
+        self.merge_system_data(current);
+        // A host that never installed system data has nowhere else to keep
+        // settings, so the slot's settings still apply there.
+        if !self.system_installed {
+            self.state.settings = slot_settings;
+            self.apply_settings();
+        }
         self.pending_runtime.clear();
         Ok(())
     }
@@ -993,6 +1255,7 @@ impl Vm {
 
     pub fn step(&mut self, input: &InputSnapshot) -> Result<StepOutput, VmError> {
         self.registration_closed = true;
+        let system_before = self.system_fingerprint();
         if let Some(previous) = self.state.last_input_sequence
             && input.sequence <= previous
         {
@@ -1017,6 +1280,8 @@ impl Vm {
             .logical_time_ms
             .saturating_add(u64::from(input.delta_ms));
         self.update_transition(input.delta_ms);
+        advance_named_fade(&mut self.state.time, input.delta_ms);
+        advance_named_fade(&mut self.state.grade, input.delta_ms);
         self.update_effects(input.delta_ms);
         self.update_tweens(input.delta_ms);
         self.update_typewriter(
@@ -1067,13 +1332,16 @@ impl Vm {
             && (self.state.execution == ExecutionState::WaitingForChoice
                 || (self.state.ui.route != DEFAULT_ROUTE && !self.is_reading_surface()))
         {
-            if input.intents.is_empty() {
+            if input.intents.is_empty() && !self.pass_single_way_on(input)? {
                 self.handle_direct_presentation_input(input)?;
             }
             self.run_running_instructions()?;
         } else if !route_changed {
             self.handle_waiting_input(input)?;
             self.run_running_instructions()?;
+        }
+        if self.system_fingerprint() != system_before {
+            self.system_revision = self.system_revision.saturating_add(1);
         }
         let scene = self.scene_frame();
         let view = self.build_view_model();
@@ -1161,6 +1429,20 @@ impl Vm {
             }
             budget -= speed;
             self.state.text.visible_graphemes += 1;
+            // A reader's voice rests after a comma or a sentence end; the
+            // last grapheme of a page already waits for the reader.
+            if self.state.text.visible_graphemes < total {
+                let page = self.current_subtitle_page();
+                let rest =
+                    unicode_segmentation::UnicodeSegmentation::graphemes(page.as_str(), true)
+                        .nth(self.state.text.visible_graphemes - 1)
+                        .map_or(0, crate::text::reveal_rest_after);
+                // An authored `{wait:…}` at the same place replaces this rest
+                // on the next pass, so `paused_at` is left to the author.
+                if rest > 0 {
+                    self.state.text.pause_remaining_ms = speed.saturating_mul(rest);
+                }
+            }
         }
         self.state.text.reveal_elapsed_ms = if self.state.text.visible_graphemes >= total {
             0
@@ -1244,13 +1526,18 @@ impl Vm {
                     || self.skip_current_line()
                     || (self.state.auto_mode == AutoMode::On
                         && page_complete
-                        && self.state.auto_elapsed_ms >= self.state.auto_delay_ms);
+                        && self.state.auto_elapsed_ms >= self.auto_wait_ms());
                 if activated {
                     self.advance_dialogue();
                 }
             }
-            // A frontend dispatches choice IDs through `UiIntent`; this arm
-            // only documents the outer routing guard for direct terminals.
+            // A frontend dispatches choice IDs through `UiIntent`. One case is
+            // the engine's own: a reading surface that offers a single way on
+            // (a day card) is a pause in a linear story, not a decision, so
+            // skip passes it and auto takes it once the card has been seen.
+            // A real choice of two or more options always waits for the reader.
+            // A frontend dispatches choice IDs through `UiIntent`; a single way
+            // on is passed by `pass_single_way_on` before this arm is reached.
             ExecutionState::WaitingForChoice => {}
         }
         Ok(())
@@ -1759,6 +2046,15 @@ impl Vm {
         replay.state.text.speed_ms = settings.text_speed_ms;
         replay.state.auto_delay_ms = settings.auto_delay_ms;
         replay.state.bus_volumes = bus_volumes.clone();
+        // The replay must see the persistent flags the reader's choices were
+        // made under: a choice revealed by a flag from an earlier run has a
+        // second option, and the trace's indices only line up if the replay
+        // offers it too. As when system data is installed, the persistent
+        // value also stands for the run's own copy of the flag.
+        replay.state.persistent_flags = persistent_flags.clone();
+        for (name, value) in &persistent_flags {
+            replay.state.flags.insert(name.clone(), *value);
+        }
         replay.run_running_instructions()?;
 
         let mut trace_index = 0_usize;
@@ -1766,6 +2062,10 @@ impl Vm {
         let mut reached_target = false;
         for _ in 0..MAX_REPLAY_TURNS {
             if replay.state.text.text_id.as_deref() == Some(target.text_id.as_str())
+                && target
+                    .line_key
+                    .as_ref()
+                    .is_none_or(|key| replay.state.text.line_key.as_ref() == Some(key))
                 && (matches!(
                     replay.state.execution,
                     ExecutionState::WaitingForAdvance { .. }
@@ -2065,9 +2365,6 @@ impl Vm {
         let Some(page_id) = self.current_page_id() else {
             return;
         };
-        if self.state.backlog.iter().any(|entry| entry.id == page_id) {
-            return;
-        }
         let pages = self.subtitle_pages();
         let page_index = self
             .state
@@ -2080,6 +2377,22 @@ impl Vm {
         let Some(text_id) = self.state.text.text_id.clone() else {
             return;
         };
+        if let Some(entry) = self
+            .state
+            .backlog
+            .iter_mut()
+            .find(|entry| entry.id == page_id)
+        {
+            // A line continued with `+` grows a page that is already in
+            // history; the entry follows it rather than keeping the prefix.
+            if entry.text != text {
+                entry.text = text;
+                if let Some(target) = self.state.backlog_targets.get_mut(&page_id) {
+                    target.line_key = self.state.text.line_key.clone();
+                }
+            }
+            return;
+        }
         self.state.backlog.push(BacklogEntryState {
             id: page_id.clone(),
             speaker: self.state.text.speaker.clone(),
@@ -2094,8 +2407,15 @@ impl Vm {
                 page_index,
                 page_columns: self.state.text.page_columns,
                 trace_position: self.state.narrative_trace.len(),
+                line_key: self.state.text.line_key.clone(),
             },
         );
+        if self.state.backlog.len() > BACKLOG_LIMIT {
+            let excess = self.state.backlog.len() - BACKLOG_LIMIT;
+            for entry in self.state.backlog.drain(..excess) {
+                self.state.backlog_targets.remove(&entry.id);
+            }
+        }
         self.state.backlog_focused = self.state.backlog.len().saturating_sub(1);
     }
 
@@ -2131,6 +2451,7 @@ impl Vm {
         match name {
             "text_speed_ms" => {
                 self.state.settings.text_speed_ms = value.clamp(0.0, 200.0) as u32;
+                self.state.settings.text_speed_chosen = true;
                 self.state.text.speed_ms = self.state.settings.text_speed_ms;
             }
             "auto_delay_ms" => {
@@ -2223,6 +2544,51 @@ impl Vm {
         if let Some(id) = self.current_read_key().cloned() {
             self.state.read_texts.insert(id);
         }
+    }
+
+    /// How long auto waits after a page is fully shown: the reader's chosen
+    /// delay plus time to read the page itself. A flat delay rushed long
+    /// lines off the band and held short ones too long.
+    /// A reading surface that offers a single way on (a day card) is a pause
+    /// in a linear story, not a decision: skip passes it and auto takes it
+    /// once the card has been seen. A real choice of two or more options
+    /// always waits for the reader. Returns whether the way on was taken.
+    fn pass_single_way_on(&mut self, input: &InputSnapshot) -> Result<bool, VmError> {
+        let single_way_on = self.state.execution == ExecutionState::WaitingForChoice
+            && self.is_reading_surface()
+            && self
+                .state
+                .choice
+                .as_ref()
+                .is_some_and(|choice| choice.options.len() == 1);
+        if !single_way_on {
+            return Ok(false);
+        }
+        let skipping = input.is_held(InputAction::Skip) || self.state.skip_mode != SkipMode::Off;
+        self.state.auto_elapsed_ms = if self.state.auto_mode == AutoMode::On {
+            self.state.auto_elapsed_ms.saturating_add(input.delta_ms)
+        } else {
+            0
+        };
+        let auto_due = self.state.auto_mode == AutoMode::On
+            && self.state.auto_elapsed_ms
+                >= self
+                    .state
+                    .auto_delay_ms
+                    .saturating_add(SINGLE_WAY_ON_AUTO_HOLD_MS);
+        if !skipping && !auto_due {
+            return Ok(false);
+        }
+        self.state.auto_elapsed_ms = 0;
+        self.select_choice(0)?;
+        Ok(true)
+    }
+
+    fn auto_wait_ms(&self) -> u32 {
+        let graphemes = u32::try_from(self.current_page_grapheme_count()).unwrap_or(u32::MAX);
+        self.state
+            .auto_delay_ms
+            .saturating_add(graphemes.saturating_mul(AUTO_READING_MS_PER_GRAPHEME))
     }
 
     fn skip_current_line(&self) -> bool {
@@ -2677,6 +3043,11 @@ impl Vm {
                     Some(Operand::None) | None => None,
                     Some(value) => Some(self.string(value)?),
                 };
+                let append = matches!(instruction.operands.get(4), Some(Operand::Boolean(true)));
+                if append && self.state.text.text_id.is_some() {
+                    self.append_text(text, markup, line_key);
+                    return Ok(());
+                }
                 let text_id = format!("text-{}", self.state.next_text_sequence);
                 self.state.next_text_sequence = self.state.next_text_sequence.saturating_add(1);
                 self.state.text = TextState {
@@ -2862,8 +3233,12 @@ impl Vm {
             }
             ByteOp::SetTextSpeed => {
                 let speed = self.integer(self.operand(instruction, 0)?)?.max(0) as u32;
-                self.state.text.speed_ms = speed;
-                self.state.settings.text_speed_ms = speed;
+                // The script sets the game's default; a speed the reader chose
+                // is system data and wins over it.
+                if !self.state.settings.text_speed_chosen {
+                    self.state.text.speed_ms = speed;
+                    self.state.settings.text_speed_ms = speed;
+                }
             }
             ByteOp::SetAutoMode => {
                 self.set_auto_mode(self.boolean(self.operand(instruction, 0)?)?);
@@ -2896,6 +3271,20 @@ impl Vm {
                     value => Some(self.string(value)?),
                 };
             }
+            ByteOp::SetTime | ByteOp::SetGrade => {
+                let name = match self.operand(instruction, 0)? {
+                    Operand::None => None,
+                    value => Some(self.string(value)?),
+                };
+                let duration_ms = self.integer(self.operand(instruction, 1)?)?.max(0) as u32;
+                let reduced_motion = self.state.settings.reduced_motion;
+                let slot = if instruction.op == ByteOp::SetTime {
+                    &mut self.state.time
+                } else {
+                    &mut self.state.grade
+                };
+                set_named_fade(slot, name, duration_ms, reduced_motion);
+            }
             ByteOp::TweenSprite => self.execute_tween(instruction)?,
             ByteOp::ScreenEffect => self.execute_screen_effect(instruction)?,
             ByteOp::UnlockChapter => {
@@ -2917,6 +3306,7 @@ impl Vm {
                     });
                 chapter.unlocked = true;
                 chapter.progress = chapter.progress.max(progress);
+                self.state.current_chapter = Some(chapter.id.clone());
             }
             ByteOp::SetChapterProgress => {
                 let id = self.string(self.operand(instruction, 0)?)?;
@@ -3353,6 +3743,62 @@ impl Vm {
             .ok_or_else(|| self.error_at_pc(VmErrorKind::MissingConstant(index)))
     }
 
+    /// Continues the shown text with a `prose` line after `+`. The text keeps
+    /// its id and its revealed prefix, so the typewriter resumes where the
+    /// previous line ended and history keeps one entry per page.
+    fn append_text(
+        &mut self,
+        text: String,
+        markup: Option<crate::markup::ParsedText>,
+        line_key: Option<String>,
+    ) {
+        let offset = grapheme_count(&self.state.text.full_text);
+        let previous = self.state.text.markup.take();
+        let joined =
+            match (previous, markup) {
+                (None, None) => None,
+                (previous, next) => {
+                    let mut joined = previous.unwrap_or_else(|| crate::markup::ParsedText {
+                        plain: self.state.text.full_text.clone(),
+                        ..Default::default()
+                    });
+                    let next = next.unwrap_or_else(|| crate::markup::ParsedText {
+                        plain: text.clone(),
+                        ..Default::default()
+                    });
+                    joined.plain.push_str(&next.plain);
+                    joined.spans.extend(next.spans.into_iter().map(|span| {
+                        crate::markup::MarkupSpan {
+                            start: span.start + offset,
+                            end: span.end + offset,
+                            kind: span.kind,
+                        }
+                    }));
+                    joined.waits.extend(next.waits.into_iter().map(|wait| {
+                        crate::markup::TextWait {
+                            at: wait.at + offset,
+                            ms: wait.ms,
+                        }
+                    }));
+                    Some(joined)
+                }
+            };
+        self.state.text.full_text.push_str(&text);
+        self.state.text.markup = joined;
+        self.state.text.line_key = line_key;
+        self.state.text.reveal_elapsed_ms = 0;
+        // A page that was already full moves on to the page the new line
+        // starts, instead of asking for an advance that shows nothing new.
+        if self.state.text.visible_graphemes >= self.current_page_grapheme_count() {
+            self.advance_to_next_subtitle_page();
+        }
+        if self.is_atomic_story_route(&self.state.ui.route) {
+            self.state.text.visible_graphemes = self.current_page_grapheme_count();
+            self.record_current_page_if_needed();
+            self.mark_current_text_read();
+        }
+    }
+
     fn clear_text(&mut self) {
         let speed_ms = self.state.text.speed_ms;
         self.state.text = TextState {
@@ -3615,6 +4061,15 @@ impl Vm {
             page_count: u32::try_from(dialogue_pages.len()).unwrap_or(u32::MAX),
             page_id: self.current_page_id().unwrap_or_default(),
             columns: u16::try_from(self.state.text.page_columns).unwrap_or(u16::MAX),
+            break_opportunities: if self
+                .plugins
+                .policy(&self.state.ui.route)
+                .is_some_and(|policy| policy.atomic_text)
+            {
+                crate::text::phrase_break_opportunities(&dialogue_page)
+            } else {
+                Vec::new()
+            },
             text: grapheme_prefix(&dialogue_page, self.state.text.visible_graphemes),
             complete: self.state.text.visible_graphemes >= dialogue_total,
             awaiting_advance: matches!(
@@ -3738,6 +4193,8 @@ impl Vm {
                 locale: self.state.locale.clone(),
             },
             stage: self.state.stage.clone(),
+            time: self.state.time.as_ref().map(named_fade_view),
+            grade: self.state.grade.as_ref().map(named_fade_view),
             camera: self.state.camera.clone(),
             dialogue,
             timed_hold_remaining_ms,
@@ -3751,6 +4208,7 @@ impl Vm {
             actions: self.presentation_actions(&route),
             settings: self.state.settings.clone(),
             backlog,
+            system_revision: self.system_revision,
             backlog_total,
             backlog_start: u32::try_from(backlog_start).unwrap_or(u32::MAX),
             chapters,
@@ -4199,6 +4657,8 @@ pub enum VmError {
     PluginCall(String),
     #[error("unsupported VM snapshot schema {0}")]
     UnsupportedSnapshot(u32),
+    #[error("unsupported system data schema {0}")]
+    UnsupportedSystemData(u32),
     #[error("snapshot belongs to '{actual}', expected '{expected}'")]
     WrongGame { expected: String, actual: String },
     #[error("invalid snapshot program counter {0}")]
@@ -4240,6 +4700,51 @@ mod tests {
     use crate::compiler::{CompileInput, SourceUnit, compile_with_routes};
 
     use super::*;
+
+    const DAY_CARD: &str = "aria;\nentry start;\nscene start {\n  text_speed 0;\n  screen day_card;\n  choice {\n    \"次へ\" => story;\n  }\n}\nscene story {\n  screen dialogue;\n  narrate \"本文。\";\n  await advance;\n  end;\n}\n";
+
+    fn on_day_card(vm: &mut Vm) -> bool {
+        vm.step(&InputSnapshot::idle(1, 16)).unwrap().view.route == UiRoute::parse("day_card")
+    }
+
+    #[test]
+    fn skip_passes_a_day_card_but_never_a_real_choice() {
+        let mut card = vm(DAY_CARD);
+        assert!(on_day_card(&mut card));
+        let output = card
+            .step(&InputSnapshot {
+                held: [InputAction::Skip].into(),
+                ..InputSnapshot::idle(2, 16)
+            })
+            .unwrap();
+        assert_eq!(output.view.route, UiRoute::parse(DEFAULT_ROUTE));
+
+        let mut real = vm(&DAY_CARD.replace(
+            "    \"次へ\" => story;\n",
+            "    \"次へ\" => story;\n    \"別の道\" => story;\n",
+        ));
+        assert!(on_day_card(&mut real));
+        let output = real
+            .step(&InputSnapshot {
+                held: [InputAction::Skip].into(),
+                ..InputSnapshot::idle(2, 16)
+            })
+            .unwrap();
+        assert_eq!(output.view.route, UiRoute::parse("day_card"));
+    }
+
+    #[test]
+    fn auto_takes_a_day_card_after_it_has_been_seen() {
+        let mut vm = vm(DAY_CARD);
+        assert!(on_day_card(&mut vm));
+        vm.step(&InputSnapshot::pressed(2, 16, InputAction::ToggleAuto))
+            .unwrap();
+        let wait = vm.state.auto_delay_ms + SINGLE_WAY_ON_AUTO_HOLD_MS;
+        let output = vm.step(&InputSnapshot::idle(3, wait - 100)).unwrap();
+        assert_eq!(output.view.route, UiRoute::parse("day_card"), "too early");
+        let output = vm.step(&InputSnapshot::idle(4, 200)).unwrap();
+        assert_eq!(output.view.route, UiRoute::parse(DEFAULT_ROUTE));
+    }
 
     const SIZE: LogicalSize = LogicalSize {
         width: 1280,
@@ -5185,6 +5690,42 @@ mod tests {
         assert_eq!(resumed.snapshot().narrative_trace.len(), 1);
         assert!(resumed.snapshot().chapters.contains_key("sea"));
         assert!(resumed.snapshot().unlocked_cgs.contains("sea-cg"));
+    }
+
+    #[test]
+    fn backlog_resume_returns_to_the_whole_of_a_continued_page() {
+        let mut runtime = vm("aria;\n\
+             entry start;\n\
+             scene start { screen dialogue; text_speed 0; prose { \"前半、\" +; \"後半。\"; \"次の行。\"; } end; }\n");
+        let advance = |runtime: &mut Vm, sequence: u64| {
+            let mut input = InputSnapshot::idle(sequence, 16);
+            input.intents.push(UiIntent::Activate {
+                id: "dialogue.advance".to_owned(),
+            });
+            runtime.step(&input).unwrap()
+        };
+        runtime.step(&InputSnapshot::idle(1, 16)).unwrap();
+        advance(&mut runtime, 2);
+        runtime.step(&InputSnapshot::idle(3, 16)).unwrap();
+        advance(&mut runtime, 4);
+        runtime.step(&InputSnapshot::idle(5, 16)).unwrap();
+        assert_eq!(runtime.backlog()[0].text, "前半、後半。");
+        let joined_id = runtime.backlog()[0].id.clone();
+
+        let mut choose = InputSnapshot::idle(6, 16);
+        choose.intents.push(UiIntent::Activate {
+            id: format!("backlog:{joined_id}"),
+        });
+        runtime.step(&choose).unwrap();
+        let mut accept = InputSnapshot::idle(7, 16);
+        accept.intents.push(UiIntent::Activate {
+            id: "confirm.accept".to_owned(),
+        });
+        let output = runtime.step(&accept).unwrap();
+        let dialogue = output.view.dialogue.expect("resumed subtitle");
+        // Replay stops after the continued line, not after the first half.
+        assert_eq!(dialogue.full_text, "前半、後半。");
+        assert_eq!(dialogue.text, dialogue.full_page_text);
     }
 
     #[test]

@@ -196,3 +196,74 @@ scene gone { text_speed 0; narrate "消える場面。"; await advance; end; }
         Err(VmError::SaveRelocation(_))
     ));
 }
+
+#[test]
+fn history_keeps_the_newest_pages_and_can_still_return_to_the_oldest_kept() {
+    use aria_core::{BACKLOG_LIMIT, UiIntent};
+    let total = BACKLOG_LIMIT + 5;
+    let mut source = String::from("aria;\nentry start;\nscene start {\n  text_speed 0;\n");
+    for index in 0..total {
+        source.push_str(&format!("  narrate \"{index}行目。\";\n  await advance;\n"));
+    }
+    source.push_str("  end;\n}\n");
+    let mut story = vm(&source);
+    let mut driver = Driver { sequence: 0 };
+    assert_eq!(line(&driver.idle(&mut story)), "0行目。");
+    for _ in 1..total {
+        driver.advance(&mut story);
+    }
+    assert_eq!(
+        line(&driver.idle(&mut story)),
+        format!("{}行目。", total - 1)
+    );
+    let history = story.backlog();
+    assert_eq!(history.len(), BACKLOG_LIMIT);
+    assert_eq!(history[0].text, "5行目。");
+    assert_eq!(history.last().unwrap().text, format!("{}行目。", total - 1));
+    let save = story.snapshot();
+    assert_eq!(save.backlog_targets.len(), BACKLOG_LIMIT);
+
+    // The oldest page history kept is still a place to return to.
+    let oldest = history[0].id.clone();
+    driver.sequence += 1;
+    let mut input = InputSnapshot::idle(driver.sequence, 16);
+    input.pressed.insert(InputAction::OpenBacklog);
+    story.step(&input).unwrap();
+    for id in [format!("backlog:{oldest}"), "confirm.accept".to_owned()] {
+        driver.sequence += 1;
+        let mut input = InputSnapshot::idle(driver.sequence, 16);
+        input.intents.push(UiIntent::Activate { id });
+        story.step(&input).unwrap();
+    }
+    assert_eq!(line(&driver.idle(&mut story)), "5行目。");
+}
+
+#[test]
+fn a_save_names_the_chapter_the_story_is_in() {
+    let mut story = vm(r#"aria;
+entry start;
+scene start {
+  text_speed 0;
+  narrate "前置き。";
+  await advance;
+  unlock chapter "day_one" progress 1;
+  narrate "一日目。";
+  await advance;
+  unlock chapter "day_two" progress 1;
+  narrate "二日目。";
+  await advance;
+  end;
+}
+"#);
+    let mut driver = Driver { sequence: 0 };
+    assert_eq!(line(&driver.idle(&mut story)), "前置き。");
+    assert_eq!(story.snapshot().current_chapter, None);
+    assert_eq!(line(&driver.advance(&mut story)), "一日目。");
+    assert_eq!(story.snapshot().current_chapter.as_deref(), Some("day_one"));
+    assert_eq!(line(&driver.advance(&mut story)), "二日目。");
+    let save = story.snapshot();
+    assert_eq!(save.current_chapter.as_deref(), Some("day_two"));
+    // It is written into the save, where the save rows read it.
+    let json = serde_json::to_string(&save).unwrap();
+    assert!(json.contains("\"current_chapter\":\"day_two\""));
+}
