@@ -70,6 +70,8 @@ export interface DialogueView {
   page_count: number;
   page_id: string;
   columns: number;
+  /** Grapheme offsets where a self-laid-out surface (a statement) may break a line. */
+  break_opportunities?: number[];
   text: string;
   complete: boolean;
   awaiting_advance: boolean;
@@ -170,6 +172,12 @@ export interface UiViewModel {
    * and `progress` runs 0..1; `name` is null while fading out to no time.
    */
   time?: TimeView;
+  /**
+   * Grade authored with `grade <name>;`: a look for a stretch of the story
+   * (such as one day of a journey), applied under the time of day. Same shape
+   * and lifetime as `time`.
+   */
+  grade?: TimeView;
   camera?: CameraView;
   dialogue: DialogueView | null;
   /** Remaining VM-owned story hold, or null when the surface may sleep. */

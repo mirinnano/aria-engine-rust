@@ -29,6 +29,7 @@ VM は一歩ごとに、表示パッケージへ表示モデル（`UiViewModel`�
 | `dialogue` | 本文、話者、話者 ID、ルビ・傍点の範囲、ページ送りの状態。`prose` の `+` で続く行は、同じ `page_id` の本文に追記され、`text` はそれまでに表示した部分から伸び続ける |
 | `choices`、`actions` | 選べる選択肢と、押せる操作 |
 | `stage`、`camera` | 背景の意味と、カメラの目標 |
+| `grade` | 区間の色調の名前。形と寿命は `time` と同じ |
 | `time` | 時間帯の名前。`time ... over` の間は、移る前の時間帯（`from`）と進み具合（`progress`）も入る。台本が時間帯を使わないときは項目ごと無い |
 | `timed_hold_remaining_ms`、`timed_hold_total_ms` | 台本が決めた待ちの残りと全体。進み具合を描くときに使う |
 | `chapters`、`gallery`、`collections` | 章、CG、資料の宣言と、その解放状態 |

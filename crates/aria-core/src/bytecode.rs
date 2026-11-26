@@ -92,6 +92,7 @@ pub enum ByteOp {
     GetFlag,
     SetStage,
     SetTime,
+    SetGrade,
     /// Program data read at load: id, label, numeral, title, date, synopsis, image.
     DeclareChapter,
     /// (label, target, chapter, condition); a `None` label is the cancel
@@ -159,6 +160,7 @@ impl ByteOp {
             Self::DeclareItem => 49,
             Self::DeclareCg => 50,
             Self::SetTime => 51,
+            Self::SetGrade => 52,
         }
     }
 
@@ -213,6 +215,7 @@ impl ByteOp {
             49 => Ok(Self::DeclareItem),
             50 => Ok(Self::DeclareCg),
             51 => Ok(Self::SetTime),
+            52 => Ok(Self::SetGrade),
             value => Err(AriacError::InvalidOpcode(value)),
         }
     }
@@ -253,7 +256,8 @@ impl ByteOp {
             | Self::SetPersistentFlag
             | Self::UnlockChapter
             | Self::SetChapterProgress
-            | Self::SetTime => operand_count == 2,
+            | Self::SetTime
+            | Self::SetGrade => operand_count == 2,
             Self::SetTextSpeed
             | Self::SetAutoMode
             | Self::SetSkipMode

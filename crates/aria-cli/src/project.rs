@@ -291,6 +291,13 @@ impl LoadedProject {
                 "times",
                 &self.manifest.presentation.times,
             ));
+            output.diagnostics.extend(validate_named_cues(
+                program,
+                ByteOp::SetGrade,
+                "grade",
+                "grades",
+                &self.manifest.presentation.grades,
+            ));
         }
         Ok(output)
     }

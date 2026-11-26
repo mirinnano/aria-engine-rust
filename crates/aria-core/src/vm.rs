@@ -200,6 +200,10 @@ pub struct VmSnapshot {
     /// sets one serializes exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time: Option<TimeOfDayState>,
+    /// The grade set by `grade` (a chapter's or a stretch's look). Like
+    /// `time` it survives `background`, and is omitted while unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<TimeOfDayState>,
     /// Backdrop framing set by `camera`; reset by `background`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<crate::presentation::CameraView>,
@@ -593,7 +597,69 @@ pub struct ChoiceState {
     pub route: Option<String>,
 }
 
-/// The time of day and, while `time ... over` runs, the time being left.
+/// Moves a `time`/`grade` slot to `name`, fading over `duration_ms` unless
+/// the duration is zero or the reader asked for less motion.
+fn set_named_fade(
+    slot: &mut Option<TimeOfDayState>,
+    name: Option<String>,
+    duration_ms: u32,
+    reduced_motion: bool,
+) {
+    let from = slot.as_ref().and_then(|state| state.name.clone());
+    if from == name {
+        // Setting the name it already has changes nothing, and must not
+        // restart a fade into it.
+        return;
+    }
+    *slot = if duration_ms == 0 || reduced_motion || from.is_none() && name.is_none() {
+        name.map(|name| TimeOfDayState {
+            name: Some(name),
+            from: None,
+            elapsed_ms: 0,
+            duration_ms: 0,
+        })
+    } else {
+        Some(TimeOfDayState {
+            name,
+            from,
+            elapsed_ms: 0,
+            duration_ms,
+        })
+    };
+}
+
+/// Advances a `time`/`grade` fade on the VM clock and settles it.
+fn advance_named_fade(slot: &mut Option<TimeOfDayState>, delta_ms: u32) {
+    let Some(state) = slot else {
+        return;
+    };
+    if state.duration_ms == 0 {
+        return;
+    }
+    state.elapsed_ms = state.elapsed_ms.saturating_add(delta_ms);
+    if state.elapsed_ms >= state.duration_ms {
+        state.from = None;
+        state.elapsed_ms = 0;
+        state.duration_ms = 0;
+        if state.name.is_none() {
+            *slot = None;
+        }
+    }
+}
+
+fn named_fade_view(state: &TimeOfDayState) -> TimeView {
+    TimeView {
+        name: state.name.clone(),
+        from: state.from.clone(),
+        progress: if state.duration_ms == 0 {
+            1.0
+        } else {
+            (state.elapsed_ms as f32 / state.duration_ms as f32).clamp(0.0, 1.0)
+        },
+    }
+}
+
+/// The time of day (or grade) and, while `... over` runs, the one being left.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimeOfDayState {
     pub name: Option<String>,
@@ -703,6 +769,7 @@ impl Vm {
                 locale: "ja-JP".to_owned(),
                 stage: None,
                 time: None,
+                grade: None,
                 camera: None,
                 read_texts: BTreeSet::new(),
                 backlog: Vec::new(),
@@ -1200,7 +1267,8 @@ impl Vm {
             .logical_time_ms
             .saturating_add(u64::from(input.delta_ms));
         self.update_transition(input.delta_ms);
-        self.update_time_of_day(input.delta_ms);
+        advance_named_fade(&mut self.state.time, input.delta_ms);
+        advance_named_fade(&mut self.state.grade, input.delta_ms);
         self.update_effects(input.delta_ms);
         self.update_tweens(input.delta_ms);
         self.update_typewriter(
@@ -1294,24 +1362,6 @@ impl Vm {
         Ok(())
     }
 
-    fn update_time_of_day(&mut self, delta_ms: u32) {
-        let Some(time) = &mut self.state.time else {
-            return;
-        };
-        if time.duration_ms == 0 {
-            return;
-        }
-        time.elapsed_ms = time.elapsed_ms.saturating_add(delta_ms);
-        if time.elapsed_ms >= time.duration_ms {
-            time.from = None;
-            time.elapsed_ms = 0;
-            time.duration_ms = 0;
-            if time.name.is_none() {
-                self.state.time = None;
-            }
-        }
-    }
-
     fn update_transition(&mut self, delta_ms: u32) {
         if let Some(transition) = &mut self.state.transition {
             transition.elapsed_ms = transition.elapsed_ms.saturating_add(delta_ms);
@@ -1366,6 +1416,20 @@ impl Vm {
             }
             budget -= speed;
             self.state.text.visible_graphemes += 1;
+            // A reader's voice rests after a comma or a sentence end; the
+            // last grapheme of a page already waits for the reader.
+            if self.state.text.visible_graphemes < total {
+                let page = self.current_subtitle_page();
+                let rest =
+                    unicode_segmentation::UnicodeSegmentation::graphemes(page.as_str(), true)
+                        .nth(self.state.text.visible_graphemes - 1)
+                        .map_or(0, crate::text::reveal_rest_after);
+                // An authored `{wait:…}` at the same place replaces this rest
+                // on the next pass, so `paused_at` is left to the author.
+                if rest > 0 {
+                    self.state.text.pause_remaining_ms = speed.saturating_mul(rest);
+                }
+            }
         }
         self.state.text.reveal_elapsed_ms = if self.state.text.visible_graphemes >= total {
             0
@@ -3139,35 +3203,19 @@ impl Vm {
                     value => Some(self.string(value)?),
                 };
             }
-            ByteOp::SetTime => {
+            ByteOp::SetTime | ByteOp::SetGrade => {
                 let name = match self.operand(instruction, 0)? {
                     Operand::None => None,
                     value => Some(self.string(value)?),
                 };
                 let duration_ms = self.integer(self.operand(instruction, 1)?)?.max(0) as u32;
-                let from = self.state.time.as_ref().and_then(|time| time.name.clone());
-                self.state.time = if from == name {
-                    // Setting the time it already is changes nothing, and must
-                    // not restart a fade into it.
-                    self.state.time.take()
-                } else if duration_ms == 0
-                    || self.state.settings.reduced_motion
-                    || from.is_none() && name.is_none()
-                {
-                    name.map(|name| TimeOfDayState {
-                        name: Some(name),
-                        from: None,
-                        elapsed_ms: 0,
-                        duration_ms: 0,
-                    })
+                let reduced_motion = self.state.settings.reduced_motion;
+                let slot = if instruction.op == ByteOp::SetTime {
+                    &mut self.state.time
                 } else {
-                    Some(TimeOfDayState {
-                        name,
-                        from,
-                        elapsed_ms: 0,
-                        duration_ms,
-                    })
+                    &mut self.state.grade
                 };
+                set_named_fade(slot, name, duration_ms, reduced_motion);
             }
             ByteOp::TweenSprite => self.execute_tween(instruction)?,
             ByteOp::ScreenEffect => self.execute_screen_effect(instruction)?,
@@ -3944,6 +3992,15 @@ impl Vm {
             page_count: u32::try_from(dialogue_pages.len()).unwrap_or(u32::MAX),
             page_id: self.current_page_id().unwrap_or_default(),
             columns: u16::try_from(self.state.text.page_columns).unwrap_or(u16::MAX),
+            break_opportunities: if self
+                .plugins
+                .policy(&self.state.ui.route)
+                .is_some_and(|policy| policy.atomic_text)
+            {
+                crate::text::phrase_break_opportunities(&dialogue_page)
+            } else {
+                Vec::new()
+            },
             text: grapheme_prefix(&dialogue_page, self.state.text.visible_graphemes),
             complete: self.state.text.visible_graphemes >= dialogue_total,
             awaiting_advance: matches!(
@@ -4067,15 +4124,8 @@ impl Vm {
                 locale: self.state.locale.clone(),
             },
             stage: self.state.stage.clone(),
-            time: self.state.time.as_ref().map(|time| TimeView {
-                name: time.name.clone(),
-                from: time.from.clone(),
-                progress: if time.duration_ms == 0 {
-                    1.0
-                } else {
-                    (time.elapsed_ms as f32 / time.duration_ms as f32).clamp(0.0, 1.0)
-                },
-            }),
+            time: self.state.time.as_ref().map(named_fade_view),
+            grade: self.state.grade.as_ref().map(named_fade_view),
             camera: self.state.camera.clone(),
             dialogue,
             timed_hold_remaining_ms,

@@ -147,3 +147,60 @@ fn a_save_from_before_time_existed_restores_without_one() {
     let output = idle(&mut restored, 2, 16);
     assert_eq!(time(&output), None);
 }
+
+const GRADED: &str = r##"aria;
+entry start;
+scene start {
+  text_speed 0;
+  grade late_summer;
+  time evening;
+  background asset("#203040");
+  narrate "晩夏の夕方。";
+  await advance;
+  grade grey over 500ms;
+  narrate "灰色の日へ。";
+  await advance;
+  end;
+}
+"##;
+
+#[test]
+fn a_grade_runs_beside_the_time_of_day_with_the_same_rules() {
+    let mut vm = vm(GRADED);
+    let output = idle(&mut vm, 1, 16);
+    let grade = |output: &StepOutput| {
+        output
+            .view
+            .grade
+            .as_ref()
+            .map(|grade| (grade.name.clone(), grade.from.clone(), grade.progress))
+    };
+    assert_eq!(
+        grade(&output),
+        Some((Some("late_summer".to_owned()), None, 1.0))
+    );
+    assert_eq!(time(&output), Some((Some("evening".to_owned()), None, 1.0)));
+
+    let output = advance(&mut vm, 2);
+    assert_eq!(
+        grade(&output),
+        Some((Some("grey".to_owned()), Some("late_summer".to_owned()), 0.0))
+    );
+    // The time of day is untouched by a grade change.
+    assert_eq!(time(&output), Some((Some("evening".to_owned()), None, 1.0)));
+    let output = idle(&mut vm, 3, 500);
+    assert_eq!(grade(&output), Some((Some("grey".to_owned()), None, 1.0)));
+}
+
+#[test]
+fn time_and_grade_parse_inside_prose() {
+    let output = compile(CompileInput {
+        game_id: "jp.example.time".to_owned(),
+        entry: "main.aria".to_owned(),
+        sources: vec![SourceUnit {
+            logical_path: "main.aria".to_owned(),
+            source: "aria;\nentry start;\nscene start {\n  prose {\n    \"本文。\" +;\n    time evening over 3000ms;\n    grade grey;\n    \"夕方。\" +;\n    time night;\n    \"夜。\" +;\n  }\n  end;\n}\n".to_owned(),
+        }],
+    });
+    assert!(!output.has_errors(), "{:?}", output.diagnostics);
+}

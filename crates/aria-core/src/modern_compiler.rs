@@ -1325,28 +1325,10 @@ impl ModernCompiler {
                 self.emit(ByteOp::SetStage, vec![operand], &statement.span);
             }
             StatementKind::SetTime { time, over_ms } => {
-                let operand = match time {
-                    // Times of day follow the stage alphabet: names, never colours.
-                    Some(time) if is_stage_cue_name(time) => {
-                        Operand::Constant(self.intern_string(time))
-                    }
-                    Some(time) => {
-                        self.error(
-                            DiagnosticCode::InvalidUiBinding,
-                            format!(
-                                "time of day '{time}' must be 1-48 lowercase ASCII letters, digits, '-' or '_'; its grade belongs to the presentation package"
-                            ),
-                            Some(statement.span.clone()),
-                        );
-                        return;
-                    }
-                    None => Operand::None,
-                };
-                self.emit(
-                    ByteOp::SetTime,
-                    vec![operand, Operand::Integer(i64::from(*over_ms))],
-                    &statement.span,
-                );
+                self.emit_named_fade(ByteOp::SetTime, "time of day", time, *over_ms, statement);
+            }
+            StatementKind::SetGrade { grade, over_ms } => {
+                self.emit_named_fade(ByteOp::SetGrade, "grade", grade, *over_ms, statement);
             }
             StatementKind::Camera {
                 zoom,
@@ -2543,6 +2525,37 @@ impl ModernCompiler {
         }
     }
 
+    /// `time` and `grade` carry a name in the stage alphabet (never a colour)
+    /// and an optional fade length.
+    fn emit_named_fade(
+        &mut self,
+        op: ByteOp,
+        what: &str,
+        name: &Option<String>,
+        over_ms: u32,
+        statement: &Statement,
+    ) {
+        let operand = match name {
+            Some(name) if is_stage_cue_name(name) => Operand::Constant(self.intern_string(name)),
+            Some(name) => {
+                self.error(
+                    DiagnosticCode::InvalidUiBinding,
+                    format!(
+                        "{what} '{name}' must be 1-48 lowercase ASCII letters, digits, '-' or '_'; its look belongs to the presentation package"
+                    ),
+                    Some(statement.span.clone()),
+                );
+                return;
+            }
+            None => Operand::None,
+        };
+        self.emit(
+            op,
+            vec![operand, Operand::Integer(i64::from(over_ms))],
+            &statement.span,
+        );
+    }
+
     fn intern_string(&mut self, value: &str) -> u32 {
         if let Some(index) = self.string_constants.get(value) {
             return *index;
@@ -2924,6 +2937,7 @@ fn collect_scene_sites(
             | StatementKind::SetTheme { .. }
             | StatementKind::SetStage { .. }
             | StatementKind::SetTime { .. }
+            | StatementKind::SetGrade { .. }
             | StatementKind::Camera { .. }
             | StatementKind::SetTextBox { .. }
             | StatementKind::Tween { .. }
@@ -3005,6 +3019,7 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         | StatementKind::SetTheme { .. }
         | StatementKind::SetStage { .. }
         | StatementKind::SetTime { .. }
+        | StatementKind::SetGrade { .. }
         | StatementKind::Camera { .. }
         | StatementKind::SetTextBox { .. }
         | StatementKind::Tween { .. }

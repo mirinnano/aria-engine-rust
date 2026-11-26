@@ -256,6 +256,18 @@ time none;
 `time none;` で時間帯の指定を外す。
 `aria.toml` の `[presentation] times = [...]` に表示パッケージが扱う名前を並べると、`aria check` はそれ以外の名前をエラーにする。
 
+### 色調（grade）
+
+```aria
+grade late_summer;
+grade grey over 2000ms;
+```
+
+`grade` は、旅の一日のような、物語のひと続きの区間の色調を名前で示す。
+決まりと寿命は `time` と同じで、次の `background` では消えず、`over` で移り、`time none;` と同じく `grade none;` で外す。
+表示パッケージは色調を先に、時間帯をその上に重ねて掛ける。同じ「夕方」でも、晩夏の夕方と灰色の日の夕方を描き分けられる。
+`[presentation] grades = [...]` に名前を並べると、`aria check` はそれ以外の名前をエラーにする。
+
 ### カメラ
 
 ```aria

@@ -66,6 +66,40 @@ pub fn paginate_subtitles(text: &str, max_cells: usize, lines_per_page: usize) -
         .collect()
 }
 
+/// Grapheme offsets where a line may break by this module's rules: after a
+/// phrase-ending mark, or where kana meets kanji or katakana, and never where
+/// kinsoku forbids it. A host that lays text out itself (a large centred
+/// statement) offers only these breaks to the browser, so a word is never
+/// split and WebKit and Chromium choose among the same places.
+#[must_use]
+pub fn phrase_break_opportunities(text: &str) -> Vec<u32> {
+    let graphemes = UnicodeSegmentation::graphemes(text, true).collect::<Vec<_>>();
+    (1..graphemes.len())
+        .filter(|&index| {
+            let before = graphemes[index - 1];
+            let after = graphemes[index];
+            !starts_with_forbidden(after, FORBIDDEN_LINE_START)
+                && !starts_with_forbidden(before, FORBIDDEN_LINE_END)
+                && !before.contains('\n')
+                && (preferred_break_after(before) || script_boundary(before, after))
+        })
+        .filter_map(|index| u32::try_from(index).ok())
+        .collect()
+}
+
+/// Extra hold after a revealed grapheme, in multiples of one grapheme's
+/// reveal time: a reader's voice rests a little at a comma and longer at the
+/// end of a sentence. Returns 0 for any other grapheme.
+#[must_use]
+pub fn reveal_rest_after(grapheme: &str) -> u32 {
+    match grapheme.chars().last() {
+        Some('、' | '，' | ',') => 3,
+        Some('。' | '．' | '！' | '？' | '!' | '?') => 6,
+        Some('…' | '‥' | '—' | '―') => 2,
+        _ => 0,
+    }
+}
+
 #[must_use]
 pub fn grapheme_count(text: &str) -> usize {
     UnicodeSegmentation::graphemes(text, true).count()
@@ -216,6 +250,47 @@ fn preferred_break_after(grapheme: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn statement_breaks_fall_only_at_phrase_edges() {
+        let text = "「だって、人が死ぬところなんて……わざわざ見たい人なんて、いないもんね」";
+        let graphemes = UnicodeSegmentation::graphemes(text, true).collect::<Vec<_>>();
+        let breaks = phrase_break_opportunities(text);
+        let at = |index: u32| graphemes[..index as usize].concat();
+        // After the comma and between 「人が」 and 「死ぬ」 ...
+        assert!(
+            breaks.iter().any(|&b| at(b).ends_with("だって、")),
+            "{breaks:?}"
+        );
+        assert!(
+            breaks.iter().any(|&b| at(b).ends_with("人が")),
+            "{breaks:?}"
+        );
+        // ... but never inside 「なんて」, and never before a closing mark.
+        assert!(
+            !breaks.iter().any(|&b| at(b).ends_with("人な")),
+            "{breaks:?}"
+        );
+        assert!(
+            !breaks
+                .iter()
+                .any(|&b| graphemes[b as usize].starts_with('」')),
+            "{breaks:?}"
+        );
+        assert!(
+            !breaks.iter().any(|&b| graphemes[b as usize] == "…"),
+            "{breaks:?}"
+        );
+    }
+
+    #[test]
+    fn a_reader_rests_at_commas_and_sentence_ends() {
+        assert_eq!(reveal_rest_after("、"), 3);
+        assert_eq!(reveal_rest_after("。"), 6);
+        assert_eq!(reveal_rest_after("？"), 6);
+        assert_eq!(reveal_rest_after("あ"), 0);
+        assert_eq!(reveal_rest_after("」"), 0);
+    }
 
     #[test]
     fn a_scrap_of_a_sentence_is_balanced_instead_of_orphaned() {

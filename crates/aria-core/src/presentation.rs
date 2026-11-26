@@ -158,6 +158,11 @@ pub struct DialogueView {
     pub page_id: String,
     /// Width of the deterministic subtitle grid in display cells.
     pub columns: u16,
+    /// Grapheme offsets into `full_page_text` where a line may break, sent
+    /// only for surfaces that lay their text out themselves (statements):
+    /// the host offers the browser these breaks and no others.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub break_opportunities: Vec<u32>,
     pub text: String,
     pub complete: bool,
     pub awaiting_advance: bool,
@@ -268,6 +273,11 @@ pub struct UiViewModel {
     /// scripts without `time` serialize exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time: Option<TimeView>,
+    /// The grade (`grade late_summer;`): a look for a stretch of the story,
+    /// such as one day of a journey. Same shape and lifetime as `time`; the
+    /// presentation applies it under the time of day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<TimeView>,
     /// Target framing of the backdrop; the presentation eases toward it over
     /// `duration_ms`. Absent means the unmoved full frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
