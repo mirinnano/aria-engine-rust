@@ -194,6 +194,10 @@ pub struct VmSnapshot {
     pub persistent_flags: BTreeMap<String, bool>,
     #[serde(default)]
     pub chapters: BTreeMap<String, ChapterState>,
+    /// The chapter the story is in: the last one its script unlocked. Save
+    /// rows name it; omitted until a chapter starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_chapter: Option<String>,
     #[serde(default)]
     pub unlocked_cgs: BTreeSet<String>,
     #[serde(default)]
@@ -773,6 +777,7 @@ impl Vm {
                 flags: BTreeMap::new(),
                 persistent_flags: BTreeMap::new(),
                 chapters: BTreeMap::new(),
+                current_chapter: None,
                 unlocked_cgs: BTreeSet::new(),
                 locale: "ja-JP".to_owned(),
                 stage: None,
@@ -3301,6 +3306,7 @@ impl Vm {
                     });
                 chapter.unlocked = true;
                 chapter.progress = chapter.progress.max(progress);
+                self.state.current_chapter = Some(chapter.id.clone());
             }
             ByteOp::SetChapterProgress => {
                 let id = self.string(self.operand(instruction, 0)?)?;
