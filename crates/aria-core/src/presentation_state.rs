@@ -61,6 +61,17 @@ pub struct UiViewport {
     pub height: u32,
     pub scale_factor: f32,
     pub safe_area: UiInsets,
+    /// How many lines the host's reading surface holds. Core splits a text
+    /// into pages of this many lines, so a host that sets the prose as a
+    /// page (rather than a two-line subtitle band) asks for an advance only
+    /// where the script does. `0` keeps the two-line band.
+    #[serde(skip_serializing_if = "is_zero_rows")]
+    pub text_rows: u16,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero_rows(rows: &u16) -> bool {
+    *rows == 0
 }
 
 impl Default for UiViewport {
@@ -70,6 +81,7 @@ impl Default for UiViewport {
             height: 720,
             scale_factor: 1.0,
             safe_area: UiInsets::default(),
+            text_rows: 0,
         }
     }
 }

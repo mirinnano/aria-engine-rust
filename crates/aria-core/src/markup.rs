@@ -184,6 +184,10 @@ pub fn for_page(parsed: &ParsedText, pages: &[String], page_index: usize) -> Par
         // page-relative index of each plain grapheme that lands on this page
         let mut mapping: Vec<(usize, usize)> = Vec::new();
         for (page_at, grapheme) in page.graphemes(true).enumerate() {
+            // A paragraph break at a page edge is on neither page.
+            if grapheme != "\n" && plain.get(cursor) == Some(&"\n") {
+                cursor += 1;
+            }
             if plain.get(cursor) == Some(&grapheme) {
                 mapping.push((cursor, page_at));
                 cursor += 1;

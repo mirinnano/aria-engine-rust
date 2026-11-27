@@ -276,6 +276,11 @@ pub struct BacklogTargetState {
     pub text_id: String,
     pub page_index: usize,
     pub page_columns: usize,
+    #[serde(
+        default = "default_subtitle_rows",
+        skip_serializing_if = "is_default_subtitle_rows"
+    )]
+    pub page_rows: usize,
     pub trace_position: usize,
     /// The last line shown on the page. Lines continued with `+` share a
     /// text id, so replay also waits for this line before stopping.
@@ -549,6 +554,13 @@ pub struct TextState {
     /// saved page and its history ID stable even if a host is resized later.
     #[serde(default = "default_subtitle_columns")]
     pub page_columns: usize,
+    /// Lines per page, captured with the columns. The two-line band is not
+    /// written, so saves and replays from before page rows read the same.
+    #[serde(
+        default = "default_subtitle_rows",
+        skip_serializing_if = "is_default_subtitle_rows"
+    )]
+    pub page_rows: usize,
     #[serde(default)]
     pub page_index: usize,
 }
@@ -566,6 +578,24 @@ const fn default_subtitle_columns() -> usize {
     80
 }
 
+const fn default_subtitle_rows() -> usize {
+    2
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_default_subtitle_rows(rows: &usize) -> bool {
+    *rows == default_subtitle_rows()
+}
+
+/// The lines a page holds: what the host's reading surface asks for, or the
+/// two-line subtitle band.
+fn subtitle_rows(viewport: UiViewport) -> usize {
+    match viewport.text_rows {
+        0 => default_subtitle_rows(),
+        rows => usize::from(rows).min(24),
+    }
+}
+
 impl Default for TextState {
     fn default() -> Self {
         Self {
@@ -581,6 +611,7 @@ impl Default for TextState {
             pause_remaining_ms: 0,
             paused_at: None,
             page_columns: default_subtitle_columns(),
+            page_rows: default_subtitle_rows(),
             page_index: 0,
         }
     }
@@ -2076,6 +2107,7 @@ impl Vm {
                     )))
             {
                 replay.state.text.page_columns = target.page_columns.max(1);
+                replay.state.text.page_rows = target.page_rows.max(1);
                 let page_count = replay.subtitle_pages().len();
                 if target.page_index >= page_count {
                     return Err(VmError::InvalidUiIntent(format!(
@@ -2271,7 +2303,7 @@ impl Vm {
         paginate_subtitles(
             &self.state.text.full_text,
             self.state.text.page_columns.max(1),
-            2,
+            self.state.text.page_rows.max(1),
         )
     }
 
@@ -2406,6 +2438,7 @@ impl Vm {
                 text_id,
                 page_index,
                 page_columns: self.state.text.page_columns,
+                page_rows: self.state.text.page_rows,
                 trace_position: self.state.narrative_trace.len(),
                 line_key: self.state.text.line_key.clone(),
             },
@@ -3066,6 +3099,7 @@ impl Vm {
                         self.state.ui.viewport,
                         self.state.settings.text_scale,
                     ),
+                    page_rows: subtitle_rows(self.state.ui.viewport),
                     page_index: 0,
                 };
                 // Unlike a subtitle, an atomic story field is a complete

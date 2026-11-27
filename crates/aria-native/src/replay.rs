@@ -103,12 +103,14 @@ mod tests {
             height: 720,
             scale_factor: 1.0,
             safe_area: UiInsets::default(),
+            text_rows: 0,
         };
         let narrow = UiViewport {
             width: 390,
             height: 844,
             scale_factor: 3.0,
             safe_area: UiInsets::default(),
+            text_rows: 0,
         };
         let tape = ReplayTape {
             name: "viewport".to_owned(),
