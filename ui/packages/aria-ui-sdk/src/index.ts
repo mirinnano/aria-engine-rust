@@ -184,6 +184,8 @@ export interface UiViewModel {
   timed_hold_remaining_ms: number | null;
   /** The whole length of the current authored hold. */
   timed_hold_total_ms?: number;
+  /** The current hold is a breath the reader may cut short (`wait breath`), not a hard `wait`. */
+  timed_hold_breath?: boolean;
   /** The plugin that registered the current screen; its UI module can draw it. */
   route_plugin?: string;
   /** The script's `collection` declarations, by name. */

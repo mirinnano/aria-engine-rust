@@ -32,6 +32,7 @@ VM は一歩ごとに、表示パッケージへ表示モデル（`UiViewModel`�
 | `grade` | 区間の色調の名前。形と寿命は `time` と同じ |
 | `time` | 時間帯の名前。`time ... over` の間は、移る前の時間帯（`from`）と進み具合（`progress`）も入る。台本が時間帯を使わないときは項目ごと無い |
 | `timed_hold_remaining_ms`、`timed_hold_total_ms` | 台本が決めた待ちの残りと全体。進み具合を描くときに使う |
+| `timed_hold_breath` | いまの待ちが `wait breath`（`prose` の行のあとの間を含む）で、読者の入力で切り上げられるとき真。`wait` では偽。頁に行を残す表示パッケージは、これで段落の間と作者の間を見分ける |
 | `chapters`、`gallery`、`collections` | 章、CG、資料の宣言と、その解放状態 |
 | `story_surface`、`route_plugin` | 独自画面の入力方針と、その画面を登録したプラグイン |
 | `settings`、`backlog`、`confirmation` | 設定、読んだ本文の履歴、確認待ちの操作 |

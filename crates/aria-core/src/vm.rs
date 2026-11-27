@@ -4029,14 +4029,19 @@ impl Vm {
 
     fn build_view_model(&self) -> UiViewModel {
         let route = UiRoute::parse(&self.state.ui.route);
-        let (timed_hold_remaining_ms, timed_hold_total_ms) = match &self.state.execution {
-            ExecutionState::WaitingForDelay {
-                remaining_ms,
-                total_ms,
-                ..
-            } => (Some(*remaining_ms), *total_ms),
-            _ => (None, None),
-        };
+        let (timed_hold_remaining_ms, timed_hold_total_ms, timed_hold_breath) =
+            match &self.state.execution {
+                ExecutionState::WaitingForDelay {
+                    remaining_ms,
+                    total_ms,
+                    release_at_remaining_ms,
+                } => (
+                    Some(*remaining_ms),
+                    *total_ms,
+                    release_at_remaining_ms.is_some(),
+                ),
+                _ => (None, None, false),
+            };
         let dialogue_pages = self.subtitle_pages();
         let dialogue_page_index = self
             .state
@@ -4199,6 +4204,7 @@ impl Vm {
             dialogue,
             timed_hold_remaining_ms,
             timed_hold_total_ms,
+            timed_hold_breath,
             route_plugin: self
                 .plugins
                 .route_owner(&self.state.ui.route)
@@ -4868,6 +4874,7 @@ mod tests {
         let mut advance = InputSnapshot::pressed(3, 16, InputAction::Advance);
         let breath = runtime.step(&advance).unwrap();
         assert_eq!(breath.view.timed_hold_remaining_ms, Some(300));
+        assert!(breath.view.timed_hold_breath);
         assert!(breath.view.dialogue.is_none());
 
         advance = InputSnapshot::pressed(4, 100, InputAction::Advance);
@@ -4893,6 +4900,7 @@ mod tests {
         reveal = InputSnapshot::pressed(7, 16, InputAction::Advance);
         let hard = runtime.step(&reveal).unwrap();
         assert_eq!(hard.view.timed_hold_remaining_ms, Some(220));
+        assert!(!hard.view.timed_hold_breath);
 
         reveal = InputSnapshot::pressed(8, 100, InputAction::Advance);
         let hard_still_held = runtime.step(&reveal).unwrap();

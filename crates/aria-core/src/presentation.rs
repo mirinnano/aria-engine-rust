@@ -291,6 +291,12 @@ pub struct UiViewModel {
     /// draw its progress without assuming a duration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_hold_total_ms: Option<u32>,
+    /// The current hold is a breath (`wait breath`, the gap `prose` leaves
+    /// after a line): the reader may cut it short. A hard `wait` is false.
+    /// A presentation that keeps lines on a page can tell the gap between
+    /// paragraphs from an authored pause without guessing from durations.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub timed_hold_breath: bool,
     /// The plugin that registered the current screen. A Web presentation
     /// can mount that plugin's UI module for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
