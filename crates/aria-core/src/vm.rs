@@ -219,6 +219,10 @@ pub struct VmSnapshot {
     /// Backdrop framing set by `camera`; reset by `background`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<crate::presentation::CameraView>,
+    /// How the page of prose is set (`page`). It survives `background` and
+    /// is omitted while unset, so saves without it serialize as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<crate::presentation::PageView>,
     #[serde(default)]
     pub read_texts: BTreeSet<String>,
     #[serde(default)]
@@ -276,6 +280,11 @@ pub struct BacklogTargetState {
     pub text_id: String,
     pub page_index: usize,
     pub page_columns: usize,
+    #[serde(
+        default = "default_subtitle_rows",
+        skip_serializing_if = "is_default_subtitle_rows"
+    )]
+    pub page_rows: usize,
     pub trace_position: usize,
     /// The last line shown on the page. Lines continued with `+` share a
     /// text id, so replay also waits for this line before stopping.
@@ -549,6 +558,13 @@ pub struct TextState {
     /// saved page and its history ID stable even if a host is resized later.
     #[serde(default = "default_subtitle_columns")]
     pub page_columns: usize,
+    /// Lines per page, captured with the columns. The two-line band is not
+    /// written, so saves and replays from before page rows read the same.
+    #[serde(
+        default = "default_subtitle_rows",
+        skip_serializing_if = "is_default_subtitle_rows"
+    )]
+    pub page_rows: usize,
     #[serde(default)]
     pub page_index: usize,
 }
@@ -566,6 +582,24 @@ const fn default_subtitle_columns() -> usize {
     80
 }
 
+const fn default_subtitle_rows() -> usize {
+    2
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_default_subtitle_rows(rows: &usize) -> bool {
+    *rows == default_subtitle_rows()
+}
+
+/// The lines a page holds: what the host's reading surface asks for, or the
+/// two-line subtitle band.
+fn subtitle_rows(viewport: UiViewport) -> usize {
+    match viewport.text_rows {
+        0 => default_subtitle_rows(),
+        rows => usize::from(rows).min(24),
+    }
+}
+
 impl Default for TextState {
     fn default() -> Self {
         Self {
@@ -581,6 +615,7 @@ impl Default for TextState {
             pause_remaining_ms: 0,
             paused_at: None,
             page_columns: default_subtitle_columns(),
+            page_rows: default_subtitle_rows(),
             page_index: 0,
         }
     }
@@ -784,6 +819,7 @@ impl Vm {
                 time: None,
                 grade: None,
                 camera: None,
+                page: None,
                 read_texts: BTreeSet::new(),
                 backlog: Vec::new(),
                 backlog_focused: 0,
@@ -2076,6 +2112,7 @@ impl Vm {
                     )))
             {
                 replay.state.text.page_columns = target.page_columns.max(1);
+                replay.state.text.page_rows = target.page_rows.max(1);
                 let page_count = replay.subtitle_pages().len();
                 if target.page_index >= page_count {
                     return Err(VmError::InvalidUiIntent(format!(
@@ -2271,7 +2308,7 @@ impl Vm {
         paginate_subtitles(
             &self.state.text.full_text,
             self.state.text.page_columns.max(1),
-            2,
+            self.state.text.page_rows.max(1),
         )
     }
 
@@ -2406,6 +2443,7 @@ impl Vm {
                 text_id,
                 page_index,
                 page_columns: self.state.text.page_columns,
+                page_rows: self.state.text.page_rows,
                 trace_position: self.state.narrative_trace.len(),
                 line_key: self.state.text.line_key.clone(),
             },
@@ -3066,6 +3104,7 @@ impl Vm {
                         self.state.ui.viewport,
                         self.state.settings.text_scale,
                     ),
+                    page_rows: subtitle_rows(self.state.ui.viewport),
                     page_index: 0,
                 };
                 // Unlike a subtitle, an atomic story field is a complete
@@ -3264,6 +3303,38 @@ impl Vm {
                         duration_ms,
                         easing,
                     });
+            }
+            ByteOp::SetPage => {
+                // (reset, from, at, tracking, leading, measure, size, align);
+                // a field left out keeps its value.
+                if self.integer(self.operand(instruction, 0)?)? != 0 {
+                    self.state.page = None;
+                } else {
+                    let mut page = self.state.page.take().unwrap_or_default();
+                    if let Some(from) = self.optional_string(self.operand(instruction, 1)?)? {
+                        page.from = Some(from);
+                    }
+                    if let Some(at) = self.optional_integer(self.operand(instruction, 2)?)? {
+                        page.at = Some(at.clamp(0, 100) as u32);
+                    }
+                    if let Some(tracking) = self.optional_integer(self.operand(instruction, 3)?)? {
+                        page.tracking = Some(tracking.clamp(-100, 500) as i32);
+                    }
+                    if let Some(leading) = self.optional_integer(self.operand(instruction, 4)?)? {
+                        page.leading = Some(leading.clamp(100, 400) as u32);
+                    }
+                    if let Some(measure) = self.optional_integer(self.operand(instruction, 5)?)? {
+                        page.measure = Some(measure.clamp(8, 60) as u32);
+                    }
+                    if let Some(size) = self.optional_integer(self.operand(instruction, 6)?)? {
+                        page.size = Some(size.clamp(50, 300) as u32);
+                    }
+                    if let Some(align) = self.optional_string(self.operand(instruction, 7)?)? {
+                        page.align = Some(align);
+                    }
+                    self.state.page =
+                        (page != crate::presentation::PageView::default()).then_some(page);
+                }
             }
             ByteOp::SetStage => {
                 self.state.stage = match self.operand(instruction, 0)? {
@@ -3666,6 +3737,21 @@ impl Vm {
         })
     }
 
+    /// An operand the compiler may leave out (`none`): `None` then.
+    fn optional_string(&self, operand: &Operand) -> Result<Option<String>, VmError> {
+        match operand {
+            Operand::None => Ok(None),
+            operand => self.string(operand).map(Some),
+        }
+    }
+
+    fn optional_integer(&self, operand: &Operand) -> Result<Option<i64>, VmError> {
+        match operand {
+            Operand::None => Ok(None),
+            operand => self.integer(operand).map(Some),
+        }
+    }
+
     fn integer(&self, operand: &Operand) -> Result<i64, VmError> {
         match self.value(operand)? {
             RuntimeValue::Integer(value) => Ok(value),
@@ -4029,14 +4115,19 @@ impl Vm {
 
     fn build_view_model(&self) -> UiViewModel {
         let route = UiRoute::parse(&self.state.ui.route);
-        let (timed_hold_remaining_ms, timed_hold_total_ms) = match &self.state.execution {
-            ExecutionState::WaitingForDelay {
-                remaining_ms,
-                total_ms,
-                ..
-            } => (Some(*remaining_ms), *total_ms),
-            _ => (None, None),
-        };
+        let (timed_hold_remaining_ms, timed_hold_total_ms, timed_hold_breath) =
+            match &self.state.execution {
+                ExecutionState::WaitingForDelay {
+                    remaining_ms,
+                    total_ms,
+                    release_at_remaining_ms,
+                } => (
+                    Some(*remaining_ms),
+                    *total_ms,
+                    release_at_remaining_ms.is_some(),
+                ),
+                _ => (None, None, false),
+            };
         let dialogue_pages = self.subtitle_pages();
         let dialogue_page_index = self
             .state
@@ -4196,9 +4287,12 @@ impl Vm {
             time: self.state.time.as_ref().map(named_fade_view),
             grade: self.state.grade.as_ref().map(named_fade_view),
             camera: self.state.camera.clone(),
+            current_chapter: self.state.current_chapter.clone(),
+            page: self.state.page.clone(),
             dialogue,
             timed_hold_remaining_ms,
             timed_hold_total_ms,
+            timed_hold_breath,
             route_plugin: self
                 .plugins
                 .route_owner(&self.state.ui.route)
@@ -4868,6 +4962,7 @@ mod tests {
         let mut advance = InputSnapshot::pressed(3, 16, InputAction::Advance);
         let breath = runtime.step(&advance).unwrap();
         assert_eq!(breath.view.timed_hold_remaining_ms, Some(300));
+        assert!(breath.view.timed_hold_breath);
         assert!(breath.view.dialogue.is_none());
 
         advance = InputSnapshot::pressed(4, 100, InputAction::Advance);
@@ -4893,6 +4988,7 @@ mod tests {
         reveal = InputSnapshot::pressed(7, 16, InputAction::Advance);
         let hard = runtime.step(&reveal).unwrap();
         assert_eq!(hard.view.timed_hold_remaining_ms, Some(220));
+        assert!(!hard.view.timed_hold_breath);
 
         reveal = InputSnapshot::pressed(8, 100, InputAction::Advance);
         let hard_still_held = runtime.step(&reveal).unwrap();

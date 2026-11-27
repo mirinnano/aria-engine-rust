@@ -82,6 +82,76 @@ scene start {
 }
 
 #[test]
+fn page_settings_merge_survive_the_backdrop_and_reset() {
+    let mut game = vm(r##"aria;
+entry start;
+scene start {
+  text_speed 0;
+  background asset("#102030");
+  page from middle at 45 tracking 80;
+  page leading 210 measure 24 size 120 align center;
+  narrate "一行。";
+  await advance;
+  background asset("#203040");
+  page tracking -20;
+  narrate "次の場所。";
+  await advance;
+  page reset;
+  narrate "元に戻る。";
+  await advance;
+  end;
+}
+"##);
+    let mut advance = InputSnapshot::idle(1, 16);
+    let first = game.step(&advance).unwrap();
+    let page = first.view.page.expect("page settings reach the view");
+    assert_eq!(page.from.as_deref(), Some("middle"));
+    assert_eq!(
+        (
+            page.at,
+            page.tracking,
+            page.leading,
+            page.measure,
+            page.size
+        ),
+        (Some(45), Some(80), Some(210), Some(24), Some(120))
+    );
+    assert_eq!(page.align.as_deref(), Some("center"));
+
+    advance.sequence = 2;
+    advance.pressed.insert(aria_core::InputAction::Advance);
+    let second = game.step(&advance).unwrap();
+    let page = second.view.page.expect("a new backdrop keeps the page");
+    assert_eq!(
+        (page.tracking, page.at),
+        (Some(-20), Some(45)),
+        "only tracking changed"
+    );
+
+    advance.sequence = 3;
+    let third = game.step(&advance).unwrap();
+    assert!(
+        third.view.page.is_none(),
+        "reset returns to the presentation's own page"
+    );
+}
+
+#[test]
+fn page_statement_rejects_values_out_of_range() {
+    let output = compile(CompileInput {
+        game_id: "jp.example.staging".to_owned(),
+        entry: "scripts/main.aria".to_owned(),
+        sources: vec![SourceUnit {
+            logical_path: "scripts/main.aria".to_owned(),
+            source:
+                "aria;\nentry start;\nscene start {\n  page from left tracking 900;\n  end;\n}\n"
+                    .to_owned(),
+        }],
+    });
+    assert!(output.has_errors());
+}
+
+#[test]
 fn conditional_options_are_offered_only_while_their_condition_holds() {
     let source = |trust: i64| {
         format!(

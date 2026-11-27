@@ -106,6 +106,9 @@ pub enum ByteOp {
     DeclareItem,
     /// (CG id, title or none, image or none).
     DeclareCg,
+    /// (reset, from, at, tracking, leading, measure, size, align); `none`
+    /// leaves a field as it was.
+    SetPage,
 }
 
 impl ByteOp {
@@ -161,6 +164,7 @@ impl ByteOp {
             Self::DeclareCg => 50,
             Self::SetTime => 51,
             Self::SetGrade => 52,
+            Self::SetPage => 53,
         }
     }
 
@@ -216,6 +220,7 @@ impl ByteOp {
             50 => Ok(Self::DeclareCg),
             51 => Ok(Self::SetTime),
             52 => Ok(Self::SetGrade),
+            53 => Ok(Self::SetPage),
             value => Err(AriacError::InvalidOpcode(value)),
         }
     }
@@ -249,6 +254,7 @@ impl ByteOp {
             Self::PresentChoiceEx => operand_count >= 4 && operand_count.is_multiple_of(4),
             Self::DeclareChapter => operand_count == 7,
             Self::SetCamera => operand_count == 5,
+            Self::SetPage => operand_count == 8,
             Self::CallPlugin => (3..=11).contains(&operand_count),
             Self::DeclareItem => operand_count >= 2 && operand_count.is_multiple_of(2),
             Self::DeclareCg => operand_count == 3,

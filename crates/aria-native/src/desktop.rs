@@ -157,6 +157,7 @@ mod tests {
                 height: 1080,
                 scale_factor: 1.0,
                 safe_area: UiInsets::default(),
+                text_rows: 0,
             },
         )
     }
@@ -211,6 +212,7 @@ mod tests {
                 height: 1440,
                 scale_factor: 2.0,
                 safe_area: UiInsets::default(),
+                text_rows: 0,
             },
         );
         adapter.push_pointer(210.0, 220.0);

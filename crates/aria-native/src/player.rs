@@ -328,6 +328,7 @@ impl NativeApplication {
                     height: size.height.max(1),
                     scale_factor: window.scale_factor() as f32,
                     safe_area: UiInsets::default(),
+                    text_rows: 0,
                 },
             ),
             controller,
@@ -504,6 +505,7 @@ impl WindowState {
             height: height.max(1),
             scale_factor: self.window.scale_factor() as f32,
             safe_area: UiInsets::default(),
+            text_rows: 0,
         };
         self.input.set_viewport(
             ViewportTransform::fit(

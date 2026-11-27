@@ -1,7 +1,10 @@
 use unicode_segmentation::UnicodeSegmentation;
 
-const FORBIDDEN_LINE_START: &str =
-    "、。，．・：；？！ー〜…‥ヽヾゝゞ々〻）］｝〕〉》」』】〙〗〟’”｠»";
+/// Characters a line may not open with: closing marks, the long-vowel mark
+/// and iteration marks, and the small kana (a novel's strict setting:
+/// "な／ってしまった" reads as a broken word).
+const FORBIDDEN_LINE_START: &str = "、。，．・：；？！ー〜…‥ヽヾゝゞ々〻）］｝〕〉》」』】〙〗〟’”｠»\
+     ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ";
 const FORBIDDEN_LINE_END: &str = "（［｛〔〈《「『【〘〖〝‘“｟«";
 
 /// Wraps text without splitting grapheme clusters and applies basic Japanese
@@ -14,6 +17,20 @@ const FORBIDDEN_LINE_END: &str = "（［｛〔〈《「『【〘〖〝‘“｟�
 /// out of the black band is still an incorrect reading surface.
 #[must_use]
 pub fn wrap_japanese(text: &str, max_cells: usize) -> Vec<String> {
+    wrap_lines(text, max_cells, LineFill::Phrase)
+}
+
+/// How a line is filled. A subtitle band breaks at phrase edges and balances
+/// a scrap; a book's page fills every line to the measure and moves a break
+/// only for the line-start and line-end rules, so a short line reads as the
+/// end of a paragraph and nothing else.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineFill {
+    Phrase,
+    Full,
+}
+
+fn wrap_lines(text: &str, max_cells: usize, fill: LineFill) -> Vec<String> {
     if max_cells == 0 {
         return vec![text.to_owned()];
     }
@@ -41,7 +58,7 @@ pub fn wrap_japanese(text: &str, max_cells: usize) -> Vec<String> {
             }
 
             if end < graphemes.len() {
-                end = choose_line_break(&graphemes, start, end);
+                end = choose_line_break(&graphemes, start, end, fill);
             }
             lines.push(graphemes[start..end].concat());
             start = end;
@@ -53,17 +70,44 @@ pub fn wrap_japanese(text: &str, max_cells: usize) -> Vec<String> {
 /// Splits a source line into fixed-height subtitle pages.  Every newline in
 /// the result is explicit and no page contains more than `lines_per_page`
 /// physical lines, so a host never needs a browser-dependent balancing pass.
+///
+/// A paragraph (a run between source newlines) that fits on one page is not
+/// split across two: when it does not fit in what is left of a page, it
+/// begins the next one. The reader's advance then falls where the script
+/// breaks, not inside a sentence. Only a paragraph longer than a page is cut.
+///
+/// A page of more than two lines is a book's page, not a subtitle band: its
+/// lines are filled to the measure (`LineFill::Full`).
 #[must_use]
 pub fn paginate_subtitles(text: &str, max_cells: usize, lines_per_page: usize) -> Vec<String> {
-    let lines = wrap_japanese(text, max_cells.max(1));
+    let fill = if lines_per_page > 2 {
+        LineFill::Full
+    } else {
+        LineFill::Phrase
+    };
     let lines_per_page = lines_per_page.max(1);
-    if lines.is_empty() {
-        return vec![String::new()];
+    let max_cells = max_cells.max(1);
+    let mut pages: Vec<Vec<String>> = Vec::new();
+    let mut page: Vec<String> = Vec::new();
+    for paragraph in text.split('\n') {
+        let lines = wrap_lines(paragraph, max_cells, fill);
+        if !page.is_empty()
+            && lines.len() <= lines_per_page
+            && page.len() + lines.len() > lines_per_page
+        {
+            pages.push(std::mem::take(&mut page));
+        }
+        for line in lines {
+            if page.len() == lines_per_page {
+                pages.push(std::mem::take(&mut page));
+            }
+            page.push(line);
+        }
     }
-    lines
-        .chunks(lines_per_page)
-        .map(|page| page.join("\n"))
-        .collect()
+    if !page.is_empty() || pages.is_empty() {
+        pages.push(page);
+    }
+    pages.into_iter().map(|page| page.join("\n")).collect()
 }
 
 /// Grapheme offsets where a line may break by this module's rules: after a
@@ -88,12 +132,13 @@ pub fn phrase_break_opportunities(text: &str) -> Vec<u32> {
 }
 
 /// Extra hold after a revealed grapheme, in multiples of one grapheme's
-/// reveal time: a reader's voice rests a little at a comma and longer at the
-/// end of a sentence. Returns 0 for any other grapheme.
+/// reveal time. A comma only lets the line catch its breath (one grapheme;
+/// longer reads as a stop mid-sentence); the voice rests at the end of a
+/// sentence. Returns 0 for any other grapheme.
 #[must_use]
 pub fn reveal_rest_after(grapheme: &str) -> u32 {
     match grapheme.chars().last() {
-        Some('、' | '，' | ',') => 3,
+        Some('、' | '，' | ',') => 1,
         Some('。' | '．' | '！' | '？' | '!' | '?') => 6,
         Some('…' | '‥' | '—' | '―') => 2,
         _ => 0,
@@ -112,8 +157,22 @@ pub fn grapheme_prefix(text: &str, count: usize) -> String {
         .collect()
 }
 
+/// Cells a grapheme takes: two for a full-width character, one for a
+/// narrow one. Capital Latin letters (and `m`, `w`) are set nearly as wide
+/// as a kana in a mincho face (`M` is about 0.8 em), so they count as two;
+/// counted as one, a line with "MD" or "J-PHONE" ran past the measure.
 fn display_cells(grapheme: &str) -> usize {
-    if grapheme.is_ascii() { 1 } else { 2 }
+    if !grapheme.is_ascii() {
+        return 2;
+    }
+    if grapheme
+        .chars()
+        .all(|character| character.is_ascii_uppercase() || matches!(character, 'm' | 'w'))
+    {
+        2
+    } else {
+        1
+    }
 }
 
 fn starts_with_forbidden(grapheme: &str, forbidden: &str) -> bool {
@@ -123,7 +182,20 @@ fn starts_with_forbidden(grapheme: &str, forbidden: &str) -> bool {
         .is_some_and(|character| forbidden.contains(character))
 }
 
-fn choose_line_break(graphemes: &[&str], start: usize, fitted_end: usize) -> usize {
+fn choose_line_break(graphemes: &[&str], start: usize, fitted_end: usize, fill: LineFill) -> usize {
+    // On a book's page a comma or full stop that would open the next line
+    // hangs past the measure instead (burasage), as a printed page sets it,
+    // rather than taking the last character down with it.
+    if fill == LineFill::Full
+        && graphemes
+            .get(fitted_end)
+            .is_some_and(|mark| matches!(*mark, "、" | "。" | "，" | "．"))
+        && graphemes
+            .get(fitted_end + 1)
+            .is_none_or(|next| !starts_with_forbidden(next, FORBIDDEN_LINE_START))
+    {
+        return fitted_end + 1;
+    }
     let minimum = start + 1;
     let mut maximum = fitted_end;
 
@@ -139,6 +211,10 @@ fn choose_line_break(graphemes: &[&str], start: usize, fitted_end: usize) -> usi
     // Conversely, an opening mark belongs with the following character.
     while maximum > minimum && starts_with_forbidden(graphemes[maximum - 1], FORBIDDEN_LINE_END) {
         maximum -= 1;
+    }
+
+    if fill == LineFill::Full {
+        return maximum;
     }
 
     let allowed = |candidate: usize| {
@@ -284,8 +360,51 @@ mod tests {
     }
 
     #[test]
+    fn a_paragraph_that_fits_a_page_is_not_split_across_two() {
+        // Three paragraphs of one, two and one lines on two-line pages: the
+        // second does not fit after the first, so it opens the next page.
+        let text = "あいう\nかきくけこさしすせそ\nたち";
+        let pages = paginate_subtitles(text, 12, 2);
+        assert_eq!(pages, vec!["あいう", "かきくけこさ\nしすせそ", "たち"]);
+        // On a page of six lines, all of it is one page.
+        assert_eq!(paginate_subtitles(text, 12, 6).len(), 1);
+        // A paragraph longer than a page is still cut.
+        assert_eq!(
+            paginate_subtitles("あいうえおかきくけこさしすせそ", 6, 2).len(),
+            3
+        );
+    }
+
+    #[test]
+    fn a_book_page_fills_each_line_to_the_measure() {
+        let text = "シャッターの閉まった売店。酔っ払いが残していったゲロと酒の混ざり合った匂い。";
+        // The band balances the scrap at the sentence end ...
+        let band = paginate_subtitles(text, 64, 2);
+        assert_eq!(
+            band[0].split('\n').next(),
+            Some("シャッターの閉まった売店。")
+        );
+        // ... a page fills the first line and keeps 「。」 off a line start.
+        let page = paginate_subtitles(text, 64, 6);
+        let lines = page[0].split('\n').collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(UnicodeSegmentation::graphemes(lines[0], true).count(), 32);
+        assert!(!lines[1].starts_with('。'));
+        // A full stop that would open a line hangs at the end of the last.
+        let hung = paginate_subtitles("あいうえお。かき", 10, 6);
+        assert_eq!(hung, vec!["あいうえお。\nかき"]);
+    }
+
+    #[test]
     fn a_reader_rests_at_commas_and_sentence_ends() {
-        assert_eq!(reveal_rest_after("、"), 3);
+        assert_eq!(reveal_rest_after("、"), 1);
+        assert!(starts_with_forbidden("っ", FORBIDDEN_LINE_START));
+        assert!(starts_with_forbidden("ャ", FORBIDDEN_LINE_START));
+        assert_eq!(
+            ["M", "D", "m", "a", "1", ":", "あ"].map(display_cells),
+            [2, 2, 2, 1, 1, 1, 2],
+            "capitals take a kana's width in a mincho face"
+        );
         assert_eq!(reveal_rest_after("。"), 6);
         assert_eq!(reveal_rest_after("？"), 6);
         assert_eq!(reveal_rest_after("あ"), 0);

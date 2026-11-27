@@ -417,6 +417,18 @@ pub enum StatementKind {
     },
     /// Moves the view over the current backdrop: zoom and pan are integer
     /// percentages of the frame (100 = unchanged, pan (0, 0) = centred).
+    /// How the page of prose is set (`page from middle tracking 80;`).
+    /// Fields left out keep their value; `reset` clears every field.
+    SetPage {
+        reset: bool,
+        from: Option<String>,
+        at: Option<u32>,
+        tracking: Option<i64>,
+        leading: Option<u32>,
+        measure: Option<u32>,
+        size: Option<u32>,
+        align: Option<String>,
+    },
     Camera {
         zoom: u32,
         pan_x: i64,
@@ -1762,6 +1774,8 @@ impl Parser {
             StatementKind::SetTheme { theme }
         } else if self.consume_keyword("camera") {
             self.parse_camera()?
+        } else if self.consume_keyword("page") {
+            self.parse_page()?
         } else if self.consume_keyword("stage") {
             let stage = if self.at_kind(ModernTokenKind::String) {
                 self.parse_string("expected stage cue name")?
@@ -2357,6 +2371,98 @@ impl Parser {
             duration_ms,
             easing,
         })
+    }
+
+    /// `page reset;` or `page` followed by any of `from top|middle|bottom`,
+    /// `at <percent>`, `tracking <thousandths of an em>`, `leading
+    /// <percent>`, `measure <characters>`, `size <percent>`, `align
+    /// start|center`.
+    fn parse_page(&mut self) -> Option<StatementKind> {
+        let mut page = StatementKind::SetPage {
+            reset: false,
+            from: None,
+            at: None,
+            tracking: None,
+            leading: None,
+            measure: None,
+            size: None,
+            align: None,
+        };
+        let StatementKind::SetPage {
+            reset,
+            from,
+            at,
+            tracking,
+            leading,
+            measure,
+            size,
+            align,
+        } = &mut page
+        else {
+            unreachable!()
+        };
+        if self.consume_keyword("reset") {
+            *reset = true;
+        } else {
+            let mut any = false;
+            loop {
+                if self.consume_keyword("from") {
+                    let word =
+                        self.parse_word("expected 'top', 'middle' or 'bottom' after from")?;
+                    if !matches!(word.as_str(), "top" | "middle" | "bottom") {
+                        self.error_here("page from must be 'top', 'middle' or 'bottom'");
+                    }
+                    *from = Some(word);
+                } else if self.consume_keyword("at") {
+                    let value = self.parse_u32("expected a height in percent after at")?;
+                    if value > 100 {
+                        self.error_here("page at must be 0-100 percent of the screen");
+                    }
+                    *at = Some(value);
+                } else if self.consume_keyword("tracking") {
+                    let value = self.parse_i64("expected tracking in thousandths of an em")?;
+                    if !(-100..=500).contains(&value) {
+                        self.error_here("page tracking must be -100 to 500 (thousandths of an em)");
+                    }
+                    *tracking = Some(value);
+                } else if self.consume_keyword("leading") {
+                    let value = self.parse_u32("expected line height in percent")?;
+                    if !(100..=400).contains(&value) {
+                        self.error_here("page leading must be 100-400 percent");
+                    }
+                    *leading = Some(value);
+                } else if self.consume_keyword("measure") {
+                    let value = self.parse_u32("expected characters per line")?;
+                    if !(8..=60).contains(&value) {
+                        self.error_here("page measure must be 8-60 characters");
+                    }
+                    *measure = Some(value);
+                } else if self.consume_keyword("size") {
+                    let value = self.parse_u32("expected type size in percent")?;
+                    if !(50..=300).contains(&value) {
+                        self.error_here("page size must be 50-300 percent");
+                    }
+                    *size = Some(value);
+                } else if self.consume_keyword("align") {
+                    let word = self.parse_word("expected 'start' or 'center' after align")?;
+                    if !matches!(word.as_str(), "start" | "center") {
+                        self.error_here("page align must be 'start' or 'center'");
+                    }
+                    *align = Some(word);
+                } else {
+                    break;
+                }
+                any = true;
+            }
+            if !any {
+                self.error_here(
+                    "expected 'reset', 'from', 'at', 'tracking', 'leading', 'measure', 'size' or 'align' after page",
+                );
+                return None;
+            }
+        }
+        self.expect_statement_end("expected ';' after page statement")?;
+        Some(page)
     }
 
     fn parse_tween(&mut self) -> Option<StatementKind> {
