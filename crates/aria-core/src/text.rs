@@ -129,12 +129,13 @@ pub fn phrase_break_opportunities(text: &str) -> Vec<u32> {
 }
 
 /// Extra hold after a revealed grapheme, in multiples of one grapheme's
-/// reveal time: a reader's voice rests a little at a comma and longer at the
-/// end of a sentence. Returns 0 for any other grapheme.
+/// reveal time. A comma only lets the line catch its breath (one grapheme;
+/// longer reads as a stop mid-sentence); the voice rests at the end of a
+/// sentence. Returns 0 for any other grapheme.
 #[must_use]
 pub fn reveal_rest_after(grapheme: &str) -> u32 {
     match grapheme.chars().last() {
-        Some('、' | '，' | ',') => 3,
+        Some('、' | '，' | ',') => 1,
         Some('。' | '．' | '！' | '？' | '!' | '?') => 6,
         Some('…' | '‥' | '—' | '―') => 2,
         _ => 0,
@@ -379,7 +380,7 @@ mod tests {
 
     #[test]
     fn a_reader_rests_at_commas_and_sentence_ends() {
-        assert_eq!(reveal_rest_after("、"), 3);
+        assert_eq!(reveal_rest_after("、"), 1);
         assert_eq!(reveal_rest_after("。"), 6);
         assert_eq!(reveal_rest_after("？"), 6);
         assert_eq!(reveal_rest_after("あ"), 0);

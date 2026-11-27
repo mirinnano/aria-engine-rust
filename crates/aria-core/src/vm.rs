@@ -219,6 +219,10 @@ pub struct VmSnapshot {
     /// Backdrop framing set by `camera`; reset by `background`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<crate::presentation::CameraView>,
+    /// How the page of prose is set (`page`). It survives `background` and
+    /// is omitted while unset, so saves without it serialize as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<crate::presentation::PageView>,
     #[serde(default)]
     pub read_texts: BTreeSet<String>,
     #[serde(default)]
@@ -815,6 +819,7 @@ impl Vm {
                 time: None,
                 grade: None,
                 camera: None,
+                page: None,
                 read_texts: BTreeSet::new(),
                 backlog: Vec::new(),
                 backlog_focused: 0,
@@ -3299,6 +3304,38 @@ impl Vm {
                         easing,
                     });
             }
+            ByteOp::SetPage => {
+                // (reset, from, at, tracking, leading, measure, size, align);
+                // a field left out keeps its value.
+                if self.integer(self.operand(instruction, 0)?)? != 0 {
+                    self.state.page = None;
+                } else {
+                    let mut page = self.state.page.take().unwrap_or_default();
+                    if let Some(from) = self.optional_string(self.operand(instruction, 1)?)? {
+                        page.from = Some(from);
+                    }
+                    if let Some(at) = self.optional_integer(self.operand(instruction, 2)?)? {
+                        page.at = Some(at.clamp(0, 100) as u32);
+                    }
+                    if let Some(tracking) = self.optional_integer(self.operand(instruction, 3)?)? {
+                        page.tracking = Some(tracking.clamp(-100, 500) as i32);
+                    }
+                    if let Some(leading) = self.optional_integer(self.operand(instruction, 4)?)? {
+                        page.leading = Some(leading.clamp(100, 400) as u32);
+                    }
+                    if let Some(measure) = self.optional_integer(self.operand(instruction, 5)?)? {
+                        page.measure = Some(measure.clamp(8, 60) as u32);
+                    }
+                    if let Some(size) = self.optional_integer(self.operand(instruction, 6)?)? {
+                        page.size = Some(size.clamp(50, 300) as u32);
+                    }
+                    if let Some(align) = self.optional_string(self.operand(instruction, 7)?)? {
+                        page.align = Some(align);
+                    }
+                    self.state.page =
+                        (page != crate::presentation::PageView::default()).then_some(page);
+                }
+            }
             ByteOp::SetStage => {
                 self.state.stage = match self.operand(instruction, 0)? {
                     Operand::None => None,
@@ -3698,6 +3735,21 @@ impl Vm {
             RuntimeValue::Boolean(value) => value.to_string(),
             RuntimeValue::None => String::new(),
         })
+    }
+
+    /// An operand the compiler may leave out (`none`): `None` then.
+    fn optional_string(&self, operand: &Operand) -> Result<Option<String>, VmError> {
+        match operand {
+            Operand::None => Ok(None),
+            operand => self.string(operand).map(Some),
+        }
+    }
+
+    fn optional_integer(&self, operand: &Operand) -> Result<Option<i64>, VmError> {
+        match operand {
+            Operand::None => Ok(None),
+            operand => self.integer(operand).map(Some),
+        }
     }
 
     fn integer(&self, operand: &Operand) -> Result<i64, VmError> {
@@ -4235,6 +4287,8 @@ impl Vm {
             time: self.state.time.as_ref().map(named_fade_view),
             grade: self.state.grade.as_ref().map(named_fade_view),
             camera: self.state.camera.clone(),
+            current_chapter: self.state.current_chapter.clone(),
+            page: self.state.page.clone(),
             dialogue,
             timed_hold_remaining_ms,
             timed_hold_total_ms,

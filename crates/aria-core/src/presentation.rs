@@ -117,6 +117,36 @@ pub struct CameraView {
     pub easing: String,
 }
 
+/// How the story's page of prose is set (`page from middle tracking 80;`).
+/// Every field is optional: an unset field leaves the presentation's own
+/// default, and a `page` statement changes only the fields it names.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageView {
+    /// Where the first line is anchored: `top`, `middle` (the block is
+    /// centred on `at`) or `bottom`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The anchor's height, in percent of the screen from its top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u32>,
+    /// Letter spacing in thousandths of an em (typesetting tracking units).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracking: Option<i32>,
+    /// Line height in percent of the type size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leading: Option<u32>,
+    /// Full-width characters per line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measure: Option<u32>,
+    /// Type size in percent of the reader's size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    /// `start` sets lines flush from the page's edge; `center` centres each
+    /// line, as for verse or a line the story stops on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+}
+
 /// The time of day authored with `time evening;`. `name` is `None` after
 /// `time none;` while the previous time is still fading out. During
 /// `time ... over N ms`, `from` is the time being left and `progress` runs
@@ -282,6 +312,15 @@ pub struct UiViewModel {
     /// `duration_ms`. Absent means the unmoved full frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera: Option<CameraView>,
+    /// The chapter the story is in (the last `unlock chapter` it ran), so a
+    /// presentation can say where the reader is from a menu. Absent before
+    /// any chapter, so views of scripts without chapters serialize as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_chapter: Option<String>,
+    /// How the page of prose is set, from the script's `page` statements.
+    /// Absent until a script sets one, so other views serialize as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<PageView>,
     pub dialogue: Option<DialogueView>,
     /// A story-authored timer currently owns the VM. `None` means the host
     /// may sleep until input, resize, or a distinct active visual transition.

@@ -126,6 +126,24 @@ export interface CameraView {
   easing: string;
 }
 
+/** How the page of prose is set, from the script's `page` statements. */
+export interface PageView {
+  /** "top" | "middle" | "bottom". */
+  from?: string;
+  /** The anchor's height, percent of the screen from its top. */
+  at?: number;
+  /** Letter spacing in thousandths of an em. */
+  tracking?: number;
+  /** Line height, percent of the type size. */
+  leading?: number;
+  /** Full-width characters per line. */
+  measure?: number;
+  /** Type size, percent of the reader's size. */
+  size?: number;
+  /** "start" | "center". */
+  align?: string;
+}
+
 export interface GalleryItemView {
   id: string;
   unlocked: boolean;
@@ -179,6 +197,10 @@ export interface UiViewModel {
    */
   grade?: TimeView;
   camera?: CameraView;
+  /** The chapter the story is in (the last one it unlocked). */
+  current_chapter?: string;
+  /** How the page of prose is set; absent until the script sets it. */
+  page?: PageView;
   dialogue: DialogueView | null;
   /** Remaining VM-owned story hold, or null when the surface may sleep. */
   timed_hold_remaining_ms: number | null;

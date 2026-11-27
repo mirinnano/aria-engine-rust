@@ -1330,6 +1330,39 @@ impl ModernCompiler {
             StatementKind::SetGrade { grade, over_ms } => {
                 self.emit_named_fade(ByteOp::SetGrade, "grade", grade, *over_ms, statement);
             }
+            StatementKind::SetPage {
+                reset,
+                from,
+                at,
+                tracking,
+                leading,
+                measure,
+                size,
+                align,
+            } => {
+                let word = |compiler: &mut Self, value: &Option<String>| {
+                    value.as_ref().map_or(Operand::None, |value| {
+                        Operand::Constant(compiler.intern_string(value))
+                    })
+                };
+                let number = |value: Option<i64>| value.map_or(Operand::None, Operand::Integer);
+                let from = word(self, from);
+                let align = word(self, align);
+                self.emit(
+                    ByteOp::SetPage,
+                    vec![
+                        Operand::Integer(i64::from(*reset)),
+                        from,
+                        number(at.map(i64::from)),
+                        number(*tracking),
+                        number(leading.map(i64::from)),
+                        number(measure.map(i64::from)),
+                        number(size.map(i64::from)),
+                        align,
+                    ],
+                    &statement.span,
+                );
+            }
             StatementKind::Camera {
                 zoom,
                 pan_x,
@@ -2939,6 +2972,7 @@ fn collect_scene_sites(
             | StatementKind::SetTime { .. }
             | StatementKind::SetGrade { .. }
             | StatementKind::Camera { .. }
+            | StatementKind::SetPage { .. }
             | StatementKind::SetTextBox { .. }
             | StatementKind::Tween { .. }
             | StatementKind::Effect { .. }
@@ -3021,6 +3055,7 @@ fn statement_definitely_exits(statement: &Statement) -> bool {
         | StatementKind::SetTime { .. }
         | StatementKind::SetGrade { .. }
         | StatementKind::Camera { .. }
+        | StatementKind::SetPage { .. }
         | StatementKind::SetTextBox { .. }
         | StatementKind::Tween { .. }
         | StatementKind::Effect { .. }
