@@ -1,7 +1,10 @@
 use unicode_segmentation::UnicodeSegmentation;
 
-const FORBIDDEN_LINE_START: &str =
-    "、。，．・：；？！ー〜…‥ヽヾゝゞ々〻）］｝〕〉》」』】〙〗〟’”｠»";
+/// Characters a line may not open with: closing marks, the long-vowel mark
+/// and iteration marks, and the small kana (a novel's strict setting:
+/// "な／ってしまった" reads as a broken word).
+const FORBIDDEN_LINE_START: &str = "、。，．・：；？！ー〜…‥ヽヾゝゞ々〻）］｝〕〉》」』】〙〗〟’”｠»\
+     ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ";
 const FORBIDDEN_LINE_END: &str = "（［｛〔〈《「『【〘〖〝‘“｟«";
 
 /// Wraps text without splitting grapheme clusters and applies basic Japanese
@@ -154,8 +157,22 @@ pub fn grapheme_prefix(text: &str, count: usize) -> String {
         .collect()
 }
 
+/// Cells a grapheme takes: two for a full-width character, one for a
+/// narrow one. Capital Latin letters (and `m`, `w`) are set nearly as wide
+/// as a kana in a mincho face (`M` is about 0.8 em), so they count as two;
+/// counted as one, a line with "MD" or "J-PHONE" ran past the measure.
 fn display_cells(grapheme: &str) -> usize {
-    if grapheme.is_ascii() { 1 } else { 2 }
+    if !grapheme.is_ascii() {
+        return 2;
+    }
+    if grapheme
+        .chars()
+        .all(|character| character.is_ascii_uppercase() || matches!(character, 'm' | 'w'))
+    {
+        2
+    } else {
+        1
+    }
 }
 
 fn starts_with_forbidden(grapheme: &str, forbidden: &str) -> bool {
@@ -381,6 +398,13 @@ mod tests {
     #[test]
     fn a_reader_rests_at_commas_and_sentence_ends() {
         assert_eq!(reveal_rest_after("、"), 1);
+        assert!(starts_with_forbidden("っ", FORBIDDEN_LINE_START));
+        assert!(starts_with_forbidden("ャ", FORBIDDEN_LINE_START));
+        assert_eq!(
+            ["M", "D", "m", "a", "1", ":", "あ"].map(display_cells),
+            [2, 2, 2, 1, 1, 1, 2],
+            "capitals take a kana's width in a mincho face"
+        );
         assert_eq!(reveal_rest_after("。"), 6);
         assert_eq!(reveal_rest_after("？"), 6);
         assert_eq!(reveal_rest_after("あ"), 0);
