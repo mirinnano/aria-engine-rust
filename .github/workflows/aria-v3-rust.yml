@@ -193,7 +193,7 @@ jobs:
 
   macos-universal:
     name: macOS universal Native Player
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
